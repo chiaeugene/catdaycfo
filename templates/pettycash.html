@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="pagehead"><h1>🐷 Petty Cash Book 零用金账簿</h1></div>
+<div class="sub">Cash in hand for small expenses — every entry updates the running balance</div>
+
+<div class="cards">
+  <div class="card {% if balance < float_target * 0.2 %}red{% elif balance < float_target * 0.5 %}amber{% else %}green{% endif %}">
+    <div class="label">Cash in hand 现金余额</div>
+    <div class="value">RM {{ balance|rm }}</div>
+    <div class="hint">Float target: RM {{ float_target|rm }}</div>
+    <div class="progress"><div style="width:{{ [100, (balance / float_target * 100)|round]|min if float_target else 0 }}%"></div></div>
+  </div>
+  <div class="card red"><div class="label">Spent — {{ month }} 本月支出</div><div class="value">RM {{ mo_out|rm }}</div></div>
+  <div class="card green"><div class="label">Top-ups — {{ month }} 本月补充</div><div class="value">RM {{ mo_in|rm }}</div></div>
+  <div class="card blue">
+    <div class="label">To refill float 需补充</div>
+    <div class="value">RM {{ (float_target - balance if float_target > balance else 0)|rm }}</div>
+  </div>
+</div>
+
+<div class="grid2">
+  <div class="panel">
+    <h2>Record spending 记录支出</h2>
+    <form class="inline" method="post" action="/pettycash/new">
+      <div><label>Date</label><input type="date" name="pdate" value="{{ today }}"></div>
+      <div style="flex:1;min-width:160px"><label>What was it for 用途</label><input name="description" required style="width:100%"></div>
+      <div><label>Category</label><select name="category"><option value=""></option>{% for c in M.CATEGORIES %}<option>{{ c }}</option>{% endfor %}</select></div>
+      <div><label>Amount RM</label><input type="number" step="0.01" name="amount_out" required style="width:110px"></div>
+      <button type="submit" class="danger" style="border-width:0;background:var(--red);color:#fff">− Spend 支出</button>
+    </form>
+  </div>
+  <div class="panel">
+    <h2>Top up float 补充零用金</h2>
+    <form class="inline" method="post" action="/pettycash/new">
+      <div><label>Date</label><input type="date" name="pdate" value="{{ today }}"></div>
+      <div style="flex:1;min-width:160px"><label>Source 来源</label><input name="description" value="Petty cash replenishment" style="width:100%"></div>
+      <div><label>Amount RM</label><input type="number" step="0.01" name="amount_in" required style="width:110px"></div>
+      <button type="submit" class="success">＋ Top up 补充</button>
+    </form>
+  </div>
+</div>
+
+<div class="filters">
+  <a href="/pettycash" class="{% if not month_filtered %}on{% endif %}">All entries</a>
+  {% for m in months %}
+  <a href="/pettycash?month={{ m }}" class="{% if month_filtered and m == month %}on{% endif %}">{{ m }}</a>
+  {% endfor %}
+</div>
+
+<div class="grid2">
+  <div class="tablewrap" style="grid-column:1 / -1">
+    <table>
+      <tr><th>Date</th><th>Description</th><th>Category</th>
+          <th class="num">Out 支出</th><th class="num">In 补充</th><th class="num">Balance 余额</th><th>By</th></tr>
+      {% for e, bal in rows %}
+      <tr>
+        <td>{{ e.date.strftime('%d/%m/%y') }}</td>
+        <td>{% if e.document %}<a href="/files/{{ e.document.file_path }}" target="_blank">{{ e.description }} 📎</a>{% else %}{{ e.description }}{% endif %}</td>
+        <td>{{ e.category }}</td>
+        <td class="num" style="color:var(--red);font-weight:600">{{ '−' + (e.amount_out|rm) if e.amount_out else '' }}</td>
+        <td class="num" style="color:var(--green);font-weight:600">{{ '+' + (e.amount_in|rm) if e.amount_in else '' }}</td>
+        <td class="num"><b>{{ bal|rm }}</b></td>
+        <td>{{ e.recorded_by }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" class="empty">No entries {% if month_filtered %}for {{ month }}{% endif %} yet.</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+</div>
+
+{% if by_cat %}
+<div class="panel" style="max-width:440px">
+  <h2>Where the cash went — {{ month }} 支出分布</h2>
+  {% for cat, amt in by_cat.items()|sort(attribute='1', reverse=true) %}
+  <div class="kv"><span>{{ cat }}</span><b>RM {{ amt|rm }}</b></div>
+  {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

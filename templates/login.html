@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Login — CATDAY System</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="login-wrap">
+  <div class="login-box">
+    <h1>🐱 CATDAY</h1>
+    <div class="sub">Finance System 财务系统</div>
+    {% if error %}<div class="error">{{ error }}</div>{% endif %}
+    <form method="post" action="/login">
+      <label>Username 用户名</label>
+      <input name="username" autofocus autocomplete="username">
+      <label>Password 密码</label>
+      <input name="password" type="password" autocomplete="current-password">
+      <button type="submit">Sign In 登录</button>
+    </form>
+  </div>
+</div>
+</body>
+</html>

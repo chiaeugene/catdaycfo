@@ -1,0 +1,7 @@
+.env
+catday.db
+uploads/
+__pycache__/
+*.pyc
+.venv/
+venv/

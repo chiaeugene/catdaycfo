@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="pagehead"><h1>⚙️ Settings 系统设置</h1></div>
+<div class="sub">Users, company info, and bot configuration</div>
+
+<div class="cards">
+  <div class="card {% if bot_configured %}green{% else %}red{% endif %}">
+    <div class="label">Telegram Bot</div>
+    <div class="value" style="font-size:14px">{{ '✅ Configured' if bot_configured else '❌ Set TELEGRAM_BOT_TOKEN in .env' }}</div>
+  </div>
+  <div class="card {% if ai_configured %}green{% else %}amber{% endif %}">
+    <div class="label">AI Classification</div>
+    <div class="value" style="font-size:14px">{{ '✅ Configured' if ai_configured else '⚠️ Set ANTHROPIC_API_KEY in .env (optional)' }}</div>
+  </div>
+</div>
+
+<div class="grid2">
+  <div>
+    <div class="panel">
+      <h2>Users 用户</h2>
+      <div class="tablewrap" style="box-shadow:none">
+      <table>
+        <tr><th>Username</th><th>Name</th><th>Role</th><th>Telegram ID</th><th>Status</th><th></th></tr>
+        {% for u in users %}
+        <tr>
+          <td class="mono">{{ u.username }}</td><td>{{ u.display_name }}</td>
+          <td><span class="badge draft">{{ u.role }}</span></td>
+          <td class="mono">{{ u.telegram_id }}</td>
+          <td>{{ '✅' if u.active else '🚫' }}</td>
+          <td>
+            <div class="actions">
+              {% if u.id != user.id %}
+              <form method="post" action="/settings/users/{{ u.id }}/toggle">
+                <button class="small ghost" type="submit">{{ 'Disable' if u.active else 'Enable' }}</button>
+              </form>
+              {% endif %}
+              <details class="rowedit">
+                <summary>password</summary>
+                <form method="post" action="/settings/users/{{ u.id }}/password" class="inline" style="margin-top:6px">
+                  <input name="password" type="password" placeholder="new password" class="slim" required>
+                  <button class="small" type="submit">Set</button>
+                </form>
+              </details>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </table>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Add user 添加用户</h2>
+      <form class="inline" method="post" action="/settings/users/new">
+        <div><label>Username</label><input name="username" required style="width:110px"></div>
+        <div><label>Password</label><input name="password" type="password" required style="width:110px"></div>
+        <div><label>Display name</label><input name="display_name" required style="width:110px"></div>
+        <div><label>Role</label><select name="role">{% for r in M.ROLES %}<option>{{ r }}</option>{% endfor %}</select></div>
+        <div><label>Telegram ID</label><input name="telegram_id" style="width:100px"></div>
+        <button type="submit">＋ Add</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Company &amp; bot 公司与机器人</h2>
+    <form method="post" action="/settings/save">
+      <label>Company name 公司名称</label>
+      <input name="COMPANY_NAME" value="{{ settings.get('COMPANY_NAME','CATDAY SDN BHD') }}" style="width:100%;margin-bottom:12px">
+      <label>Company address 公司地址</label>
+      <input name="COMPANY_ADDRESS" value="{{ settings.get('COMPANY_ADDRESS','Uptown PJ') }}" style="width:100%;margin-bottom:12px">
+      <label>Telegram whitelist 白名单 (* = anyone, or comma-separated IDs)</label>
+      <input name="TELEGRAM_WHITELIST" value="{{ settings.get('TELEGRAM_WHITELIST','*') }}" style="width:100%;margin-bottom:12px">
+      <label>Petty cash float target 零用金目标 RM</label>
+      <input name="PETTY_CASH_FLOAT" value="{{ settings.get('PETTY_CASH_FLOAT','5000') }}" style="width:100%;margin-bottom:14px">
+      <button type="submit">💾 Save 保存</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}CATDAY System{% endblock %}</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="logo">🐱 CATDAY</div>
+      <small>Finance System 财务系统</small>
+    </div>
+    <nav>
+      {% for url, icon, label in nav %}
+      <a href="{{ url }}" class="{% if (url == '/' and page == 'dashboard') or (url != '/' and url == '/' + page) %}active{% endif %}">
+        <span class="ico">{{ icon }}</span><span>{{ label }}</span>
+        {% if url == '/documents' and pending_docs %}<span class="pill">{{ pending_docs }}</span>{% endif %}
+      </a>
+      {% endfor %}
+    </nav>
+    <div class="userbox">
+      <div class="name">{{ user.display_name }}</div>
+      <span class="role">{{ user.role }}</span><br><br>
+      <a href="/logout">Logout 登出</a>
+    </div>
+  </aside>
+  <main class="main">
+    {% block content %}{% endblock %}
+  </main>
+</div>
+{% block scripts %}{% endblock %}
+</body>
+</html>

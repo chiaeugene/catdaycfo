@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="pagehead">
+  <h1>💰 Payroll Run — {{ run.month }}</h1>
+  <a class="btn secondary" href="/payroll">← Back to Payroll</a>
+</div>
+<div class="sub">
+  <span class="badge {{ run.status|lower }}">{{ run.status }}</span>
+  &nbsp; Run date {{ run.run_date.strftime('%d/%m/%Y') }} · {{ run.items|length }} staff
+  {% if run.status == 'Draft' %} · Adjust overtime / bonus / deductions per person, then confirm to lock and generate payslips.{% endif %}
+</div>
+
+<div class="cards">
+  <div class="card blue"><div class="label">Gross 总工资</div><div class="value">RM {{ run.items|sum(attribute='gross')|rm }}</div></div>
+  <div class="card green"><div class="label">Take-home 实发</div><div class="value">RM {{ run.total_net|rm }}</div></div>
+  <div class="card red"><div class="label">Employer cost 雇主成本</div><div class="value">RM {{ run.total_cost|rm }}</div></div>
+</div>
+
+{% if run.status == 'Draft' %}
+<div class="panel" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+  <form method="post" action="/payroll/run/{{ run.id }}/confirm">
+    <button type="submit" class="success">✓ Confirm run &amp; generate payslips 确认并生成工资单</button>
+  </form>
+  <form method="post" action="/payroll/run/{{ run.id }}/delete">
+    <button type="submit" class="danger">🗑 Delete draft 删除草稿</button>
+  </form>
+  <span style="color:var(--muted);font-size:12px">Confirming locks the numbers — payslip PDFs become available per staff member.</span>
+</div>
+{% endif %}
+
+<div class="tablewrap">
+<table>
+  <tr><th>Staff</th><th>Position</th><th class="num">Basic</th><th class="num">Allow.</th>
+      <th class="num">OT</th><th class="num">Bonus</th><th class="num">Gross</th>
+      <th class="num">EPF Ee</th><th class="num">SOCSO Ee</th><th class="num">EIS Ee</th>
+      <th class="num">Other Ded.</th><th class="num">Net Pay</th><th class="num">Er Cost</th>
+      <th>{% if run.status == 'Confirmed' %}Payslip{% else %}Edit{% endif %}</th></tr>
+  {% for i in run.items %}
+  <tr>
+    <td><b>{{ i.staff_name }}</b></td>
+    <td>{{ i.position }}</td>
+    <td class="num">{{ i.base|rm }}</td>
+    <td class="num">{{ i.allowance|rm }}</td>
+    <td class="num">{{ i.overtime|rm }}</td>
+    <td class="num">{{ i.bonus|rm }}</td>
+    <td class="num" style="font-weight:700">{{ i.gross|rm }}</td>
+    <td class="num">{{ i.epf_ee|rm }}</td>
+    <td class="num">{{ i.socso_ee|rm }}</td>
+    <td class="num">{{ i.eis_ee|rm }}</td>
+    <td class="num">{{ i.deductions|rm }}</td>
+    <td class="num" style="color:var(--green);font-weight:800">{{ i.net|rm }}</td>
+    <td class="num" style="color:var(--red)">{{ i.employer_cost|rm }}</td>
+    <td>
+      {% if run.status == 'Confirmed' %}
+      <a class="btn secondary small" style="padding:4px 10px;font-size:11.5px" href="/payroll/run/{{ run.id }}/payslip/{{ i.id }}" target="_blank">📄 Payslip</a>
+      {% else %}
+      <details class="rowedit">
+        <summary>adjust</summary>
+        <form method="post" action="/payroll/run/{{ run.id }}/item/{{ i.id }}/update" style="margin-top:10px;display:grid;grid-template-columns:repeat(4,minmax(85px,1fr));gap:8px;min-width:420px">
+          <div><label>Basic</label><input type="number" step="0.01" name="base" value="{{ i.base }}" class="slim" style="width:100%"></div>
+          <div><label>Allowance</label><input type="number" step="0.01" name="allowance" value="{{ i.allowance }}" class="slim" style="width:100%"></div>
+          <div><label>Overtime</label><input type="number" step="0.01" name="overtime" value="{{ i.overtime }}" class="slim" style="width:100%"></div>
+          <div><label>Bonus</label><input type="number" step="0.01" name="bonus" value="{{ i.bonus }}" class="slim" style="width:100%"></div>
+          <div><label>EPF Ee</label><input type="number" step="0.01" name="epf_ee" value="{{ i.epf_ee }}" class="slim" style="width:100%"></div>
+          <div><label>SOCSO Ee</label><input type="number" step="0.01" name="socso_ee" value="{{ i.socso_ee }}" class="slim" style="width:100%"></div>
+          <div><label>EIS Ee</label><input type="number" step="0.01" name="eis_ee" value="{{ i.eis_ee }}" class="slim" style="width:100%"></div>
+          <div><label>Other Ded.</label><input type="number" step="0.01" name="deductions" value="{{ i.deductions }}" class="slim" style="width:100%"></div>
+          <div style="grid-column:1/4"><label>Remarks</label><input name="remarks" value="{{ i.remarks }}" class="slim" style="width:100%"></div>
+          <div style="display:flex;align-items:end"><button class="small" type="submit">💾 Save</button></div>
+        </form>
+      </details>
+      {% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+  <tr class="total-row">
+    <td colspan="6">TOTAL</td>
+    <td class="num">{{ run.items|sum(attribute='gross')|rm }}</td>
+    <td class="num">{{ run.items|sum(attribute='epf_ee')|rm }}</td>
+    <td class="num">{{ run.items|sum(attribute='socso_ee')|rm }}</td>
+    <td class="num">{{ run.items|sum(attribute='eis_ee')|rm }}</td>
+    <td class="num">{{ run.items|sum(attribute='deductions')|rm }}</td>
+    <td class="num">{{ run.total_net|rm }}</td>
+    <td class="num">{{ run.total_cost|rm }}</td>
+    <td></td>
+  </tr>
+</table>
+</div>
+
+{% if run.status == 'Confirmed' %}
+<div class="panel" style="margin-top:16px">
+  <h2>Export payslips 导出工资单</h2>
+  <div class="actions">
+    {% for i in run.items %}
+    <a class="btn secondary small" style="padding:5px 12px;font-size:11.5px" href="/payroll/run/{{ run.id }}/payslip/{{ i.id }}" target="_blank">📄 {{ i.staff_name }}</a>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+{% endblock %}

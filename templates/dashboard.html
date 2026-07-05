@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="pagehead"><h1>Dashboard 仪表板</h1></div>
+<div class="sub">{{ month }} at a glance — CATDAY finance</div>
+
+<div class="cards">
+  <div class="card green"><div class="label">Sales — {{ month }} 销售</div><div class="value">RM {{ stats.sales_month|rm }}</div></div>
+  <div class="card red"><div class="label">Expenses — {{ month }} 支出</div><div class="value">RM {{ stats.expenses_month|rm }}</div></div>
+  <div class="card"><div class="label">Petty cash 零用金</div><div class="value">RM {{ stats.petty_balance|rm }}</div></div>
+</div>
+<div class="cards">
+  <div class="card amber"><div class="label">Docs to verify 待审核</div><div class="value">{{ stats.docs_pending }}</div></div>
+  <div class="card blue"><div class="label">Open payments 未开凭单</div><div class="value">{{ stats.pay_open }}</div></div>
+  <div class="card"><div class="label">Draft vouchers 凭单草稿</div><div class="value">{{ stats.pv_draft }}</div></div>
+</div>
+
+<div class="grid2">
+  <div>
+    <h2>📥 Recent documents 最新文件</h2>
+    <div class="tablewrap">
+    <table>
+      <tr><th>ID</th><th>Type</th><th>From</th><th>Status</th><th class="num">RM</th></tr>
+      {% for d in recent_docs %}
+      <tr><td><a href="/files/{{ d.file_path }}" target="_blank">{{ d.doc_no }}</a></td>
+          <td>{{ d.doc_type }}</td><td>{{ d.sender }}</td>
+          <td><span class="badge {{ d.status|lower }}">{{ d.status }}</span></td>
+          <td class="num">{{ d.amount|rm }}</td></tr>
+      {% else %}<tr><td colspan="5" class="empty">No documents yet — send one to the Telegram bot!</td></tr>{% endfor %}
+    </table>
+    </div>
+  </div>
+  <div>
+    <h2>🛒 Recent sales 最新销售</h2>
+    <div class="tablewrap">
+    <table>
+      <tr><th>Date</th><th>Stream</th><th>By</th><th class="num">RM</th></tr>
+      {% for s in recent_sales %}
+      <tr><td>{{ s.date.strftime('%d/%m') }}</td><td>{{ s.stream }}</td><td>{{ s.recorded_by }}</td><td class="num">{{ s.amount|rm }}</td></tr>
+      {% else %}<tr><td colspan="4" class="empty">No sales recorded yet.</td></tr>{% endfor %}
+    </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

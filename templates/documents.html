@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="pagehead"><h1>📥 Document Verification 文件审核</h1></div>
+<div class="sub">Everything received via Telegram lands here first. Verify each document — correct the details, choose a section, then post it into the system.</div>
+
+<div class="cards">
+  <div class="card amber"><div class="label">Awaiting verification 待审核</div><div class="value">{{ pending|length }}</div></div>
+  <div class="card"><div class="label">Processed 已处理</div><div class="value">{{ processed|length }}</div></div>
+</div>
+
+<div class="panel">
+  <h2>Upload manually 手动上传</h2>
+  <form class="inline" method="post" action="/documents/upload" enctype="multipart/form-data">
+    <div><label>File 文件</label><input type="file" name="file" required accept="image/*,.pdf"></div>
+    <div style="flex:1"><label>Description 描述 (optional)</label><input name="description" style="width:100%"></div>
+    <button type="submit">⬆ Upload 上传</button>
+  </form>
+</div>
+
+<h2 style="margin-top:6px">Pending verification 待审核 ({{ pending|length }})</h2>
+{% for d in pending %}
+<div class="verify-card">
+  <div class="vc-head">
+    <span class="docno">{{ d.doc_no }}</span>
+    <a class="btn secondary small" style="padding:3px 12px;font-size:11.5px" href="/files/{{ d.file_path }}" target="_blank">👁 View document 查看文件</a>
+    <span class="meta">from <b>{{ d.sender }}</b> · {{ d.received_at.strftime('%d/%m/%Y %H:%M') }}</span>
+    {% if d.ai_classified %}<span class="ai-tag">🤖 AI pre-filled</span>{% endif %}
+  </div>
+  <form method="post" action="/documents/{{ d.id }}/verify">
+    <div class="vc-grid">
+      <div>
+        <label>Section 分区 (routing)</label>
+        <select name="section">
+          {% for s in M.DOC_SECTIONS %}<option {% if d.section==s %}selected{% endif %}>{{ s }}</option>{% endfor %}
+        </select>
+      </div>
+      <div>
+        <label>Type 类型</label>
+        <select name="doc_type">
+          {% for t in M.DOC_TYPES %}<option {% if d.doc_type==t %}selected{% endif %}>{{ t }}</option>{% endfor %}
+        </select>
+      </div>
+      <div><label>Supplier 供应商</label><input name="supplier" value="{{ d.supplier }}"></div>
+      <div><label>Amount (RM) 金额</label><input type="number" step="0.01" name="amount" value="{{ d.amount }}"></div>
+      <div><label>Month 月份</label><input name="month" value="{{ d.month }}" placeholder="Jul 2026"></div>
+      <div>
+        <label>Category 类别</label>
+        <select name="category">
+          <option value=""></option>
+          {% for c in M.CATEGORIES %}<option {% if d.category==c %}selected{% endif %}>{{ c }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="full"><label>Description 描述</label><input name="description" value="{{ d.description }}"></div>
+    </div>
+    <div class="vc-actions">
+      <button type="submit" class="success">✓ Verify &amp; Post 审核入账</button>
+      <span class="meta" style="color:var(--muted);font-size:11.5px">
+        Purchase → Payments (CAPEX) · Expense → Payments (OPEX) · Petty Cash → cash book · Bank-in / Filing → archive only
+      </span>
+    </div>
+  </form>
+  <form method="post" action="/documents/{{ d.id }}/reject" class="inline" style="margin-top:8px">
+    <input name="reason" placeholder="Reject reason 拒绝原因" style="width:260px" class="slim">
+    <button type="submit" class="danger small">✗ Reject 拒绝</button>
+  </form>
+</div>
+{% else %}
+<div class="panel empty">✅ All clear — nothing waiting for verification.<br>没有待审核文件。</div>
+{% endfor %}
+
+<h2 style="margin-top:26px">Processed 已处理</h2>
+<div class="tablewrap">
+<table>
+  <tr><th>ID</th><th>Received</th><th>From</th><th>Section</th><th>Type</th><th>Supplier</th>
+      <th class="num">Amount</th><th>Month</th><th>Status</th><th>Verified by</th><th>Posted to</th></tr>
+  {% for d in processed %}
+  <tr>
+    <td><a href="/files/{{ d.file_path }}" target="_blank">📎 {{ d.doc_no }}</a></td>
+    <td>{{ d.received_at.strftime('%d/%m %H:%M') }}</td>
+    <td>{{ d.sender }}</td>
+    <td>{{ d.section }}</td>
+    <td>{{ d.doc_type }}</td>
+    <td>{{ d.supplier }}</td>
+    <td class="num">{{ d.amount|rm }}</td>
+    <td>{{ d.month }}</td>
+    <td><span class="badge {{ d.status|lower }}">{{ d.status }}</span></td>
+    <td>{{ d.verified_by }}</td>
+    <td>{% if d.payment %}{{ d.payment.pay_no }}{% elif d.status == 'Rejected' %}{{ d.reject_reason[:30] }}{% else %}—{% endif %}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="11" class="empty">Nothing processed yet.</td></tr>
+  {% endfor %}
+</table>
+</div>
+{% endblock %}

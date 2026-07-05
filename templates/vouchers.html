@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="pagehead"><h1>🧾 Payment Vouchers 付款凭单</h1></div>
+<div class="sub">Approve → mark Paid when banked. Tick unlisted vouchers to batch them into a Payment Listing.</div>
+
+<form method="post" action="/listings/create">
+<div class="tablewrap">
+<table>
+  <tr>
+    <th class="checkbox-cell"><input type="checkbox" id="selall" onchange="toggleAll(this)" title="Select all listable"></th>
+    <th>PV #</th><th>Date</th><th>Payee</th>
+    <th class="num">Total</th><th>Payments</th><th>Status</th><th>Listing</th><th>PDF</th><th>Actions</th></tr>
+  {% for v in vouchers %}
+  <tr>
+    <td class="checkbox-cell">
+      {% if not v.listing_id and v.status in ["Draft","Approved"] %}
+      <input type="checkbox" name="pv_ids" value="{{ v.id }}" data-amt="{{ v.total }}" onchange="updateBar()">
+      {% endif %}
+    </td>
+    <td class="mono">{{ v.pv_no }}</td>
+    <td>{{ v.date.strftime('%d/%m/%y') }}</td>
+    <td>{{ v.payee }}</td>
+    <td class="num">{{ v.total|rm }}</td>
+    <td class="mono">{{ v.payments|map(attribute='pay_no')|join(', ') }}</td>
+    <td><span class="badge {{ v.status|lower }}">{{ v.status }}</span></td>
+    <td class="mono">{% if v.listing %}{{ v.listing.pl_no }}{% else %}—{% endif %}</td>
+    <td><a href="/files/{{ v.pdf_path }}" target="_blank">📄 PDF</a></td>
+    <td>
+      <div class="actions">
+        {% if v.status == 'Draft' %}
+        <form method="post" action="/vouchers/{{ v.id }}/action"><input type="hidden" name="action" value="approve"><button class="small success" type="submit" title="Approve this voucher">✓ Approve</button></form>
+        {% endif %}
+        {% if v.status in ['Draft','Approved'] %}
+        <form method="post" action="/vouchers/{{ v.id }}/action"><input type="hidden" name="action" value="paid"><button class="small" type="submit" title="Mark as paid — payments inside become Paid">💸 Mark Paid</button></form>
+        <form method="post" action="/vouchers/{{ v.id }}/action"><input type="hidden" name="action" value="void"><button class="small danger" type="submit" title="Void — releases the payments back">✗ Void</button></form>
+        {% endif %}
+      </div>
+    </td>
+  </tr>
+  {% else %}
+  <tr><td colspan="10" class="empty">No vouchers yet — tick payments on the Payments page and click Create Payment Voucher.</td></tr>
+  {% endfor %}
+</table>
+</div>
+
+<div class="selectbar" id="selbar">
+  <span class="count" id="selcount">0 selected</span>
+  <span class="subtotal" id="seltotal"></span>
+  <button type="submit">📑 Create Payment Listing</button>
+</div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function boxes() { return Array.from(document.querySelectorAll('input[name="pv_ids"]')); }
+function updateBar() {
+  const on = boxes().filter(b => b.checked);
+  const total = on.reduce((a, b) => a + parseFloat(b.dataset.amt || 0), 0);
+  document.getElementById('selcount').textContent = on.length + ' selected 已选';
+  document.getElementById('seltotal').textContent = 'RM ' + total.toLocaleString(undefined, {minimumFractionDigits: 2});
+  document.getElementById('selbar').classList.toggle('show', on.length > 0);
+}
+function toggleAll(el) { boxes().forEach(b => b.checked = el.checked); updateBar(); }
+</script>
+{% endblock %}

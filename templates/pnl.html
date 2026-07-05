@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="pagehead"><h1>📈 Profit &amp; Loss 损益表 — {{ month }}</h1></div>
+<div class="sub">Live statement from actual sales, verified payments, petty cash and confirmed payroll. Click any line to see the transactions behind it.</div>
+
+<div class="filters">
+  {% for m in months %}
+  <a href="/pnl?month={{ m }}" class="{% if m == month %}on{% endif %}">{{ m }}</a>
+  {% endfor %}
+</div>
+
+<div class="cards">
+  <div class="card green"><div class="label">Revenue 营收</div><div class="value">RM {{ total_rev|rm }}</div></div>
+  <div class="card blue"><div class="label">Gross profit 毛利</div><div class="value">RM {{ gross_profit|rm }}</div>
+    <div class="hint">{{ ((gross_profit / total_rev * 100)|round(1)) if total_rev else 0 }}% margin</div></div>
+  <div class="card red"><div class="label">Operating costs 运营成本</div><div class="value">RM {{ total_operating|rm }}</div></div>
+  <div class="card {% if net >= 0 %}green{% else %}red{% endif %}"><div class="label">Net profit 净利</div><div class="value">RM {{ net|rm }}</div>
+    <div class="hint">{{ ((net / total_rev * 100)|round(1)) if total_rev else 0 }}% margin</div></div>
+</div>
+
+{% macro breakdown_rows(groups) %}
+  {% for cat, (amt, plist) in groups.items() %}
+  <tr>
+    <td style="padding-left:28px">
+      <details>
+        <summary style="cursor:pointer">{{ cat }} <span style="color:var(--muted);font-size:11px">({{ plist|length }} txn)</span></summary>
+        <table style="margin:6px 0 4px;font-size:12px">
+          {% for p in plist %}
+          <tr>
+            <td class="mono" style="padding:3px 8px;border:none">{{ p.pay_no }}</td>
+            <td style="padding:3px 8px;border:none">{{ p.supplier or '—' }}</td>
+            <td style="padding:3px 8px;border:none">{{ p.description[:50] }}</td>
+            <td class="num" style="padding:3px 8px;border:none">{{ p.amount|rm }}</td>
+          </tr>
+          {% endfor %}
+        </table>
+      </details>
+    </td>
+    <td class="num">{{ amt|rm }}</td>
+  </tr>
+  {% endfor %}
+{% endmacro %}
+
+<div class="tablewrap" style="max-width:820px">
+<table>
+  <tr class="section-row"><td>REVENUE 营收</td><td class="num"></td></tr>
+  {% for stream, amt in revenue.items() %}
+  <tr><td style="padding-left:28px">{{ stream }}</td><td class="num">{{ amt|rm }}</td></tr>
+  {% else %}
+  <tr><td style="padding-left:28px;color:var(--muted)">No sales recorded for {{ month }}</td><td class="num">0.00</td></tr>
+  {% endfor %}
+  <tr class="total-row"><td>Total Revenue 总营收</td><td class="num">{{ total_rev|rm }}</td></tr>
+
+  <tr class="section-row"><td>COST OF SALES 销售成本 (COGS)</td><td class="num"></td></tr>
+  {{ breakdown_rows(cogs) }}
+  {% if not cogs %}<tr><td style="padding-left:28px;color:var(--muted)">No COGS payments this month</td><td class="num">0.00</td></tr>{% endif %}
+  <tr class="total-row"><td>Total Cost of Sales</td><td class="num">{{ total_cogs|rm }}</td></tr>
+
+  <tr class="total-row" style="border-top:3px solid var(--brand-500)">
+    <td>GROSS PROFIT 毛利润</td><td class="num">{{ gross_profit|rm }}</td></tr>
+
+  <tr class="section-row"><td>OPERATING EXPENSES 运营费用 (OPEX)</td><td class="num"></td></tr>
+  {{ breakdown_rows(opex) }}
+  {% if other %}
+  <tr class="section-row"><td style="font-size:11px">UNGROUPED PAYMENTS 未分组 — assign a Group on the Payments page</td><td></td></tr>
+  {{ breakdown_rows(other) }}
+  {% endif %}
+  {% if payroll_total %}
+  <tr><td style="padding-left:28px">Payroll — confirmed run (employer cost) 薪资</td><td class="num">{{ payroll_total|rm }}</td></tr>
+  {% endif %}
+  {% if petty_out %}
+  <tr><td style="padding-left:28px">Petty cash spending 零用金支出</td><td class="num">{{ petty_out|rm }}</td></tr>
+  {% endif %}
+  <tr class="total-row"><td>Total Operating Costs 总运营成本</td><td class="num">{{ total_operating|rm }}</td></tr>
+
+  <tr class="total-row" style="border-top:3px solid var(--brand-500)">
+    <td style="font-size:15px">NET PROFIT 净利润 — {{ month }}</td>
+    <td class="num" style="font-size:15px;color:{% if net >= 0 %}var(--green){% else %}var(--red){% endif %}">{{ net|rm }}</td></tr>
+</table>
+</div>
+
+{% if capex %}
+<div class="panel" style="max-width:820px;margin-top:18px">
+  <h2>Capital purchases 资本开支 (CAPEX) — not in P&amp;L, shown for cash tracking</h2>
+  <div class="tablewrap" style="box-shadow:none;border:none">
+  <table>
+    {{ breakdown_rows(capex) }}
+    <tr class="total-row"><td>Total CAPEX this month</td><td class="num">{{ total_capex|rm }}</td></tr>
+  </table>
+  </div>
+  <div style="color:var(--muted);font-size:11.5px;margin-top:8px">
+    Assets (renovation, equipment) are capitalized, not expensed — they hit the P&amp;L over time as depreciation. This section tracks the cash going out.
+  </div>
+</div>
+{% endif %}
+{% endblock %}

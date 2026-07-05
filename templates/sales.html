@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="pagehead"><h1>🛒 Sales Record 销售记录</h1></div>
+<div class="sub">Daily takings by revenue stream — {{ month }}</div>
+
+<div class="cards">
+  {% for stream in M.STREAMS %}
+    {% if by_stream.get(stream) %}
+    <div class="card green"><div class="label">{{ stream }}</div><div class="value">RM {{ by_stream[stream]|rm }}</div></div>
+    {% endif %}
+  {% endfor %}
+  <div class="card blue"><div class="label">Total — {{ month }} 本月总计</div><div class="value">RM {{ by_stream.values()|sum|rm }}</div></div>
+</div>
+
+<div class="panel">
+  <h2>Record sale 记录销售</h2>
+  <form class="inline" method="post" action="/sales/new">
+    <div><label>Date</label><input type="date" name="pdate" value="{{ today }}"></div>
+    <div><label>Stream 类型</label><select name="stream">{% for s in M.STREAMS %}<option>{{ s }}</option>{% endfor %}</select></div>
+    <div style="flex:1;min-width:160px"><label>Description 描述</label><input name="description" style="width:100%"></div>
+    <div><label>Amount RM</label><input type="number" step="0.01" name="amount" required style="width:110px"></div>
+    <div><label>Method 方式</label><select name="method">{% for m in M.PAY_METHODS %}<option>{{ m }}</option>{% endfor %}</select></div>
+    <button type="submit">＋ Record 记录</button>
+  </form>
+</div>
+
+<div class="tablewrap">
+<table>
+  <tr><th>Date</th><th>Stream</th><th>Description</th><th class="num">Amount</th><th>Method</th><th>By</th></tr>
+  {% for s in entries %}
+  <tr>
+    <td>{{ s.date.strftime('%d/%m/%y') }}</td>
+    <td>{{ s.stream }}</td>
+    <td>{{ s.description }}</td>
+    <td class="num">{{ s.amount|rm }}</td>
+    <td>{{ s.method }}</td>
+    <td>{{ s.recorded_by }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="6" class="empty">No sales recorded yet.</td></tr>
+  {% endfor %}
+</table>
+</div>
+{% endblock %}
