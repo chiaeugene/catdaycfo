@@ -14,14 +14,32 @@ Base.metadata.create_all(engine)
 db = SessionLocal()
 
 USERS = [
-    ("eugene", "catday2026", "Eugene", "admin"),
-    ("karen", "catday2026", "Karen", "admin"),
+    ("jasmine", "catday2026", "Jasmine", "admin"),
 ]
 for username, pw, name, role in USERS:
     if not db.query(User).filter(User.username == username).first():
         db.add(User(username=username, password_hash=hash_password(pw),
                     display_name=name, role=role))
-        print(f"User created: {username} / {pw}  ({role})  - CHANGE PASSWORD AFTER FIRST LOGIN")
+        print(f"User created: {username}  ({role})")
+
+# Single-identity migration: only Jasmine stays active; normalize any
+# old names in existing records so one name appears system-wide.
+db.flush()
+for u in db.query(User).all():
+    u.active = u.username == "jasmine"
+OLD_NAMES = ("Eugene", "Karen", "Jason", "Aina")
+from app.models import Document, Payment, Voucher, Listing, PettyCashEntry, SalesEntry
+for model, fields in [
+    (Document, ("sender", "verified_by")),
+    (Voucher, ("created_by", "approved_by")),
+    (Listing, ("prepared_by",)),
+    (PettyCashEntry, ("recorded_by",)),
+    (SalesEntry, ("recorded_by",)),
+]:
+    for row in db.query(model).all():
+        for f in fields:
+            if getattr(row, f) in OLD_NAMES:
+                setattr(row, f, "Jasmine")
 
 # name, position, basic, allowance, epf_er, epf_ee, socso_er, socso_ee, eis_er, eis_ee
 STAFF = [

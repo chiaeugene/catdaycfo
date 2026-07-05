@@ -16,12 +16,16 @@
       <label style="text-align:center">Passcode 通行码</label>
       <input class="passfield" name="passcode" type="password" inputmode="numeric"
              autocomplete="one-time-code" maxlength="10" autofocus placeholder="••••••">
+      {% if profiles|length == 1 %}
+      <input type="hidden" name="user_id" value="{{ profiles[0].id }}">
+      {% else %}
       <label>Who are you 你是谁</label>
       <select name="user_id">
         {% for p in profiles %}
         <option value="{{ p.id }}">{{ p.display_name }} — {{ p.role }}</option>
         {% endfor %}
       </select>
+      {% endif %}
       <button type="submit">Enter 进入 →</button>
     </form>
   </div>

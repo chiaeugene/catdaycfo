@@ -70,16 +70,16 @@ def make_doc_pdf(title, lines, d):
 # ═══ 1. Documents + payments (verified pipeline) ═══
 # (day_offset, sender, supplier, description, amount, category, grp, doc_title)
 PURCHASES = [
-    (0, "Karen",  "Uptown Realty",        "Rental July 2026",                17000.00, "Rental",            "OPEX",  "RENTAL INVOICE JUL-2026"),
-    (0, "Karen",  "Whiskers Wholesale",   "Cat food bulk order 40 x 2kg",     1860.00, "Cat Supplies",      "COGS",  "INVOICE WW-3311"),
-    (1, "Aina",   "CleanPro Supplies",    "Cleaning chemicals + mop set",      412.60, "Maintenance",       "OPEX",  "RECEIPT CP-99213"),
-    (2, "Karen",  "TNB",                  "Electricity deposit adjustment",   1230.00, "Utilities",         "OPEX",  "TNB STATEMENT 06/26"),
-    (3, "Jason",  "TNJ Design",           "Renovation final touch-up works", 18500.00, "Renovation",        "CAPEX", "TNJ CLAIM #6"),
-    (4, "Aina",   "GroomMaster MY",       "Shampoo, dryers consumables",       684.30, "Grooming Supplies", "COGS",  "INVOICE GM-2207"),
-    (5, "Karen",  "Meow Media",           "Grand opening campaign boost",     3500.00, "Marketing",         "OPEX",  "INVOICE MM-0088"),
-    (6, "Karen",  "SoftInv Systems",      "Booking system subscription",       299.00, "Software",          "OPEX",  "INVOICE SI-77120"),
-    (7, "Jason",  "Litter King",          "Premium litter 30 bags",            945.00, "Cat Supplies",      "COGS",  "INVOICE LK-5501"),
-    (8, "Aina",   "Klinik Haiwan PJ",     "New cat health screening x4",       520.00, "Vet",               "OPEX",  "RECEIPT KH-1904"),
+    (0, "Jasmine",  "Uptown Realty",        "Rental July 2026",                17000.00, "Rental",            "OPEX",  "RENTAL INVOICE JUL-2026"),
+    (0, "Jasmine",  "Whiskers Wholesale",   "Cat food bulk order 40 x 2kg",     1860.00, "Cat Supplies",      "COGS",  "INVOICE WW-3311"),
+    (1, "Jasmine",   "CleanPro Supplies",    "Cleaning chemicals + mop set",      412.60, "Maintenance",       "OPEX",  "RECEIPT CP-99213"),
+    (2, "Jasmine",  "TNB",                  "Electricity deposit adjustment",   1230.00, "Utilities",         "OPEX",  "TNB STATEMENT 06/26"),
+    (3, "Jasmine",  "TNJ Design",           "Renovation final touch-up works", 18500.00, "Renovation",        "CAPEX", "TNJ CLAIM #6"),
+    (4, "Jasmine",   "GroomMaster MY",       "Shampoo, dryers consumables",       684.30, "Grooming Supplies", "COGS",  "INVOICE GM-2207"),
+    (5, "Jasmine",  "Meow Media",           "Grand opening campaign boost",     3500.00, "Marketing",         "OPEX",  "INVOICE MM-0088"),
+    (6, "Jasmine",  "SoftInv Systems",      "Booking system subscription",       299.00, "Software",          "OPEX",  "INVOICE SI-77120"),
+    (7, "Jasmine",  "Litter King",          "Premium litter 30 bags",            945.00, "Cat Supplies",      "COGS",  "INVOICE LK-5501"),
+    (8, "Jasmine",   "Klinik Haiwan PJ",     "New cat health screening x4",       520.00, "Vet",               "OPEX",  "RECEIPT KH-1904"),
 ]
 
 payments = []
@@ -97,7 +97,7 @@ for off, sender, supplier, desc, amt, cat, grp, title in PURCHASES:
                      sender=sender, section="Purchase" if grp == "CAPEX" else "Expense",
                      doc_type="Invoice", supplier=supplier, amount=amt, month=mstr(d),
                      description=desc, category=cat, file_path=rel, mime="application/pdf",
-                     status="Verified", ai_classified=True, verified_by="Eugene",
+                     status="Verified", ai_classified=True, verified_by="Jasmine",
                      verified_at=datetime.combine(d, datetime.min.time()) + timedelta(hours=20),
                      payment_id=p.id)
     db.add(doc)
@@ -105,8 +105,8 @@ for off, sender, supplier, desc, amt, cat, grp, title in PURCHASES:
 
 # 2 documents still pending verification (today's inbox)
 for sender, desc, amt, title in [
-    ("Aina", "Aircon servicing 4 units", 760.00, "QUOTE ACS-2288"),
-    ("Jason", "Cat trees x3 for lobby", 1240.00, "INVOICE PETDECO-41"),
+    ("Jasmine", "Aircon servicing 4 units", 760.00, "QUOTE ACS-2288"),
+    ("Jasmine", "Cat trees x3 for lobby", 1240.00, "INVOICE PETDECO-41"),
 ]:
     d = DAYS[-1]
     doc_no, rel = make_doc_pdf(title, [f"Date: {d:%d/%m/%Y}", f"Description: {desc}",
@@ -124,7 +124,7 @@ company = settings.get("COMPANY_NAME", "CATDAY SDN BHD")
 address = settings.get("COMPANY_ADDRESS", "Uptown PJ")
 
 
-def build_voucher(pays, payee, status, created="Eugene", approved=""):
+def build_voucher(pays, payee, status, created="Jasmine", approved=""):
     pv_no = counter("PV", "PV-")
     total = sum(p.amount for p in pays)
     items = [{"date": f"{p.date:%d/%m/%y}", "description": p.description, "amount": p.amount} for p in pays]
@@ -139,8 +139,8 @@ def build_voucher(pays, payee, status, created="Eugene", approved=""):
     return v
 
 
-v1 = build_voucher([payments[0]], "Uptown Realty", "Paid", approved="Karen")        # rental
-v2 = build_voucher([payments[1], payments[6]], "Whiskers & Litter Suppliers", "Approved", approved="Karen")
+v1 = build_voucher([payments[0]], "Uptown Realty", "Paid", approved="Jasmine")        # rental
+v2 = build_voucher([payments[1], payments[6]], "Whiskers & Litter Suppliers", "Approved", approved="Jasmine")
 v3 = build_voucher([payments[4]], "TNJ Design", "Draft")                              # renovation claim
 
 # Listing containing the paid + approved vouchers
@@ -149,7 +149,7 @@ vdata = [{"pv_no": v.pv_no, "date": f"{v.date:%d/%m/%y}", "payee": v.payee, "tot
          for v in (v1, v2)]
 rel = pdfgen.listing_pdf(pl_no, vdata, v1.total + v2.total, company, address)
 pl = M.Listing(pl_no=pl_no, date=DAYS[5], total=v1.total + v2.total, status="Submitted",
-               pdf_path=rel, prepared_by="Eugene")
+               pdf_path=rel, prepared_by="Jasmine")
 db.add(pl)
 db.flush()
 v1.listing_id = pl.id
@@ -157,15 +157,15 @@ v2.listing_id = pl.id
 
 # ═══ 3. Petty cash ═══
 db.add(M.PettyCashEntry(date=DAYS[0], description="Opening float", amount_in=5000,
-                        month=mstr(DAYS[0]), recorded_by="Eugene"))
+                        month=mstr(DAYS[0]), recorded_by="Jasmine"))
 PC = [
-    (1, "Parking + toll for supplier run", "Transport", 24.50, "Aina"),
-    (2, "Emergency cat treats (fussy guest)", "Cat Supplies", 48.90, "Karen"),
-    (3, "Staff lunch — opening week", "Staff Welfare", 156.00, "Karen"),
-    (5, "Light bulbs x6 reception", "Maintenance", 42.00, "Jason"),
-    (6, "Printer ink + paper", "Admin", 89.90, "Aina"),
-    (8, "Grab delivery — urgent shampoo", "Transport", 18.00, "Aina"),
-    (9, "Welcome-kit ribbons & tags", "Marketing", 65.40, "Karen"),
+    (1, "Parking + toll for supplier run", "Transport", 24.50, "Jasmine"),
+    (2, "Emergency cat treats (fussy guest)", "Cat Supplies", 48.90, "Jasmine"),
+    (3, "Staff lunch — opening week", "Staff Welfare", 156.00, "Jasmine"),
+    (5, "Light bulbs x6 reception", "Maintenance", 42.00, "Jasmine"),
+    (6, "Printer ink + paper", "Admin", 89.90, "Jasmine"),
+    (8, "Grab delivery — urgent shampoo", "Transport", 18.00, "Jasmine"),
+    (9, "Welcome-kit ribbons & tags", "Marketing", 65.40, "Jasmine"),
 ]
 for off, desc, cat, amt, by in PC:
     d = DAYS[off]
@@ -174,7 +174,7 @@ for off, desc, cat, amt, by in PC:
 
 # ═══ 4. Sales — every day ═══
 BOARD_DESC = ["Premium room", "Royal suite", "Premium room x2", "Long-stay premium"]
-STAFF_NAMES = ["Aina", "Karen", "Jason"]
+STAFF_NAMES = ["Jasmine"]
 sales_total = 0
 for i, d in enumerate(DAYS):
     # boarding grows through the soft launch
@@ -194,13 +194,13 @@ for i, d in enumerate(DAYS):
     if i in (3, 7):
         db.add(M.SalesEntry(date=d, stream="Retail", description="Cat accessories + treats",
                             amount=random.choice([65, 120, 240]), method="Cash",
-                            month=mstr(d), recorded_by="Aina"))
+                            month=mstr(d), recorded_by="Jasmine"))
     if i == 6:
         db.add(M.SalesEntry(date=d, stream="Membership", description="Founding member x2 (annual)",
-                            amount=2400, method="Bank Transfer", month=mstr(d), recorded_by="Karen"))
+                            amount=2400, method="Bank Transfer", month=mstr(d), recorded_by="Jasmine"))
     if i == 8:
         db.add(M.SalesEntry(date=d, stream="Cat Sales", description="Ragdoll kitten — deposit",
-                            amount=2500, method="Bank Transfer", month=mstr(d), recorded_by="Karen"))
+                            amount=2500, method="Bank Transfer", month=mstr(d), recorded_by="Jasmine"))
 
 # ═══ 5. Confirmed payroll run for Jun 2026 ═══
 run = M.PayrollRun(month="Jun 2026", run_date=date(2026, 6, 28), status="Confirmed")
