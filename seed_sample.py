@@ -24,6 +24,12 @@ random.seed(42)
 Base.metadata.create_all(engine)
 db = SessionLocal()
 
+# Idempotency guard — never duplicate sample data on redeploys/restarts
+if db.query(M.SalesEntry).count() > 0:
+    print("Sample data already present - skipping.")
+    db.close()
+    raise SystemExit(0)
+
 UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "uploads")
 D0 = date(2026, 6, 26)          # first day of operations
 DAYS = [D0 + timedelta(days=i) for i in range(10)]   # 26 Jun – 5 Jul

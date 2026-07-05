@@ -5,7 +5,7 @@ services:
     plan: starter
     region: singapore
     buildCommand: pip install -r requirements.txt
-    startCommand: python seed.py && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    startCommand: python seed.py && python seed_sample.py && uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     disk:
       name: catday-data
