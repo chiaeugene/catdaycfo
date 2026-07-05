@@ -32,6 +32,10 @@ templates.env.filters["rm"] = lambda v: f"{(v or 0):,.2f}"
 app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
 
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "catdayhook")
+# URL-safe token derived from the secret — base64 secrets contain +/= which
+# break URL path segments, so the webhook path uses this hex digest instead.
+import hashlib as _hashlib
+WEBHOOK_TOKEN = _hashlib.sha256(WEBHOOK_SECRET.encode()).hexdigest()[:40]
 
 NAV = [
     ("dashboard", "/", "🏠", "Dashboard", ("admin", "manager", "staff")),
@@ -705,7 +709,7 @@ async def settings_save(request: Request, db: Session = Depends(get_db)):
 # ─────────────────────────── TELEGRAM WEBHOOK ───────────────────────────
 @app.post("/telegram/webhook/{secret}")
 async def telegram_webhook(secret: str, request: Request, db: Session = Depends(get_db)):
-    if secret != WEBHOOK_SECRET:
+    if secret not in (WEBHOOK_SECRET, WEBHOOK_TOKEN):
         raise HTTPException(403)
     update = await request.json()
     try:
