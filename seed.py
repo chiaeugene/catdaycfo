@@ -48,6 +48,7 @@ DEFAULTS = {
     "COMPANY_ADDRESS": "Uptown PJ, Petaling Jaya",
     "TELEGRAM_WHITELIST": "*",
     "PETTY_CASH_FLOAT": "5000",
+    "PASSCODE": "125180",
 }
 for k, v in DEFAULTS.items():
     if not db.get(Setting, k):

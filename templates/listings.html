@@ -1,34 +1,56 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="pagehead"><h1>📑 Payment Listings 付款清单</h1></div>
-<div class="sub">Voucher batches for approval and bank processing</div>
+<div class="sub">Voucher batches for approval and bank processing — every voucher expands to its payments and original documents, so the person making the bank transaction can verify each line.</div>
 
 <div class="tablewrap">
 <table>
-  <tr><th>PL #</th><th>Date</th><th>Vouchers</th><th class="num">Total</th>
+  <tr><th>PL #</th><th>Date</th><th class="num">Total</th>
       <th>Status</th><th>PDF</th><th>Prepared By</th><th>Actions</th></tr>
   {% for l in listings %}
   <tr>
-    <td class="mono">{{ l.pl_no }}</td>
+    <td class="mono"><b>{{ l.pl_no }}</b></td>
     <td>{{ l.date.strftime('%d/%m/%y') }}</td>
-    <td class="mono">{{ l.vouchers|map(attribute='pv_no')|join(', ') }}</td>
-    <td class="num">{{ l.total|rm }}</td>
+    <td class="num" style="font-weight:700">{{ l.total|rm }}</td>
     <td><span class="badge {{ l.status|lower }}">{{ l.status }}</span></td>
-    <td><a href="/files/{{ l.pdf_path }}" target="_blank">📄 PDF</a></td>
+    <td><a class="docchip" href="/files/{{ l.pdf_path }}" target="_blank">📄 Listing PDF</a></td>
     <td>{{ l.prepared_by }}</td>
     <td>
       <div class="actions">
         {% if l.status == 'Draft' %}
-        <form method="post" action="/listings/{{ l.id }}/action"><input type="hidden" name="action" value="submit"><button class="small" type="submit" title="Submit for approval/bank">📤 Submit</button></form>
+        <form method="post" action="/listings/{{ l.id }}/action"><input type="hidden" name="action" value="submit"><button class="small" type="submit">📤 Submit</button></form>
         {% endif %}
         {% if l.status in ['Draft','Submitted'] %}
-        <form method="post" action="/listings/{{ l.id }}/action"><input type="hidden" name="action" value="processed"><button class="small success" type="submit" title="Bank has processed this batch">✓ Processed</button></form>
+        <form method="post" action="/listings/{{ l.id }}/action"><input type="hidden" name="action" value="processed"><button class="small success" type="submit">✓ Processed</button></form>
         {% endif %}
       </div>
     </td>
   </tr>
+  <tr class="subrow">
+    <td colspan="7" style="padding-bottom:14px">
+      {% for v in l.vouchers %}
+      <div style="margin:4px 0 8px">
+        <div style="font-size:11.5px;font-weight:800;color:var(--brand-800);margin-bottom:5px">
+          {{ v.pv_no }} — {{ v.payee }} · RM {{ v.total|rm }}
+          <a class="docchip" style="margin-left:6px" href="/files/{{ v.pdf_path }}" target="_blank">📄 PV PDF</a>
+        </div>
+        <div class="docchips">
+          {% for p in v.payments %}
+            {% if p.documents %}
+              {% for d in p.documents %}
+              <a class="docchip" href="/files/{{ d.file_path }}" target="_blank">📎 {{ p.pay_no }} · {{ p.description[:34] }} · RM {{ p.amount|rm }}</a>
+              {% endfor %}
+            {% else %}
+              <span class="docchip none">{{ p.pay_no }} · {{ p.description[:34] }} · RM {{ p.amount|rm }} (no document)</span>
+            {% endif %}
+          {% endfor %}
+        </div>
+      </div>
+      {% endfor %}
+    </td>
+  </tr>
   {% else %}
-  <tr><td colspan="8" class="empty">No listings yet — tick vouchers on the Vouchers page and click Create Payment Listing.</td></tr>
+  <tr><td colspan="7" class="empty">No listings yet — tick vouchers on the Vouchers page and click Create Payment Listing.</td></tr>
   {% endfor %}
 </table>
 </div>

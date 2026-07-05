@@ -12,15 +12,17 @@
 
 <div class="panel">
   <h2>Run payroll 生成薪资单</h2>
-  <form class="inline" method="post" action="/payroll/run">
-    <div><label>Month (e.g. Jul 2026)</label><input name="month" value="{{ today.strftime('%b %Y') }}" required></div>
-    <button type="submit">▶ Create draft run 生成草稿</button>
-    <span style="color:var(--muted);font-size:12px">Creates an editable draft from the presets below — adjust overtime/bonus/deductions per person, then confirm.</span>
+  <form method="post" action="/payroll/run">
+    <div class="formrow cols-run">
+      <div><label>Month 月份</label><input name="month" value="{{ today.strftime('%b %Y') }}" required></div>
+      <div class="f-btn"><button type="submit">▶ Create draft run</button></div>
+      <div style="align-self:center;color:var(--muted);font-size:12px">Creates an editable draft from the presets — adjust overtime / bonus / deductions per person, then confirm.</div>
+    </div>
   </form>
 </div>
 
 <h2>Payroll runs 发放记录</h2>
-<div class="tablewrap" style="margin-bottom:22px">
+<div class="tablewrap" style="margin-bottom:24px">
   <table>
     <tr><th>Month</th><th>Run date</th><th class="num">Take-home</th><th class="num">Employer cost</th><th>Status</th><th>Staff</th><th></th></tr>
     {% for r in runs %}
@@ -31,7 +33,7 @@
       <td class="num">{{ r.total_cost|rm }}</td>
       <td><span class="badge {{ r.status|lower }}">{{ r.status }}</span></td>
       <td>{{ r.items|length }}</td>
-      <td><a class="btn secondary small" style="padding:4px 12px;font-size:11.5px" href="/payroll/run/{{ r.id }}">Open → {% if r.status == 'Confirmed' %}payslips{% else %}edit draft{% endif %}</a></td>
+      <td><a class="btn secondary small" href="/payroll/run/{{ r.id }}">{% if r.status == 'Confirmed' %}📄 Payslips{% else %}✏️ Edit draft{% endif %}</a></td>
     </tr>
     {% else %}
     <tr><td colspan="7" class="empty">No payroll runs yet — create a draft above.</td></tr>
@@ -54,46 +56,73 @@
       <td class="num">{{ s.epf_employer|rm }} / {{ s.epf_employee|rm }}</td>
       <td class="num">{{ s.socso_employer|rm }} / {{ s.socso_employee|rm }}</td>
       <td class="num">{{ s.eis_employer|rm }} / {{ s.eis_employee|rm }}</td>
-      <td class="num" style="color:var(--green);font-weight:700">{{ s.net_pay|rm }}</td>
+      <td class="num" style="color:var(--green);font-weight:800">{{ s.net_pay|rm }}</td>
       <td class="num" style="color:var(--red);font-weight:700">{{ s.employer_cost|rm }}</td>
-      <td>
-        <details class="rowedit">
-          <summary>edit</summary>
-          <form method="post" action="/payroll/staff/{{ s.id }}/update" style="margin-top:10px;display:grid;grid-template-columns:repeat(4,minmax(90px,1fr));gap:8px;min-width:460px">
-            <div style="grid-column:1/3"><label>Name</label><input name="name" value="{{ s.name }}" class="slim" style="width:100%"></div>
-            <div style="grid-column:3/5"><label>Position</label><input name="position" value="{{ s.position }}" class="slim" style="width:100%"></div>
-            <div><label>Basic</label><input type="number" step="0.01" name="base_salary" value="{{ s.base_salary }}" class="slim" style="width:100%"></div>
-            <div><label>Allowance</label><input type="number" step="0.01" name="allowance" value="{{ s.allowance }}" class="slim" style="width:100%"></div>
-            <div><label>EPF Employer</label><input type="number" step="0.01" name="epf_employer" value="{{ s.epf_employer }}" class="slim" style="width:100%"></div>
-            <div><label>EPF Employee</label><input type="number" step="0.01" name="epf_employee" value="{{ s.epf_employee }}" class="slim" style="width:100%"></div>
-            <div><label>SOCSO Employer</label><input type="number" step="0.01" name="socso_employer" value="{{ s.socso_employer }}" class="slim" style="width:100%"></div>
-            <div><label>SOCSO Employee</label><input type="number" step="0.01" name="socso_employee" value="{{ s.socso_employee }}" class="slim" style="width:100%"></div>
-            <div><label>EIS Employer</label><input type="number" step="0.01" name="eis_employer" value="{{ s.eis_employer }}" class="slim" style="width:100%"></div>
-            <div><label>EIS Employee</label><input type="number" step="0.01" name="eis_employee" value="{{ s.eis_employee }}" class="slim" style="width:100%"></div>
-            <div style="display:flex;align-items:end;gap:6px"><label style="margin:0"><input type="checkbox" name="active" {% if s.active %}checked{% endif %} style="width:auto"> Active</label></div>
-            <div style="display:flex;align-items:end"><button class="small" type="submit">💾 Save</button></div>
-          </form>
-        </details>
-      </td>
+      <td><button class="small secondary" onclick="document.getElementById('dlg-staff-{{ s.id }}').showModal()">✏️ Edit</button></td>
     </tr>
     {% endfor %}
   </table>
 </div>
 
-<div class="panel" style="margin-top:18px">
-  <h2>Add staff 添加员工</h2>
-  <form class="inline" method="post" action="/payroll/staff/new">
-    <div><label>Name</label><input name="name" required></div>
-    <div><label>Position</label><input name="position"></div>
-    <div><label>Basic RM</label><input type="number" step="0.01" name="base_salary" style="width:100px"></div>
-    <div><label>Allowance</label><input type="number" step="0.01" name="allowance" style="width:90px"></div>
-    <div><label>EPF Er</label><input type="number" step="0.01" name="epf_employer" style="width:80px"></div>
-    <div><label>EPF Ee</label><input type="number" step="0.01" name="epf_employee" style="width:80px"></div>
-    <div><label>SOCSO Er</label><input type="number" step="0.01" name="socso_employer" style="width:80px"></div>
-    <div><label>SOCSO Ee</label><input type="number" step="0.01" name="socso_employee" style="width:80px"></div>
-    <div><label>EIS Er</label><input type="number" step="0.01" name="eis_employer" style="width:70px"></div>
-    <div><label>EIS Ee</label><input type="number" step="0.01" name="eis_employee" style="width:70px"></div>
-    <button type="submit">＋ Add</button>
+{# ── Staff edit modals ── #}
+{% for s in staff %}
+<dialog id="dlg-staff-{{ s.id }}">
+  <form method="post" action="/payroll/staff/{{ s.id }}/update">
+    <div class="dlg-head"><b>✏️ {{ s.name }}</b>
+      <button type="button" class="x" onclick="this.closest('dialog').close()">✕</button></div>
+    <div class="dlg-body">
+      <div class="dlg-grid">
+        <div><label>Name</label><input name="name" value="{{ s.name }}" required></div>
+        <div><label>Position</label><input name="position" value="{{ s.position }}"></div>
+        <div><label>Basic salary RM</label><input type="number" step="0.01" name="base_salary" value="{{ s.base_salary }}"></div>
+        <div><label>Allowance RM</label><input type="number" step="0.01" name="allowance" value="{{ s.allowance }}"></div>
+        <div><label>EPF — Employer</label><input type="number" step="0.01" name="epf_employer" value="{{ s.epf_employer }}"></div>
+        <div><label>EPF — Employee</label><input type="number" step="0.01" name="epf_employee" value="{{ s.epf_employee }}"></div>
+        <div><label>SOCSO — Employer</label><input type="number" step="0.01" name="socso_employer" value="{{ s.socso_employer }}"></div>
+        <div><label>SOCSO — Employee</label><input type="number" step="0.01" name="socso_employee" value="{{ s.socso_employee }}"></div>
+        <div><label>EIS — Employer</label><input type="number" step="0.01" name="eis_employer" value="{{ s.eis_employer }}"></div>
+        <div><label>EIS — Employee</label><input type="number" step="0.01" name="eis_employee" value="{{ s.eis_employee }}"></div>
+        <div class="full" style="display:flex;align-items:center;gap:8px">
+          <input type="checkbox" name="active" {% if s.active %}checked{% endif %} id="act-{{ s.id }}" style="width:16px;height:16px">
+          <label for="act-{{ s.id }}" style="margin:0">Active employee 在职</label>
+        </div>
+      </div>
+    </div>
+    <div class="dlg-foot">
+      <button type="button" class="ghost" onclick="this.closest('dialog').close()">Cancel</button>
+      <button type="submit">💾 Save changes</button>
+    </div>
   </form>
+</dialog>
+{% endfor %}
+
+<div class="panel" style="margin-top:20px">
+  <h2>Add staff 添加员工</h2>
+  <button class="secondary" onclick="document.getElementById('dlg-newstaff').showModal()">＋ New staff member</button>
 </div>
+
+<dialog id="dlg-newstaff">
+  <form method="post" action="/payroll/staff/new">
+    <div class="dlg-head"><b>＋ New staff member</b>
+      <button type="button" class="x" onclick="this.closest('dialog').close()">✕</button></div>
+    <div class="dlg-body">
+      <div class="dlg-grid">
+        <div><label>Name</label><input name="name" required></div>
+        <div><label>Position</label><input name="position"></div>
+        <div><label>Basic salary RM</label><input type="number" step="0.01" name="base_salary" value="0"></div>
+        <div><label>Allowance RM</label><input type="number" step="0.01" name="allowance" value="0"></div>
+        <div><label>EPF — Employer</label><input type="number" step="0.01" name="epf_employer" value="0"></div>
+        <div><label>EPF — Employee</label><input type="number" step="0.01" name="epf_employee" value="0"></div>
+        <div><label>SOCSO — Employer</label><input type="number" step="0.01" name="socso_employer" value="0"></div>
+        <div><label>SOCSO — Employee</label><input type="number" step="0.01" name="socso_employee" value="0"></div>
+        <div><label>EIS — Employer</label><input type="number" step="0.01" name="eis_employer" value="0"></div>
+        <div><label>EIS — Employee</label><input type="number" step="0.01" name="eis_employee" value="0"></div>
+      </div>
+    </div>
+    <div class="dlg-foot">
+      <button type="button" class="ghost" onclick="this.closest('dialog').close()">Cancel</button>
+      <button type="submit">＋ Add staff</button>
+    </div>
+  </form>
+</dialog>
 {% endblock %}

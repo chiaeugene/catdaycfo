@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="pagehead"><h1>🧾 Payment Vouchers 付款凭单</h1></div>
-<div class="sub">Approve → mark Paid when banked. Tick unlisted vouchers to batch them into a Payment Listing.</div>
+<div class="sub">Each voucher shows its payments with links to the original supporting documents — verify before approving or paying. Tick unlisted vouchers to batch them into a Payment Listing.</div>
 
 <form method="post" action="/listings/create">
 <div class="tablewrap">
@@ -9,7 +9,7 @@
   <tr>
     <th class="checkbox-cell"><input type="checkbox" id="selall" onchange="toggleAll(this)" title="Select all listable"></th>
     <th>PV #</th><th>Date</th><th>Payee</th>
-    <th class="num">Total</th><th>Payments</th><th>Status</th><th>Listing</th><th>PDF</th><th>Actions</th></tr>
+    <th class="num">Total</th><th>Status</th><th>Listing</th><th>PDF</th><th>Actions</th></tr>
   {% for v in vouchers %}
   <tr>
     <td class="checkbox-cell">
@@ -17,28 +17,43 @@
       <input type="checkbox" name="pv_ids" value="{{ v.id }}" data-amt="{{ v.total }}" onchange="updateBar()">
       {% endif %}
     </td>
-    <td class="mono">{{ v.pv_no }}</td>
+    <td class="mono"><b>{{ v.pv_no }}</b></td>
     <td>{{ v.date.strftime('%d/%m/%y') }}</td>
     <td>{{ v.payee }}</td>
-    <td class="num">{{ v.total|rm }}</td>
-    <td class="mono">{{ v.payments|map(attribute='pay_no')|join(', ') }}</td>
+    <td class="num" style="font-weight:700">{{ v.total|rm }}</td>
     <td><span class="badge {{ v.status|lower }}">{{ v.status }}</span></td>
     <td class="mono">{% if v.listing %}{{ v.listing.pl_no }}{% else %}—{% endif %}</td>
-    <td><a href="/files/{{ v.pdf_path }}" target="_blank">📄 PDF</a></td>
+    <td><a class="docchip" href="/files/{{ v.pdf_path }}" target="_blank">📄 Voucher PDF</a></td>
     <td>
       <div class="actions">
         {% if v.status == 'Draft' %}
-        <form method="post" action="/vouchers/{{ v.id }}/action"><input type="hidden" name="action" value="approve"><button class="small success" type="submit" title="Approve this voucher">✓ Approve</button></form>
+        <form method="post" action="/vouchers/{{ v.id }}/action"><input type="hidden" name="action" value="approve"><button class="small success" type="submit">✓ Approve</button></form>
         {% endif %}
         {% if v.status in ['Draft','Approved'] %}
-        <form method="post" action="/vouchers/{{ v.id }}/action"><input type="hidden" name="action" value="paid"><button class="small" type="submit" title="Mark as paid — payments inside become Paid">💸 Mark Paid</button></form>
-        <form method="post" action="/vouchers/{{ v.id }}/action"><input type="hidden" name="action" value="void"><button class="small danger" type="submit" title="Void — releases the payments back">✗ Void</button></form>
+        <form method="post" action="/vouchers/{{ v.id }}/action"><input type="hidden" name="action" value="paid"><button class="small" type="submit">💸 Mark Paid</button></form>
+        <form method="post" action="/vouchers/{{ v.id }}/action"><input type="hidden" name="action" value="void"><button class="small danger" type="submit">✗ Void</button></form>
         {% endif %}
       </div>
     </td>
   </tr>
+  <tr class="subrow">
+    <td></td>
+    <td colspan="8" style="padding-bottom:12px">
+      <div class="docchips">
+        {% for p in v.payments %}
+          {% if p.documents %}
+            {% for d in p.documents %}
+            <a class="docchip" href="/files/{{ d.file_path }}" target="_blank">📎 {{ p.pay_no }} · {{ p.description[:34] }} · RM {{ p.amount|rm }}</a>
+            {% endfor %}
+          {% else %}
+            <span class="docchip none">{{ p.pay_no }} · {{ p.description[:34] }} · RM {{ p.amount|rm }} (no document)</span>
+          {% endif %}
+        {% endfor %}
+      </div>
+    </td>
+  </tr>
   {% else %}
-  <tr><td colspan="10" class="empty">No vouchers yet — tick payments on the Payments page and click Create Payment Voucher.</td></tr>
+  <tr><td colspan="9" class="empty">No vouchers yet — tick payments on the Payments page and click Create Payment Voucher.</td></tr>
   {% endfor %}
 </table>
 </div>

@@ -10,10 +10,12 @@
 
 <div class="panel">
   <h2>Upload manually 手动上传</h2>
-  <form class="inline" method="post" action="/documents/upload" enctype="multipart/form-data">
-    <div><label>File 文件</label><input type="file" name="file" required accept="image/*,.pdf"></div>
-    <div style="flex:1"><label>Description 描述 (optional)</label><input name="description" style="width:100%"></div>
-    <button type="submit">⬆ Upload 上传</button>
+  <form method="post" action="/documents/upload" enctype="multipart/form-data">
+    <div class="formrow cols-upload">
+      <div><label>File 文件</label><input type="file" name="file" required accept="image/*,.pdf" style="padding-top:7px"></div>
+      <div><label>Description 描述 (optional)</label><input name="description"></div>
+      <div class="f-btn"><button type="submit">⬆ Upload 上传</button></div>
+    </div>
   </form>
 </div>
 

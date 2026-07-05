@@ -10,34 +10,33 @@
     <div class="hint">Float target: RM {{ float_target|rm }}</div>
     <div class="progress"><div style="width:{{ [100, (balance / float_target * 100)|round]|min if float_target else 0 }}%"></div></div>
   </div>
-  <div class="card red"><div class="label">Spent — {{ month }} 本月支出</div><div class="value">RM {{ mo_out|rm }}</div></div>
-  <div class="card green"><div class="label">Top-ups — {{ month }} 本月补充</div><div class="value">RM {{ mo_in|rm }}</div></div>
-  <div class="card blue">
-    <div class="label">To refill float 需补充</div>
-    <div class="value">RM {{ (float_target - balance if float_target > balance else 0)|rm }}</div>
-  </div>
+  <div class="card red"><div class="label">Spent — {{ month }} 支出</div><div class="value">RM {{ mo_out|rm }}</div></div>
+  <div class="card green"><div class="label">Top-ups — {{ month }} 补充</div><div class="value">RM {{ mo_in|rm }}</div></div>
+  <div class="card blue"><div class="label">To refill float 需补充</div>
+    <div class="value">RM {{ (float_target - balance if float_target > balance else 0)|rm }}</div></div>
 </div>
 
-<div class="grid2">
-  <div class="panel">
-    <h2>Record spending 记录支出</h2>
-    <form class="inline" method="post" action="/pettycash/new">
-      <div><label>Date</label><input type="date" name="pdate" value="{{ today }}"></div>
-      <div style="flex:1;min-width:160px"><label>What was it for 用途</label><input name="description" required style="width:100%"></div>
-      <div><label>Category</label><select name="category"><option value=""></option>{% for c in M.CATEGORIES %}<option>{{ c }}</option>{% endfor %}</select></div>
-      <div><label>Amount RM</label><input type="number" step="0.01" name="amount_out" required style="width:110px"></div>
-      <button type="submit" class="danger" style="border-width:0;background:var(--red);color:#fff">− Spend 支出</button>
-    </form>
-  </div>
-  <div class="panel">
-    <h2>Top up float 补充零用金</h2>
-    <form class="inline" method="post" action="/pettycash/new">
-      <div><label>Date</label><input type="date" name="pdate" value="{{ today }}"></div>
-      <div style="flex:1;min-width:160px"><label>Source 来源</label><input name="description" value="Petty cash replenishment" style="width:100%"></div>
-      <div><label>Amount RM</label><input type="number" step="0.01" name="amount_in" required style="width:110px"></div>
-      <button type="submit" class="success">＋ Top up 补充</button>
-    </form>
-  </div>
+<div class="panel">
+  <h2>New entry 新记录</h2>
+  <form method="post" action="/pettycash/new" id="pcform">
+    <div class="formrow" style="grid-template-columns:150px 132px minmax(180px,1fr) 160px 130px auto">
+      <div>
+        <label>Type 类型</label>
+        <select id="pctype" onchange="pcSwitch()">
+          <option value="out">− Spending 支出</option>
+          <option value="in">＋ Top up 补充</option>
+        </select>
+      </div>
+      <div class="f-date"><label>Date 日期</label><input type="date" name="pdate" value="{{ today }}"></div>
+      <div><label>Description 描述</label><input name="description" id="pcdesc" required placeholder="What was it for?"></div>
+      <div id="pccatwrap"><label>Category 类别</label>
+        <select name="category"><option value=""></option>{% for c in M.CATEGORIES %}<option>{{ c }}</option>{% endfor %}</select></div>
+      <div><label>Amount RM 金额</label><input type="number" step="0.01" min="0.01" id="pcamount" required></div>
+      <div class="f-btn"><button type="submit" id="pcbtn">− Record 记录</button></div>
+    </div>
+    <input type="hidden" name="amount_out" id="f_out">
+    <input type="hidden" name="amount_in" id="f_in">
+  </form>
 </div>
 
 <div class="filters">
@@ -47,34 +46,50 @@
   {% endfor %}
 </div>
 
-<div class="grid2">
-  <div class="tablewrap" style="grid-column:1 / -1">
-    <table>
-      <tr><th>Date</th><th>Description</th><th>Category</th>
-          <th class="num">Out 支出</th><th class="num">In 补充</th><th class="num">Balance 余额</th><th>By</th></tr>
-      {% for e, bal in rows %}
-      <tr>
-        <td>{{ e.date.strftime('%d/%m/%y') }}</td>
-        <td>{% if e.document %}<a href="/files/{{ e.document.file_path }}" target="_blank">{{ e.description }} 📎</a>{% else %}{{ e.description }}{% endif %}</td>
-        <td>{{ e.category }}</td>
-        <td class="num" style="color:var(--red);font-weight:600">{{ '−' + (e.amount_out|rm) if e.amount_out else '' }}</td>
-        <td class="num" style="color:var(--green);font-weight:600">{{ '+' + (e.amount_in|rm) if e.amount_in else '' }}</td>
-        <td class="num"><b>{{ bal|rm }}</b></td>
-        <td>{{ e.recorded_by }}</td>
-      </tr>
-      {% else %}
-      <tr><td colspan="7" class="empty">No entries {% if month_filtered %}for {{ month }}{% endif %} yet.</td></tr>
-      {% endfor %}
-    </table>
-  </div>
+<div class="tablewrap">
+  <table>
+    <tr><th>Date</th><th>Description</th><th>Category</th>
+        <th class="num">Out 支出</th><th class="num">In 补充</th><th class="num">Balance 余额</th><th>By</th></tr>
+    {% for e, bal in rows %}
+    <tr>
+      <td>{{ e.date.strftime('%d/%m/%y') }}</td>
+      <td>{% if e.document %}<a href="/files/{{ e.document.file_path }}" target="_blank">{{ e.description }} 📎</a>{% else %}{{ e.description }}{% endif %}</td>
+      <td>{{ e.category }}</td>
+      <td class="num" style="color:var(--red);font-weight:700">{{ '−' + (e.amount_out|rm) if e.amount_out else '' }}</td>
+      <td class="num" style="color:var(--green);font-weight:700">{{ '+' + (e.amount_in|rm) if e.amount_in else '' }}</td>
+      <td class="num"><b>{{ bal|rm }}</b></td>
+      <td>{{ e.recorded_by }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="7" class="empty">No entries {% if month_filtered %}for {{ month }}{% endif %} yet.</td></tr>
+    {% endfor %}
+  </table>
 </div>
 
 {% if by_cat %}
-<div class="panel" style="max-width:440px">
+<div class="panel" style="max-width:460px;margin-top:18px">
   <h2>Where the cash went — {{ month }} 支出分布</h2>
   {% for cat, amt in by_cat.items()|sort(attribute='1', reverse=true) %}
   <div class="kv"><span>{{ cat }}</span><b>RM {{ amt|rm }}</b></div>
   {% endfor %}
 </div>
 {% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+function pcSwitch() {
+  const isOut = document.getElementById('pctype').value === 'out';
+  document.getElementById('pccatwrap').style.visibility = isOut ? 'visible' : 'hidden';
+  document.getElementById('pcbtn').textContent = isOut ? '− Record 记录' : '＋ Top up 补充';
+  document.getElementById('pcbtn').className = isOut ? '' : 'success';
+  document.getElementById('pcdesc').value = isOut ? '' : 'Petty cash replenishment';
+}
+document.getElementById('pcform').addEventListener('submit', function() {
+  const isOut = document.getElementById('pctype').value === 'out';
+  const amt = document.getElementById('pcamount').value;
+  document.getElementById('f_out').value = isOut ? amt : 0;
+  document.getElementById('f_in').value = isOut ? 0 : amt;
+});
+</script>
 {% endblock %}

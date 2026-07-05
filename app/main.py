@@ -70,18 +70,26 @@ def parse_date(s: str) -> date:
     return datetime.strptime(s, "%Y-%m-%d").date() if s else date.today()
 
 
-# ─────────────────────────── AUTH ───────────────────────────
+# ─────────────────────────── AUTH (passcode) ───────────────────────────
+def _login_ctx(db: Session, error: str = ""):
+    profiles = db.query(M.User).filter(M.User.active == True).order_by(M.User.id).all()  # noqa: E712
+    return {"profiles": profiles, "error": error}
+
+
 @app.get("/login", response_class=HTMLResponse)
-def login_page(request: Request):
-    return templates.TemplateResponse(request, "login.html", {})
+def login_page(request: Request, db: Session = Depends(get_db)):
+    return templates.TemplateResponse(request, "login.html", _login_ctx(db))
 
 
 @app.post("/login")
-def login(request: Request, username: str = Form(...), password: str = Form(...),
+def login(request: Request, passcode: str = Form(...), user_id: int = Form(...),
           db: Session = Depends(get_db)):
-    user = db.query(M.User).filter(M.User.username == username.strip().lower()).first()
-    if not user or not user.active or not verify_password(password, user.password_hash):
-        return templates.TemplateResponse(request, "login.html", {"error": "Invalid login  登录失败"})
+    setting = db.get(M.Setting, "PASSCODE")
+    expected = (setting.value if setting else "") or os.environ.get("PASSCODE", "125180")
+    user = db.get(M.User, user_id)
+    if passcode.strip() != expected or not user or not user.active:
+        return templates.TemplateResponse(request, "login.html",
+                                          _login_ctx(db, "Wrong passcode  密码错误"))
     request.session["uid"] = user.id
     return RedirectResponse("/", status_code=302)
 
@@ -683,7 +691,7 @@ async def settings_save(request: Request, db: Session = Depends(get_db)):
     if not me or me.role != "admin":
         return RedirectResponse("/", status_code=302)
     form = await request.form()
-    for key in ("COMPANY_NAME", "COMPANY_ADDRESS", "TELEGRAM_WHITELIST", "PETTY_CASH_FLOAT"):
+    for key in ("COMPANY_NAME", "COMPANY_ADDRESS", "TELEGRAM_WHITELIST", "PETTY_CASH_FLOAT", "PASSCODE"):
         if key in form:
             s = db.get(M.Setting, key)
             if not s:
