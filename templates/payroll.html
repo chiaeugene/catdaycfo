@@ -1,6 +1,7 @@
 {% extends "base.html" %}
+{% from "icons.html" import icon %}
 {% block content %}
-<div class="pagehead"><h1>💰 Payroll 薪资管理</h1></div>
+<div class="pagehead"><h1>Payroll 薪资管理</h1></div>
 <div class="sub">Preset each staff member's salary and statutory contributions, then run payroll monthly. Payslips are generated on confirmation.</div>
 
 <div class="cards">
@@ -15,7 +16,7 @@
   <form method="post" action="/payroll/run">
     <div class="formrow cols-run">
       <div><label>Month 月份</label><input name="month" value="{{ today.strftime('%b %Y') }}" required></div>
-      <div class="f-btn"><button type="submit">▶ Create draft run</button></div>
+      <div class="f-btn"><button type="submit">{{ icon('play', 13) }} Create draft run</button></div>
       <div style="align-self:center;color:var(--muted);font-size:12px">Creates an editable draft from the presets — adjust overtime / bonus / deductions per person, then confirm.</div>
     </div>
   </form>
@@ -33,7 +34,7 @@
       <td class="num">{{ r.total_cost|rm }}</td>
       <td><span class="badge {{ r.status|lower }}">{{ r.status }}</span></td>
       <td>{{ r.items|length }}</td>
-      <td><a class="btn secondary small" href="/payroll/run/{{ r.id }}">{% if r.status == 'Confirmed' %}📄 Payslips{% else %}✏️ Edit draft{% endif %}</a></td>
+      <td><a class="btn secondary small" href="/payroll/run/{{ r.id }}">{% if r.status == 'Confirmed' %}Payslips{% else %}Edit draft{% endif %}</a></td>
     </tr>
     {% else %}
     <tr><td colspan="7" class="empty">No payroll runs yet — create a draft above.</td></tr>
@@ -58,7 +59,7 @@
       <td class="num">{{ s.eis_employer|rm }} / {{ s.eis_employee|rm }}</td>
       <td class="num" style="color:var(--green);font-weight:800">{{ s.net_pay|rm }}</td>
       <td class="num" style="color:var(--red);font-weight:700">{{ s.employer_cost|rm }}</td>
-      <td><button class="small secondary" onclick="document.getElementById('dlg-staff-{{ s.id }}').showModal()">✏️ Edit</button></td>
+      <td><button class="small secondary" onclick="document.getElementById('dlg-staff-{{ s.id }}').showModal()">Edit</button></td>
     </tr>
     {% endfor %}
   </table>
@@ -68,7 +69,7 @@
 {% for s in staff %}
 <dialog id="dlg-staff-{{ s.id }}">
   <form method="post" action="/payroll/staff/{{ s.id }}/update">
-    <div class="dlg-head"><b>✏️ {{ s.name }}</b>
+    <div class="dlg-head"><b>{{ s.name }}</b>
       <button type="button" class="x" onclick="this.closest('dialog').close()">✕</button></div>
     <div class="dlg-body">
       <div class="dlg-grid">
@@ -90,7 +91,7 @@
     </div>
     <div class="dlg-foot">
       <button type="button" class="ghost" onclick="this.closest('dialog').close()">Cancel</button>
-      <button type="submit">💾 Save changes</button>
+      <button type="submit">{{ icon('save', 14) }} Save changes</button>
     </div>
   </form>
 </dialog>

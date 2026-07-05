@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="pagehead"><h1>📈 Profit &amp; Loss 损益表 — {{ month }}</h1></div>
+<div class="pagehead"><h1>Profit &amp; Loss 损益表 — {{ month }}</h1></div>
 <div class="sub">Live statement from actual sales, verified payments, petty cash and confirmed payroll. Click any line to see the transactions behind it.</div>
 
 <div class="filters">
@@ -56,7 +56,7 @@
   {% if not cogs %}<tr><td style="padding-left:28px;color:var(--muted)">No COGS payments this month</td><td class="num">0.00</td></tr>{% endif %}
   <tr class="total-row"><td>Total Cost of Sales</td><td class="num">{{ total_cogs|rm }}</td></tr>
 
-  <tr class="total-row" style="border-top:3px solid var(--brand-500)">
+  <tr class="total-row" style="border-top:3px solid var(--brand-hot)">
     <td>GROSS PROFIT 毛利润</td><td class="num">{{ gross_profit|rm }}</td></tr>
 
   <tr class="section-row"><td>OPERATING EXPENSES 运营费用 (OPEX)</td><td class="num"></td></tr>
@@ -73,7 +73,7 @@
   {% endif %}
   <tr class="total-row"><td>Total Operating Costs 总运营成本</td><td class="num">{{ total_operating|rm }}</td></tr>
 
-  <tr class="total-row" style="border-top:3px solid var(--brand-500)">
+  <tr class="total-row" style="border-top:3px solid var(--brand-hot)">
     <td style="font-size:15px">NET PROFIT 净利润 — {{ month }}</td>
     <td class="num" style="font-size:15px;color:{% if net >= 0 %}var(--green){% else %}var(--red){% endif %}">{{ net|rm }}</td></tr>
 </table>

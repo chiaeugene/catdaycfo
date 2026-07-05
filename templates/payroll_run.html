@@ -1,7 +1,8 @@
 {% extends "base.html" %}
+{% from "icons.html" import icon %}
 {% block content %}
 <div class="pagehead">
-  <h1>💰 Payroll Run — {{ run.month }}</h1>
+  <h1>Payroll Run — {{ run.month }}</h1>
   <a class="btn secondary" href="/payroll">← Back to Payroll</a>
 </div>
 <div class="sub">
@@ -19,10 +20,10 @@
 {% if run.status == 'Draft' %}
 <div class="panel" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
   <form method="post" action="/payroll/run/{{ run.id }}/confirm">
-    <button type="submit" class="success">✓ Confirm run &amp; generate payslips</button>
+    <button type="submit" class="success">{{ icon('check', 14) }} Confirm run &amp; generate payslips</button>
   </form>
   <form method="post" action="/payroll/run/{{ run.id }}/delete">
-    <button type="submit" class="danger">🗑 Delete draft</button>
+    <button type="submit" class="danger">{{ icon('trash', 13) }} Delete draft</button>
   </form>
   <span style="color:var(--muted);font-size:12px">Confirming locks the numbers — payslip PDFs become available per staff member.</span>
 </div>
@@ -52,9 +53,9 @@
     <td class="num" style="color:var(--red)">{{ i.employer_cost|rm }}</td>
     <td>
       {% if run.status == 'Confirmed' %}
-      <a class="btn secondary small" href="/payroll/run/{{ run.id }}/payslip/{{ i.id }}" target="_blank">📄 Payslip</a>
+      <a class="btn secondary small" href="/payroll/run/{{ run.id }}/payslip/{{ i.id }}" target="_blank">Payslip</a>
       {% else %}
-      <button class="small secondary" onclick="document.getElementById('dlg-item-{{ i.id }}').showModal()">✏️ Adjust</button>
+      <button class="small secondary" onclick="document.getElementById('dlg-item-{{ i.id }}').showModal()">Adjust</button>
       {% endif %}
     </td>
   </tr>
@@ -77,7 +78,7 @@
 {% for i in run.items %}
 <dialog id="dlg-item-{{ i.id }}">
   <form method="post" action="/payroll/run/{{ run.id }}/item/{{ i.id }}/update">
-    <div class="dlg-head"><b>✏️ {{ i.staff_name }} — {{ run.month }}</b>
+    <div class="dlg-head"><b>{{ i.staff_name }} — {{ run.month }}</b>
       <button type="button" class="x" onclick="this.closest('dialog').close()">✕</button></div>
     <div class="dlg-body">
       <div class="dlg-grid">
@@ -94,7 +95,7 @@
     </div>
     <div class="dlg-foot">
       <button type="button" class="ghost" onclick="this.closest('dialog').close()">Cancel</button>
-      <button type="submit">💾 Save</button>
+      <button type="submit">{{ icon('save', 14) }} Save</button>
     </div>
   </form>
 </dialog>
@@ -106,7 +107,7 @@
   <h2>Export payslips 导出工资单</h2>
   <div class="actions">
     {% for i in run.items %}
-    <a class="btn secondary small" href="/payroll/run/{{ run.id }}/payslip/{{ i.id }}" target="_blank">📄 {{ i.staff_name }}</a>
+    <a class="btn secondary small" href="/payroll/run/{{ run.id }}/payslip/{{ i.id }}" target="_blank">{{ i.staff_name }}</a>
     {% endfor %}
   </div>
 </div>

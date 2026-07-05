@@ -1,6 +1,7 @@
 {% extends "base.html" %}
+{% from "icons.html" import icon %}
 {% block content %}
-<div class="pagehead"><h1>📑 Payment Listings 付款清单</h1></div>
+<div class="pagehead"><h1>Payment Listings 付款清单</h1></div>
 <div class="sub">Voucher batches for approval and bank processing — every voucher expands to its payments and original documents, so the person making the bank transaction can verify each line.</div>
 
 <div class="tablewrap">
@@ -13,15 +14,15 @@
     <td>{{ l.date.strftime('%d/%m/%y') }}</td>
     <td class="num" style="font-weight:700">{{ l.total|rm }}</td>
     <td><span class="badge {{ l.status|lower }}">{{ l.status }}</span></td>
-    <td><a class="docchip" href="/files/{{ l.pdf_path }}" target="_blank">📄 Listing PDF</a></td>
+    <td><a class="docchip" href="/files/{{ l.pdf_path }}" target="_blank">{{ icon('file', 12) }} Listing PDF</a></td>
     <td>{{ l.prepared_by }}</td>
     <td>
       <div class="actions">
         {% if l.status == 'Draft' %}
-        <form method="post" action="/listings/{{ l.id }}/action"><input type="hidden" name="action" value="submit"><button class="small" type="submit">📤 Submit</button></form>
+        <form method="post" action="/listings/{{ l.id }}/action"><input type="hidden" name="action" value="submit"><button class="small" type="submit">{{ icon('send', 12) }} Submit</button></form>
         {% endif %}
         {% if l.status in ['Draft','Submitted'] %}
-        <form method="post" action="/listings/{{ l.id }}/action"><input type="hidden" name="action" value="processed"><button class="small success" type="submit">✓ Processed</button></form>
+        <form method="post" action="/listings/{{ l.id }}/action"><input type="hidden" name="action" value="processed"><button class="small success" type="submit">{{ icon('check', 12) }} Processed</button></form>
         {% endif %}
       </div>
     </td>
@@ -30,15 +31,15 @@
     <td colspan="7" style="padding-bottom:14px">
       {% for v in l.vouchers %}
       <div style="margin:4px 0 8px">
-        <div style="font-size:11.5px;font-weight:800;color:var(--brand-800);margin-bottom:5px">
+        <div style="font-size:11.5px;font-weight:800;color:var(--brand-deep);margin-bottom:5px">
           {{ v.pv_no }} — {{ v.payee }} · RM {{ v.total|rm }}
-          <a class="docchip" style="margin-left:6px" href="/files/{{ v.pdf_path }}" target="_blank">📄 PV PDF</a>
+          <a class="docchip" style="margin-left:6px" href="/files/{{ v.pdf_path }}" target="_blank">{{ icon('file', 12) }} PV PDF</a>
         </div>
         <div class="docchips">
           {% for p in v.payments %}
             {% if p.documents %}
               {% for d in p.documents %}
-              <a class="docchip" href="/files/{{ d.file_path }}" target="_blank">📎 {{ p.pay_no }} · {{ p.description[:34] }} · RM {{ p.amount|rm }}</a>
+              <a class="docchip" href="/files/{{ d.file_path }}" target="_blank">{{ icon('paperclip', 12) }} {{ p.pay_no }} · {{ p.description[:34] }} · RM {{ p.amount|rm }}</a>
               {% endfor %}
             {% else %}
               <span class="docchip none">{{ p.pay_no }} · {{ p.description[:34] }} · RM {{ p.amount|rm }} (no document)</span>

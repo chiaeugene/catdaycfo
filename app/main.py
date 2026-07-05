@@ -38,16 +38,16 @@ import hashlib as _hashlib
 WEBHOOK_TOKEN = _hashlib.sha256(WEBHOOK_SECRET.encode()).hexdigest()[:40]
 
 NAV = [
-    ("dashboard", "/", "🏠", "Dashboard", ("admin", "manager", "staff")),
-    ("documents", "/documents", "📥", "Verification", ("admin", "manager")),
-    ("payments", "/payments", "💳", "Payments", ("admin", "manager")),
-    ("vouchers", "/vouchers", "🧾", "Vouchers", ("admin", "manager")),
-    ("listings", "/listings", "📑", "Listings", ("admin", "manager")),
-    ("pettycash", "/pettycash", "🐷", "Petty Cash", ("admin", "manager", "staff")),
-    ("sales", "/sales", "🛒", "Sales", ("admin", "manager", "staff")),
-    ("payroll", "/payroll", "💰", "Payroll", ("admin",)),
-    ("pnl", "/pnl", "📈", "P&L Report", ("admin",)),
-    ("settings", "/settings", "⚙️", "Settings", ("admin",)),
+    ("dashboard", "/", "home", "Dashboard", ("admin", "manager", "staff")),
+    ("documents", "/documents", "inbox", "Verification", ("admin", "manager")),
+    ("payments", "/payments", "card", "Payments", ("admin", "manager")),
+    ("vouchers", "/vouchers", "receipt", "Vouchers", ("admin", "manager")),
+    ("listings", "/listings", "list", "Listings", ("admin", "manager")),
+    ("pettycash", "/pettycash", "coins", "Petty Cash", ("admin", "manager", "staff")),
+    ("sales", "/sales", "cart", "Sales", ("admin", "manager", "staff")),
+    ("payroll", "/payroll", "banknote", "Payroll", ("admin",)),
+    ("pnl", "/pnl", "chart", "P&L Report", ("admin",)),
+    ("settings", "/settings", "settings", "Settings", ("admin",)),
 ]
 
 

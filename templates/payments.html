@@ -1,6 +1,7 @@
 {% extends "base.html" %}
+{% from "icons.html" import icon %}
 {% block content %}
-<div class="pagehead"><h1>💳 Payments 付款记录</h1></div>
+<div class="pagehead"><h1>Payments 付款记录</h1></div>
 <div class="sub">Categorize payments, tick the ones to pay, then create a Payment Voucher</div>
 
 <div class="cards">
@@ -47,7 +48,7 @@
     <td>{{ p.date.strftime('%d/%m/%y') }}</td>
     <td>{{ p.supplier }}</td>
     <td>
-      {% if p.documents %}<a href="/files/{{ p.documents[0].file_path }}" target="_blank">{{ p.description[:55] }} 📎</a>
+      {% if p.documents %}<a href="/files/{{ p.documents[0].file_path }}" target="_blank">{{ p.description[:55] }}</a>
       {% else %}{{ p.description[:55] }}{% endif %}
     </td>
     <td>{{ p.category }}</td>
@@ -80,7 +81,7 @@
   <span class="count" id="selcount">0 selected</span>
   <span class="subtotal" id="seltotal"></span>
   <input name="payee" placeholder="Payee name 收款方 (default: supplier of first ticked row)" style="flex:1;min-width:200px">
-  <button type="submit">🧾 Create Payment Voucher</button>
+  <button type="submit">Create Payment Voucher →</button>
 </div>
 </form>
 {% endblock %}

@@ -3,28 +3,31 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{% block title %}CATDAY System{% endblock %}</title>
+<title>{% block title %}CATDAY Finance{% endblock %}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
+{% from "icons.html" import icon %}
 <div class="layout">
   <aside class="sidebar">
     <div class="brand">
-      <div class="logo">🐱 CATDAY</div>
-      <small>Finance System 财务系统</small>
+      <div class="logo">CATDAY</div>
+      <small>Finance · 财务系统</small>
     </div>
     <nav>
-      {% for url, icon, label in nav %}
+      {% for url, ico, label in nav %}
       <a href="{{ url }}" class="{% if (url == '/' and page == 'dashboard') or (url != '/' and url == '/' + page) %}active{% endif %}">
-        <span class="ico">{{ icon }}</span><span>{{ label }}</span>
+        {{ icon(ico) }}<span>{{ label }}</span>
         {% if url == '/documents' and pending_docs %}<span class="pill">{{ pending_docs }}</span>{% endif %}
       </a>
       {% endfor %}
     </nav>
     <div class="userbox">
       <div class="name">{{ user.display_name }}</div>
-      <span class="role">{{ user.role }}</span><br><br>
-      <a href="/logout">Logout 登出</a>
+      <span class="role">{{ user.role }}</span><br>
+      <a href="/logout">{{ icon('logout', 14) }} Sign out 登出</a>
     </div>
   </aside>
   <main class="main">

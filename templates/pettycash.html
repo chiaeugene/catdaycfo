@@ -1,6 +1,7 @@
 {% extends "base.html" %}
+{% from "icons.html" import icon %}
 {% block content %}
-<div class="pagehead"><h1>🐷 Petty Cash Book 零用金账簿</h1></div>
+<div class="pagehead"><h1>Petty Cash Book 零用金账簿</h1></div>
 <div class="sub">Cash in hand for small expenses — every entry updates the running balance</div>
 
 <div class="cards">
@@ -53,7 +54,7 @@
     {% for e, bal in rows %}
     <tr>
       <td>{{ e.date.strftime('%d/%m/%y') }}</td>
-      <td>{% if e.document %}<a href="/files/{{ e.document.file_path }}" target="_blank">{{ e.description }} 📎</a>{% else %}{{ e.description }}{% endif %}</td>
+      <td>{% if e.document %}<a href="/files/{{ e.document.file_path }}" target="_blank">{{ e.description }}</a>{% else %}{{ e.description }}{% endif %}</td>
       <td>{{ e.category }}</td>
       <td class="num" style="color:var(--red);font-weight:700">{{ '−' + (e.amount_out|rm) if e.amount_out else '' }}</td>
       <td class="num" style="color:var(--green);font-weight:700">{{ '+' + (e.amount_in|rm) if e.amount_in else '' }}</td>

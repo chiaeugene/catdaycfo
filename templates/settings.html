@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="pagehead"><h1>⚙️ Settings 系统设置</h1></div>
+<div class="pagehead"><h1>Settings 系统设置</h1></div>
 <div class="sub">Users, company info, and bot configuration</div>
 
 <div class="cards">
@@ -74,7 +74,7 @@
       <input name="PETTY_CASH_FLOAT" value="{{ settings.get('PETTY_CASH_FLOAT','5000') }}" style="width:100%;margin-bottom:12px">
       <label>System passcode 系统通行码</label>
       <input name="PASSCODE" value="{{ settings.get('PASSCODE','125180') }}" style="width:100%;margin-bottom:14px">
-      <button type="submit">💾 Save 保存</button>
+      <button type="submit">Save 保存</button>
     </form>
   </div>
 </div>

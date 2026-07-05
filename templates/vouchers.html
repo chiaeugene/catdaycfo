@@ -1,6 +1,7 @@
 {% extends "base.html" %}
+{% from "icons.html" import icon %}
 {% block content %}
-<div class="pagehead"><h1>🧾 Payment Vouchers 付款凭单</h1></div>
+<div class="pagehead"><h1>Payment Vouchers 付款凭单</h1></div>
 <div class="sub">Each voucher shows its payments with links to the original supporting documents — verify before approving or paying. Tick unlisted vouchers to batch them into a Payment Listing.</div>
 
 <form method="post" action="/listings/create">
@@ -23,15 +24,15 @@
     <td class="num" style="font-weight:700">{{ v.total|rm }}</td>
     <td><span class="badge {{ v.status|lower }}">{{ v.status }}</span></td>
     <td class="mono">{% if v.listing %}{{ v.listing.pl_no }}{% else %}—{% endif %}</td>
-    <td><a class="docchip" href="/files/{{ v.pdf_path }}" target="_blank">📄 Voucher PDF</a></td>
+    <td><a class="docchip" href="/files/{{ v.pdf_path }}" target="_blank">{{ icon('file', 12) }} Voucher PDF</a></td>
     <td>
       <div class="actions">
         {% if v.status == 'Draft' %}
-        <form method="post" action="/vouchers/{{ v.id }}/action"><input type="hidden" name="action" value="approve"><button class="small success" type="submit">✓ Approve</button></form>
+        <form method="post" action="/vouchers/{{ v.id }}/action"><input type="hidden" name="action" value="approve"><button class="small success" type="submit">{{ icon('check', 12) }} Approve</button></form>
         {% endif %}
         {% if v.status in ['Draft','Approved'] %}
-        <form method="post" action="/vouchers/{{ v.id }}/action"><input type="hidden" name="action" value="paid"><button class="small" type="submit">💸 Mark Paid</button></form>
-        <form method="post" action="/vouchers/{{ v.id }}/action"><input type="hidden" name="action" value="void"><button class="small danger" type="submit">✗ Void</button></form>
+        <form method="post" action="/vouchers/{{ v.id }}/action"><input type="hidden" name="action" value="paid"><button class="small" type="submit">Mark Paid</button></form>
+        <form method="post" action="/vouchers/{{ v.id }}/action"><input type="hidden" name="action" value="void"><button class="small danger" type="submit">{{ icon('x', 11) }} Void</button></form>
         {% endif %}
       </div>
     </td>
@@ -43,7 +44,7 @@
         {% for p in v.payments %}
           {% if p.documents %}
             {% for d in p.documents %}
-            <a class="docchip" href="/files/{{ d.file_path }}" target="_blank">📎 {{ p.pay_no }} · {{ p.description[:34] }} · RM {{ p.amount|rm }}</a>
+            <a class="docchip" href="/files/{{ d.file_path }}" target="_blank">{{ icon('paperclip', 12) }} {{ p.pay_no }} · {{ p.description[:34] }} · RM {{ p.amount|rm }}</a>
             {% endfor %}
           {% else %}
             <span class="docchip none">{{ p.pay_no }} · {{ p.description[:34] }} · RM {{ p.amount|rm }} (no document)</span>
@@ -61,7 +62,7 @@
 <div class="selectbar" id="selbar">
   <span class="count" id="selcount">0 selected</span>
   <span class="subtotal" id="seltotal"></span>
-  <button type="submit">📑 Create Payment Listing</button>
+  <button type="submit">Create Payment Listing →</button>
 </div>
 </form>
 {% endblock %}

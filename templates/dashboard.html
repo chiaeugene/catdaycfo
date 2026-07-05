@@ -1,25 +1,26 @@
 {% extends "base.html" %}
+{% from "icons.html" import icon %}
 {% block content %}
 <div class="hero">
   <div>
     <div class="greet">{{ month }} · CATDAY Cat Hotel</div>
-    <h1>Welcome back, {{ user.display_name }} 👋</h1>
+    <h1>Welcome back, {{ user.display_name }}</h1>
     <div class="heroline">
       {% if stats.docs_pending %}{{ stats.docs_pending }} document{{ 's' if stats.docs_pending != 1 }} waiting for your verification.
       {% else %}Inbox is clear — everything verified and filed.{% endif %}
     </div>
     <div class="quick">
-      <a href="/documents">📥 Verify documents</a>
-      <a href="/sales">🛒 Record sale</a>
-      <a href="/pettycash">🐷 Petty cash</a>
-      <a href="/pnl">📈 View P&amp;L</a>
+      <a href="/documents">Verify documents</a>
+      <a href="/sales">Record sale</a>
+      <a href="/pettycash">Petty cash</a>
+      <a href="/pnl">View P&amp;L</a>
     </div>
   </div>
   <div class="heronum">
     <div class="lbl">Net position — {{ month }}</div>
     {% set net = stats.sales_month - stats.expenses_month %}
-    <div class="val {{ 'pos' if net >= 0 else 'neg' }}">RM {{ net|rm }}</div>
-    <div class="lbl" style="margin-top:4px">Sales RM {{ stats.sales_month|rm }} · Spend RM {{ stats.expenses_month|rm }}</div>
+    <div class="val {{ 'neg' if net < 0 }}">RM {{ net|rm }}</div>
+    <div class="subline">Sales RM {{ stats.sales_month|rm }} · Spend RM {{ stats.expenses_month|rm }}</div>
   </div>
 </div>
 
@@ -48,7 +49,7 @@
 
 <div class="grid2">
   <div>
-    <h2>📥 Recent documents 最新文件</h2>
+    <h2>Recent documents 最新文件</h2>
     <div class="tablewrap">
     <table>
       <tr><th>ID</th><th>Type</th><th>From</th><th>Status</th><th class="num">RM</th></tr>
@@ -62,7 +63,7 @@
     </div>
   </div>
   <div>
-    <h2>🛒 Recent sales 最新销售</h2>
+    <h2>Recent sales 最新销售</h2>
     <div class="tablewrap">
     <table>
       <tr><th>Date</th><th>Stream</th><th>By</th><th class="num">RM</th></tr>
