@@ -22,12 +22,13 @@ load_dotenv()
 from reportlab.lib.pagesizes import A6
 from reportlab.pdfgen import canvas
 
-from app.database import Base, engine, SessionLocal
+from app.database import Base, engine, SessionLocal, run_migrations
 from app import models as M
 from app import pdfgen
 
 random.seed(42)
 Base.metadata.create_all(engine)
+run_migrations()
 db = SessionLocal()
 
 SAMPLE_VERSION = "v5-invoice-claims"

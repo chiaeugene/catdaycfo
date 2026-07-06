@@ -13,26 +13,14 @@ from starlette.middleware.sessions import SessionMiddleware
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from .database import Base, engine, get_db
+from .database import Base, engine, get_db, run_migrations
 from . import models as M
 from .auth import hash_password, verify_password, current_user
 from . import telegram_bot, pdfgen, claude_ai
 from .statutory import calc_statutory
 
 Base.metadata.create_all(engine)
-
-# Lightweight migrations — create_all doesn't add columns to existing tables.
-with engine.connect() as _conn:
-    from sqlalchemy import text as _text
-    for _stmt in (
-        "ALTER TABLE payments ADD COLUMN invoice_no VARCHAR(60) DEFAULT ''",
-        "ALTER TABLE documents ADD COLUMN invoice_no VARCHAR(60) DEFAULT ''",
-    ):
-        try:
-            _conn.execute(_text(_stmt))
-            _conn.commit()
-        except Exception:
-            pass  # column already exists
+run_migrations()
 
 app = FastAPI(title="CATDAY System")
 app.add_middleware(SessionMiddleware, secret_key=os.environ.get("SECRET_KEY", "catday-dev-secret"))

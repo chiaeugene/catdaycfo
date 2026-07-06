@@ -6,11 +6,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from app.database import Base, engine, SessionLocal
+from app.database import Base, engine, SessionLocal, run_migrations
 from app.models import User, Staff, Setting
 from app.auth import hash_password
 
 Base.metadata.create_all(engine)
+run_migrations()
 db = SessionLocal()
 
 USERS = [
