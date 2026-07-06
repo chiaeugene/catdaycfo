@@ -41,6 +41,7 @@ NAV = [
     ("dashboard", "/", "home", "Dashboard", ("admin", "manager", "staff")),
     ("documents", "/documents", "inbox", "Verification", ("admin", "manager")),
     ("payments", "/payments", "card", "Payments", ("admin", "manager")),
+    ("suppliers", "/suppliers", "landmark", "Suppliers", ("admin", "manager")),
     ("vouchers", "/vouchers", "receipt", "Vouchers", ("admin", "manager")),
     ("listings", "/listings", "list", "Listings", ("admin", "manager")),
     ("pettycash", "/pettycash", "coins", "Petty Cash", ("admin", "manager", "staff")),
@@ -72,6 +73,26 @@ def month_str(d: date | None = None) -> str:
 
 def parse_date(s: str) -> date:
     return datetime.strptime(s, "%Y-%m-%d").date() if s else date.today()
+
+
+def find_supplier(db: Session, name: str) -> M.Supplier | None:
+    """Case-insensitive match of a voucher payee / payment supplier to the directory."""
+    if not name:
+        return None
+    return db.query(M.Supplier).filter(func.lower(M.Supplier.name) == name.strip().lower(),
+                                       M.Supplier.active == True).first()  # noqa: E712
+
+
+def supplier_map(db: Session, names) -> dict:
+    """{lowercased name: Supplier} for a set of payee names."""
+    wanted = {str(n).strip().lower() for n in names if n}
+    if not wanted:
+        return {}
+    out = {}
+    for s in db.query(M.Supplier).filter(M.Supplier.active == True).all():  # noqa: E712
+        if s.name.strip().lower() in wanted:
+            out[s.name.strip().lower()] = s
+    return out
 
 
 # ─────────────────────────── AUTH (passcode) ───────────────────────────
@@ -237,8 +258,11 @@ def payments(request: Request, status: str = "", db: Session = Depends(get_db)):
         q = q.filter(M.Payment.status == status)
     open_total = db.query(func.coalesce(func.sum(M.Payment.amount), 0)) \
         .filter(M.Payment.status.in_(["Unsorted", "Categorized"])).scalar()
+    supplier_names = [s.name for s in db.query(M.Supplier)
+                      .filter(M.Supplier.active == True).order_by(M.Supplier.name).all()]  # noqa: E712
     return render(request, db, "payments.html", "payments",
-                  payments=q.limit(300).all(), flt=status, open_total=open_total)
+                  payments=q.limit(300).all(), flt=status, open_total=open_total,
+                  supplier_names=supplier_names)
 
 
 @app.post("/payments/new")
@@ -266,11 +290,55 @@ def update_payment(pid: int, request: Request, supplier: str = Form(""),
     return RedirectResponse("/payments", status_code=302)
 
 
+# ─────────────────────────── SUPPLIERS ───────────────────────────
+@app.get("/suppliers", response_class=HTMLResponse)
+def suppliers(request: Request, db: Session = Depends(get_db)):
+    sups = db.query(M.Supplier).order_by(M.Supplier.name).all()
+    return render(request, db, "suppliers.html", "suppliers", suppliers=sups)
+
+
+@app.post("/suppliers/new")
+def supplier_new(request: Request, name: str = Form(...), sup_type: str = Form("Supplier"),
+                 bank_name: str = Form(""), account_no: str = Form(""),
+                 account_holder: str = Form(""), contact_person: str = Form(""),
+                 phone: str = Form(""), email: str = Form(""), notes: str = Form(""),
+                 db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user or user.role not in ("admin", "manager"):
+        return RedirectResponse("/", status_code=302)
+    if not db.query(M.Supplier).filter(func.lower(M.Supplier.name) == name.strip().lower()).first():
+        db.add(M.Supplier(name=name.strip(), sup_type=sup_type, bank_name=bank_name.strip(),
+                          account_no=account_no.strip(), account_holder=account_holder.strip(),
+                          contact_person=contact_person, phone=phone, email=email, notes=notes))
+        db.commit()
+    return RedirectResponse("/suppliers", status_code=302)
+
+
+@app.post("/suppliers/{sid}/update")
+def supplier_update(sid: int, request: Request, name: str = Form(...), sup_type: str = Form("Supplier"),
+                    bank_name: str = Form(""), account_no: str = Form(""),
+                    account_holder: str = Form(""), contact_person: str = Form(""),
+                    phone: str = Form(""), email: str = Form(""), notes: str = Form(""),
+                    active: str = Form(""), db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user or user.role not in ("admin", "manager"):
+        return RedirectResponse("/", status_code=302)
+    s = db.get(M.Supplier, sid)
+    if s:
+        s.name, s.sup_type = name.strip(), sup_type
+        s.bank_name, s.account_no, s.account_holder = bank_name.strip(), account_no.strip(), account_holder.strip()
+        s.contact_person, s.phone, s.email, s.notes = contact_person, phone, email, notes
+        s.active = active == "on"
+        db.commit()
+    return RedirectResponse("/suppliers", status_code=302)
+
+
 # ─────────────────────────── VOUCHERS ───────────────────────────
 @app.get("/vouchers", response_class=HTMLResponse)
 def vouchers(request: Request, db: Session = Depends(get_db)):
     pvs = db.query(M.Voucher).order_by(M.Voucher.id.desc()).limit(200).all()
-    return render(request, db, "vouchers.html", "vouchers", vouchers=pvs)
+    banks = supplier_map(db, [v.payee for v in pvs])
+    return render(request, db, "vouchers.html", "vouchers", vouchers=pvs, banks=banks)
 
 
 @app.post("/vouchers/create")
@@ -290,9 +358,13 @@ async def create_voucher(request: Request, db: Session = Depends(get_db)):
     items = [{"date": f"{p.date:%d/%m/%y}", "description": p.description, "amount": p.amount}
              for p in pays]
     settings = {s.key: s.value for s in db.query(M.Setting).all()}
+    sup = find_supplier(db, payee)
+    bank = ({"bank_name": sup.bank_name, "account_no": sup.account_no,
+             "account_holder": sup.account_holder} if sup else None)
     rel = pdfgen.voucher_pdf(pv_no, payee, items, total,
                              company=settings.get("COMPANY_NAME", "CATDAY SDN BHD"),
-                             address=settings.get("COMPANY_ADDRESS", "Uptown PJ"))
+                             address=settings.get("COMPANY_ADDRESS", "Uptown PJ"),
+                             bank=bank)
     pv = M.Voucher(pv_no=pv_no, payee=payee, total=total, pdf_path=rel,
                    created_by=user.display_name if user else "")
     db.add(pv)
@@ -330,7 +402,9 @@ def voucher_action(vid: int, request: Request, action: str = Form(...),
 @app.get("/listings", response_class=HTMLResponse)
 def listings(request: Request, db: Session = Depends(get_db)):
     pls = db.query(M.Listing).order_by(M.Listing.id.desc()).limit(200).all()
-    return render(request, db, "listings.html", "listings", listings=pls)
+    names = [v.payee for pl in pls for v in pl.vouchers]
+    banks = supplier_map(db, names)
+    return render(request, db, "listings.html", "listings", listings=pls, banks=banks)
 
 
 @app.post("/listings/create")
@@ -345,7 +419,12 @@ async def create_listing(request: Request, db: Session = Depends(get_db)):
         return RedirectResponse("/vouchers", status_code=302)
     pl_no = telegram_bot.next_counter(db, "PL", "PL-")
     total = sum(v.total for v in pvs)
-    vdata = [{"pv_no": v.pv_no, "date": f"{v.date:%d/%m/%y}", "payee": v.payee, "total": v.total}
+    banks = supplier_map(db, [v.payee for v in pvs])
+    def bank_line(payee):
+        s = banks.get(payee.strip().lower())
+        return f"{s.bank_name} {s.account_no}" if s and (s.bank_name or s.account_no) else ""
+    vdata = [{"pv_no": v.pv_no, "date": f"{v.date:%d/%m/%y}", "payee": v.payee,
+              "total": v.total, "bank": bank_line(v.payee)}
              for v in pvs]
     settings = {s.key: s.value for s in db.query(M.Setting).all()}
     rel = pdfgen.listing_pdf(pl_no, vdata, total,

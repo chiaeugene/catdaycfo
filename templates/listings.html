@@ -31,9 +31,18 @@
     <td colspan="7" style="padding-bottom:14px">
       {% for v in l.vouchers %}
       <div style="margin:4px 0 8px">
-        <div style="font-size:11.5px;font-weight:800;color:var(--brand-deep);margin-bottom:5px">
+        <div style="font-size:11.5px;font-weight:800;color:var(--brand-deep);margin-bottom:3px">
           {{ v.pv_no }} — {{ v.payee }} · RM {{ v.total|rm }}
           <a class="docchip" style="margin-left:6px" href="/files/{{ v.pdf_path }}" target="_blank">{{ icon('file', 12) }} PV PDF</a>
+        </div>
+        {% set sup = banks.get(v.payee.strip().lower()) %}
+        <div style="font-size:11.5px;font-weight:600;margin-bottom:5px;color:{{ 'var(--ink-2)' if sup and sup.account_no else 'var(--muted)' }}">
+          {{ icon('landmark', 12) }}
+          {% if sup and (sup.bank_name or sup.account_no) %}
+          {{ sup.bank_name }} · <span class="mono" style="letter-spacing:.5px">{{ sup.account_no }}</span> · {{ sup.account_holder or v.payee }}
+          {% else %}
+          No bank details on file — <a href="/suppliers">add to Suppliers</a>
+          {% endif %}
         </div>
         <div class="docchips">
           {% for p in v.payments %}

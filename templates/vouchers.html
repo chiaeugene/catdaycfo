@@ -40,6 +40,15 @@
   <tr class="subrow">
     <td></td>
     <td colspan="8" style="padding-bottom:12px">
+      {% set sup = banks.get(v.payee.strip().lower()) %}
+      <div style="font-size:11.5px;font-weight:700;margin-bottom:6px;color:{{ 'var(--brand-deep)' if sup and sup.account_no else 'var(--muted)' }}">
+        {{ icon('landmark', 12) }}
+        {% if sup and (sup.bank_name or sup.account_no) %}
+        {{ sup.bank_name }} · <span class="mono" style="letter-spacing:.5px">{{ sup.account_no }}</span> · {{ sup.account_holder or v.payee }}
+        {% else %}
+        No bank details on file — <a href="/suppliers">add {{ v.payee }} to Suppliers</a>
+        {% endif %}
+      </div>
       <div class="docchips">
         {% for p in v.payments %}
           {% if p.documents %}

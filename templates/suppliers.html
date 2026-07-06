@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block content %}
+<div class="pagehead">
+  <h1>Suppliers &amp; Contractors 供应商与承包商</h1>
+  <button onclick="document.getElementById('dlg-newsup').showModal()">＋ New supplier</button>
+</div>
+<div class="sub">Bank accounts on file here appear automatically on Payment Vouchers and Payment Listings — match the supplier name to the voucher payee.</div>
+
+<div class="cards">
+  <div class="card"><div class="label">On file 已登记</div><div class="value">{{ suppliers|selectattr('active')|list|length }}</div></div>
+  <div class="card amber"><div class="label">Missing bank details 缺银行资料</div>
+    <div class="value">{{ suppliers|selectattr('active')|rejectattr('account_no')|list|length }}</div>
+    <div class="hint">Vouchers for these show "not on file"</div></div>
+</div>
+
+<div class="tablewrap">
+  <table>
+    <tr><th>Name</th><th>Type</th><th>Bank</th><th>Account No.</th><th>Account Holder</th>
+        <th>Contact</th><th>Status</th><th></th></tr>
+    {% for s in suppliers %}
+    <tr {% if not s.active %}style="opacity:.45"{% endif %}>
+      <td><b>{{ s.name }}</b></td>
+      <td><span class="badge draft">{{ s.sup_type }}</span></td>
+      <td>{{ s.bank_name or '—' }}</td>
+      <td class="mono">{{ s.account_no or '—' }}</td>
+      <td>{{ s.account_holder or '—' }}</td>
+      <td>{{ s.contact_person }}{% if s.phone %} · {{ s.phone }}{% endif %}</td>
+      <td>{{ '✓' if s.active else '—' }}</td>
+      <td><button class="small secondary" onclick="document.getElementById('dlg-sup-{{ s.id }}').showModal()">Edit</button></td>
+    </tr>
+    {% else %}
+    <tr><td colspan="8" class="empty">No suppliers yet — add your first one above.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+
+{% macro sup_form(action, s=None) %}
+<form method="post" action="{{ action }}">
+  <div class="dlg-body">
+    <div class="dlg-grid">
+      <div><label>Name 名称</label><input name="name" value="{{ s.name if s else '' }}" required></div>
+      <div><label>Type 类型</label>
+        <select name="sup_type">
+          {% for t in M.SUPPLIER_TYPES %}<option {% if s and s.sup_type==t %}selected{% endif %}>{{ t }}</option>{% endfor %}
+        </select>
+      </div>
+      <div><label>Bank 银行</label>
+        <input name="bank_name" list="banklist" value="{{ s.bank_name if s else '' }}">
+      </div>
+      <div><label>Account No. 账号</label><input name="account_no" value="{{ s.account_no if s else '' }}" inputmode="numeric"></div>
+      <div class="full"><label>Account Holder 户名 (as per bank)</label><input name="account_holder" value="{{ s.account_holder if s else '' }}"></div>
+      <div><label>Contact Person 联系人</label><input name="contact_person" value="{{ s.contact_person if s else '' }}"></div>
+      <div><label>Phone 电话</label><input name="phone" value="{{ s.phone if s else '' }}" inputmode="tel"></div>
+      <div class="full"><label>Email</label><input name="email" type="email" value="{{ s.email if s else '' }}"></div>
+      <div class="full"><label>Notes 备注</label><input name="notes" value="{{ s.notes if s else '' }}"></div>
+      {% if s %}
+      <div class="full" style="display:flex;align-items:center;gap:8px">
+        <input type="checkbox" name="active" {% if s.active %}checked{% endif %} id="supact-{{ s.id }}" style="width:16px;height:16px">
+        <label for="supact-{{ s.id }}" style="margin:0">Active 启用</label>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+  <div class="dlg-foot">
+    <button type="button" class="ghost" onclick="this.closest('dialog').close()">Cancel</button>
+    <button type="submit">{{ icon('save', 14) }} Save</button>
+  </div>
+</form>
+{% endmacro %}
+
+<dialog id="dlg-newsup">
+  <div class="dlg-head"><b>＋ New supplier / contractor</b>
+    <button type="button" class="x" onclick="this.closest('dialog').close()">✕</button></div>
+  {{ sup_form('/suppliers/new') }}
+</dialog>
+
+{% for s in suppliers %}
+<dialog id="dlg-sup-{{ s.id }}">
+  <div class="dlg-head"><b>{{ s.name }}</b>
+    <button type="button" class="x" onclick="this.closest('dialog').close()">✕</button></div>
+  {{ sup_form('/suppliers/' ~ s.id ~ '/update', s) }}
+</dialog>
+{% endfor %}
+
+<datalist id="banklist">
+  {% for b in M.MY_BANKS %}<option value="{{ b }}">{% endfor %}
+</datalist>
+{% endblock %}

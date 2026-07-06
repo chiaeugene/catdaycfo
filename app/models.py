@@ -200,6 +200,26 @@ class PayrollItem(Base):
         return self.gross + self.epf_er + self.socso_er + self.eis_er
 
 
+class Supplier(Base):
+    __tablename__ = "suppliers"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(150), unique=True)
+    sup_type: Mapped[str] = mapped_column(String(30), default="Supplier")  # Supplier / Contractor
+    bank_name: Mapped[str] = mapped_column(String(80), default="")
+    account_no: Mapped[str] = mapped_column(String(40), default="")
+    account_holder: Mapped[str] = mapped_column(String(150), default="")
+    contact_person: Mapped[str] = mapped_column(String(100), default="")
+    phone: Mapped[str] = mapped_column(String(30), default="")
+    email: Mapped[str] = mapped_column(String(100), default="")
+    notes: Mapped[str] = mapped_column(Text, default="")
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+SUPPLIER_TYPES = ["Supplier", "Contractor", "Service Provider", "Landlord", "Utility"]
+MY_BANKS = ["Maybank", "CIMB Bank", "Public Bank", "RHB Bank", "Hong Leong Bank",
+            "AmBank", "Bank Islam", "OCBC Bank", "UOB Bank", "Alliance Bank"]
+
+
 class Setting(Base):
     __tablename__ = "settings"
     key: Mapped[str] = mapped_column(String(60), primary_key=True)

@@ -75,8 +75,10 @@ def _grid_style(last_bold=True):
 
 
 def voucher_pdf(pv_no: str, payee: str, items: list[dict], total: float,
-                company="CATDAY SDN BHD", address="Uptown PJ") -> str:
-    """items: [{date, description, amount}]. Returns relative pdf path."""
+                company="CATDAY SDN BHD", address="Uptown PJ",
+                bank: dict | None = None) -> str:
+    """items: [{date, description, amount}]. bank: {bank_name, account_no,
+    account_holder} or None. Returns relative pdf path."""
     subdir = f"vouchers/{date.today():%Y-%m}"
     os.makedirs(os.path.join(UPLOAD_DIR, subdir), exist_ok=True)
     rel = f"{subdir}/{pv_no}_{safe_name(payee)}.pdf"
@@ -96,6 +98,31 @@ def voucher_pdf(pv_no: str, payee: str, items: list[dict], total: float,
         ("TEXTCOLOR", (2, 0), (2, -1), GRAY),
     ]))
     el.append(info)
+    el.append(Spacer(1, 4 * mm))
+
+    if bank and (bank.get("bank_name") or bank.get("account_no")):
+        bt = Table([
+            ["BANK TRANSFER DETAILS", "", ""],
+            ["Bank:", bank.get("bank_name", "-"),
+             f"Account Holder: {bank.get('account_holder') or payee}"],
+            ["Account No.:", bank.get("account_no", "-"), ""],
+        ], colWidths=[28 * mm, 60 * mm, 82 * mm])
+        bt.setStyle(TableStyle([
+            ("SPAN", (0, 0), (-1, 0)),
+            ("BACKGROUND", (0, 0), (-1, 0), LIGHT),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, 0), 8.5),
+            ("TEXTCOLOR", (0, 0), (-1, 0), ORANGE),
+            ("FONTSIZE", (0, 1), (-1, -1), 10),
+            ("FONTNAME", (1, 1), (1, -1), "Helvetica-Bold"),
+            ("TEXTCOLOR", (0, 1), (0, -1), GRAY),
+            ("BOX", (0, 0), (-1, -1), 0.8, ORANGE),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ]))
+        el.append(bt)
+    else:
+        el.append(Paragraph("Bank details not on file - pay by cash/cheque or update the supplier directory.", TINY))
     el.append(Spacer(1, 6 * mm))
 
     data = [["No.", "Date", "Description", "Amount (RM)"]]
@@ -116,7 +143,8 @@ def voucher_pdf(pv_no: str, payee: str, items: list[dict], total: float,
 
 def listing_pdf(pl_no: str, vouchers: list[dict], total: float,
                 company="CATDAY SDN BHD", address="Uptown PJ") -> str:
-    """vouchers: [{pv_no, date, payee, total}]."""
+    """vouchers: [{pv_no, date, payee, total, bank?}] where bank is a
+    'Bank / Account No.' display string (may be empty)."""
     subdir = f"listings/{date.today():%Y-%m}"
     os.makedirs(os.path.join(UPLOAD_DIR, subdir), exist_ok=True)
     rel = f"{subdir}/{pl_no}_{date.today():%Y-%m-%d}.pdf"
@@ -128,13 +156,14 @@ def listing_pdf(pl_no: str, vouchers: list[dict], total: float,
                         f"Vouchers: {len(vouchers)}", styles["Normal"]))
     el.append(Spacer(1, 5 * mm))
 
-    data = [["No.", "PV No.", "Date", "Payee", "Amount (RM)"]]
+    data = [["No.", "PV No.", "Date", "Payee", "Bank / Account No.", "Amount (RM)"]]
     for i, v in enumerate(vouchers, 1):
-        data.append([str(i), v["pv_no"], v["date"], Paragraph(v["payee"], SMALL), f"{v['total']:,.2f}"])
-    data.append(["", "", "", "GRAND TOTAL", f"{total:,.2f}"])
-    t = Table(data, colWidths=[12 * mm, 24 * mm, 24 * mm, 78 * mm, 32 * mm], repeatRows=1)
+        data.append([str(i), v["pv_no"], v["date"], Paragraph(v["payee"], SMALL),
+                     Paragraph(v.get("bank") or "-", SMALL), f"{v['total']:,.2f}"])
+    data.append(["", "", "", "", "GRAND TOTAL", f"{total:,.2f}"])
+    t = Table(data, colWidths=[10 * mm, 21 * mm, 20 * mm, 48 * mm, 45 * mm, 26 * mm], repeatRows=1)
     t.setStyle(_grid_style())
-    t.setStyle(TableStyle([("ALIGN", (4, 0), (4, -1), "RIGHT")]))
+    t.setStyle(TableStyle([("ALIGN", (5, 0), (5, -1), "RIGHT")]))
     el.append(t)
     el.append(Spacer(1, 8 * mm))
     el.append(_sig_block(["Prepared By", "Approved By"]))

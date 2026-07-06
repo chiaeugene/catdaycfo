@@ -20,7 +20,7 @@
   <form method="post" action="/payments/new">
     <div class="formrow cols-payment">
       <div class="f-date"><label>Date 日期</label><input type="date" name="pdate" value="{{ today }}"></div>
-      <div><label>Supplier 供应商</label><input name="supplier"></div>
+      <div><label>Supplier 供应商</label><input name="supplier" list="suplist"></div>
       <div><label>Description 描述</label><input name="description" required></div>
       <div><label>Category 类别</label><select name="category"><option value=""></option>{% for c in M.CATEGORIES %}<option>{{ c }}</option>{% endfor %}</select></div>
       <div><label>Group 分组</label><select name="grp"><option value=""></option>{% for g in M.GROUPS %}<option>{{ g }}</option>{% endfor %}</select></div>
@@ -80,10 +80,14 @@
 <div class="selectbar" id="selbar">
   <span class="count" id="selcount">0 selected</span>
   <span class="subtotal" id="seltotal"></span>
-  <input name="payee" placeholder="Payee name 收款方 (default: supplier of first ticked row)" style="flex:1;min-width:200px">
+  <input name="payee" list="suplist" placeholder="Payee name 收款方 (default: supplier of first ticked row)" style="flex:1;min-width:200px">
   <button type="submit">Create Payment Voucher →</button>
 </div>
 </form>
+
+<datalist id="suplist">
+  {% for n in supplier_names %}<option value="{{ n }}">{% endfor %}
+</datalist>
 {% endblock %}
 
 {% block scripts %}

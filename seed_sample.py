@@ -30,7 +30,7 @@ random.seed(42)
 Base.metadata.create_all(engine)
 db = SessionLocal()
 
-SAMPLE_VERSION = "v3-role-separated"
+SAMPLE_VERSION = "v4-suppliers"
 ver_setting = db.get(M.Setting, "SAMPLE_DATA_VERSION")
 
 if ver_setting and ver_setting.value == SAMPLE_VERSION:
@@ -41,7 +41,7 @@ if ver_setting and ver_setting.value == SAMPLE_VERSION:
 # Wipe any previous sample data (from an older version of this script) before reseeding.
 if db.query(M.SalesEntry).count() > 0 or db.query(M.Document).count() > 0:
     for model in (M.PayrollItem, M.PayrollRun, M.PettyCashEntry, M.SalesEntry,
-                  M.Voucher, M.Listing, M.Document, M.Payment):
+                  M.Voucher, M.Listing, M.Document, M.Payment, M.Supplier):
         db.query(model).delete()
     for name in ("DOC", "PAY", "PV", "PL"):
         c = db.get(M.Counter, name)
@@ -88,6 +88,42 @@ def make_doc_pdf(title, lines, d):
         y -= 16
     c.save()
     return doc_no, rel
+
+
+# ═══ 0. Supplier / contractor directory (mock bank accounts) ═══
+SUPPLIERS = [
+    # name, type, bank, account_no, account_holder, contact, phone
+    ("Uptown Realty",      "Landlord",         "Maybank",         "5142 8890 1234", "Uptown Realty Sdn Bhd",        "Mr. Tan",     "03-7725 1180"),
+    ("TNJ Design",         "Contractor",       "CIMB Bank",       "8600 445 512",   "TNJ Design & Build Sdn Bhd",   "Jason Ng",    "012-336 8821"),
+    ("Whiskers Wholesale", "Supplier",         "Public Bank",     "3159 002 214",   "Whiskers Wholesale Trading",   "Ms. Lim",     "03-8066 4432"),
+    ("Litter King",        "Supplier",         "RHB Bank",        "2141 3300 5678", "Litter King Enterprise",       "Encik Farid", "017-772 0091"),
+    ("GroomMaster MY",     "Supplier",         "Hong Leong Bank", "0091 5522 7834", "GroomMaster Malaysia Sdn Bhd", "Kevin Choo",  "016-889 2205"),
+    ("CleanPro Supplies",  "Supplier",         "Maybank",         "5144 2216 8890", "CleanPro Supplies Sdn Bhd",    "Ms. Aisyah",  "03-5510 6672"),
+    ("Meow Media",         "Service Provider", "CIMB Bank",       "8004 112 987",   "Meow Media Studio",            "Sarah Wong",  "018-224 5561"),
+    ("SoftInv Systems",    "Service Provider", "OCBC Bank",       "790 441 2205",   "SoftInv Systems Sdn Bhd",      "Daniel Lee",  "03-2261 8845"),
+    ("Klinik Haiwan PJ",   "Service Provider", "Public Bank",     "3160 448 872",   "Klinik Haiwan PJ Sdn Bhd",     "Dr. Priya",   "03-7960 3312"),
+    ("TNB",                "Utility",          "",                "",               "",                              "",            "1-300-88-5454"),
+]
+SUP_BY_NAME = {}
+for name, styp, bank, acct, holder, contact, phone in SUPPLIERS:
+    s = M.Supplier(name=name, sup_type=styp, bank_name=bank, account_no=acct,
+                   account_holder=holder, contact_person=contact, phone=phone)
+    db.add(s)
+    SUP_BY_NAME[name.lower()] = s
+db.flush()
+
+
+def bank_dict(payee):
+    s = SUP_BY_NAME.get(payee.strip().lower())
+    if s and (s.bank_name or s.account_no):
+        return {"bank_name": s.bank_name, "account_no": s.account_no,
+                "account_holder": s.account_holder}
+    return None
+
+
+def bank_line(payee):
+    s = SUP_BY_NAME.get(payee.strip().lower())
+    return f"{s.bank_name} {s.account_no}" if s and (s.bank_name or s.account_no) else ""
 
 
 # ═══ 1. Documents + payments (verified pipeline) ═══
@@ -151,7 +187,8 @@ def build_voucher(pays, payee, status, created=ADMIN, approved=""):
     pv_no = counter("PV", "PV-")
     total = sum(p.amount for p in pays)
     items = [{"date": f"{p.date:%d/%m/%y}", "description": p.description, "amount": p.amount} for p in pays]
-    rel = pdfgen.voucher_pdf(pv_no, payee, items, total, company, address)
+    rel = pdfgen.voucher_pdf(pv_no, payee, items, total, company, address,
+                             bank=bank_dict(payee))
     v = M.Voucher(pv_no=pv_no, date=pays[-1].date, payee=payee, total=total,
                   status=status, pdf_path=rel, created_by=created, approved_by=approved)
     db.add(v)
@@ -163,12 +200,13 @@ def build_voucher(pays, payee, status, created=ADMIN, approved=""):
 
 
 v1 = build_voucher([payments[0]], "Uptown Realty", "Paid", approved=ADMIN)        # rental
-v2 = build_voucher([payments[1], payments[6]], "Whiskers & Litter Suppliers", "Approved", approved=ADMIN)
+v2 = build_voucher([payments[1], payments[6]], "Whiskers Wholesale", "Approved", approved=ADMIN)
 v3 = build_voucher([payments[4]], "TNJ Design", "Draft")                              # renovation claim
 
 # Listing containing the paid + approved vouchers
 pl_no = counter("PL", "PL-")
-vdata = [{"pv_no": v.pv_no, "date": f"{v.date:%d/%m/%y}", "payee": v.payee, "total": v.total}
+vdata = [{"pv_no": v.pv_no, "date": f"{v.date:%d/%m/%y}", "payee": v.payee,
+          "total": v.total, "bank": bank_line(v.payee)}
          for v in (v1, v2)]
 rel = pdfgen.listing_pdf(pl_no, vdata, v1.total + v2.total, company, address)
 pl = M.Listing(pl_no=pl_no, date=DAYS[5], total=v1.total + v2.total, status="Submitted",
