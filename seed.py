@@ -41,25 +41,28 @@ for model, fields in [
             if getattr(row, f) in OLD_NAMES:
                 setattr(row, f, "Jasmine")
 
-# name, position, basic, allowance, epf_er, epf_ee, socso_er, socso_ee, eis_er, eis_ee
+# name, position, basic, allowance — EPF/SOCSO/EIS auto-calculated
+from app.statutory import calc_statutory
+
 STAFF = [
-    ("Karen",             "Feline Care Director", 8000, 0, 960.00, 880.00, 104.15, 29.75, 9.90, 9.90),
-    ("Cat Caretaker 1",   "Cat Caretaker",        1700, 0, 221.00, 187.00,  29.75,  8.50, 3.40, 3.40),
-    ("Cat Caretaker 2",   "Cat Caretaker",        1700, 0, 221.00, 187.00,  29.75,  8.50, 3.40, 3.40),
-    ("Chief Concierge",   "Reception",            2634, 0, 342.45, 289.75,  46.15, 13.25, 5.30, 5.30),
-    ("Senior Groomer",    "Senior Groomer",       3040, 0, 395.20, 334.40,  53.15, 15.25, 6.10, 6.10),
-    ("Junior Groomer",    "Junior Groomer",       1700, 0, 221.00, 187.00,  29.75,  8.50, 3.40, 3.40),
-    ("Steward 1",         "Housekeeping",         1600, 0, 208.00, 176.00,  27.95,  8.05, 3.20, 3.20),
-    ("Steward 2",         "Housekeeping",         1600, 0, 208.00, 176.00,  27.95,  8.05, 3.20, 3.20),
-    ("Community Curator", "Community & Media",    3040, 0, 395.20, 334.40,  53.15, 15.25, 6.10, 6.10),
+    ("Karen",             "Feline Care Director", 8000, 0),
+    ("Cat Caretaker 1",   "Cat Caretaker",        1700, 0),
+    ("Cat Caretaker 2",   "Cat Caretaker",        1700, 0),
+    ("Chief Concierge",   "Reception",            2634, 0),
+    ("Senior Groomer",    "Senior Groomer",       3040, 0),
+    ("Junior Groomer",    "Junior Groomer",       1700, 0),
+    ("Steward 1",         "Housekeeping",         1600, 0),
+    ("Steward 2",         "Housekeeping",         1600, 0),
+    ("Community Curator", "Community & Media",    3040, 0),
 ]
 if db.query(Staff).count() == 0:
-    for name, pos, base, allw, epf_er, epf_ee, soc_er, soc_ee, eis_er, eis_ee in STAFF:
+    for name, pos, base, allw in STAFF:
+        st = calc_statutory(base + allw)
         db.add(Staff(name=name, position=pos, base_salary=base, allowance=allw,
-                     epf_employer=epf_er, epf_employee=epf_ee,
-                     socso_employer=soc_er, socso_employee=soc_ee,
-                     eis_employer=eis_er, eis_employee=eis_ee))
-    print(f"Seeded {len(STAFF)} staff with statutory presets.")
+                     epf_employer=st["epf_er"], epf_employee=st["epf_ee"],
+                     socso_employer=st["socso_er"], socso_employee=st["socso_ee"],
+                     eis_employer=st["eis_er"], eis_employee=st["eis_ee"]))
+    print(f"Seeded {len(STAFF)} staff with auto-calculated statutory.")
 
 DEFAULTS = {
     "COMPANY_NAME": "CATDAY SDN BHD",

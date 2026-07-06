@@ -48,7 +48,7 @@
           {% for p in v.payments %}
             {% if p.documents %}
               {% for d in p.documents %}
-              <a class="docchip" href="/files/{{ d.file_path }}" target="_blank">{{ icon('paperclip', 12) }} {{ p.pay_no }} · {{ p.description[:34] }} · RM {{ p.amount|rm }}</a>
+              <a class="docchip" href="/files/{{ d.file_path }}" target="_blank">{{ icon('paperclip', 12) }} {% if p.invoice_no %}{{ p.invoice_no }} · {% endif %}{{ p.description[:34] }} · RM {{ p.amount|rm }}</a>
               {% endfor %}
             {% else %}
               <span class="docchip none">{{ p.pay_no }} · {{ p.description[:34] }} · RM {{ p.amount|rm }} (no document)</span>

@@ -117,7 +117,7 @@ def handle_update(update: dict, db: Session):
         doc_type=cls.get("doc_type", "Other"),
         supplier=cls.get("supplier", ""), amount=cls.get("amount", 0.0),
         month=month, description=cls.get("description") or caption or filename,
-        category=cls.get("category", ""),
+        category=cls.get("category", ""), invoice_no=cls.get("invoice_no", ""),
         file_path=rel_path, mime=mime, ai_classified=cls.get("ai", False),
         status="Pending",
     )

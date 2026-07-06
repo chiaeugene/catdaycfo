@@ -17,8 +17,22 @@ from .database import Base, engine, get_db
 from . import models as M
 from .auth import hash_password, verify_password, current_user
 from . import telegram_bot, pdfgen, claude_ai
+from .statutory import calc_statutory
 
 Base.metadata.create_all(engine)
+
+# Lightweight migrations — create_all doesn't add columns to existing tables.
+with engine.connect() as _conn:
+    from sqlalchemy import text as _text
+    for _stmt in (
+        "ALTER TABLE payments ADD COLUMN invoice_no VARCHAR(60) DEFAULT ''",
+        "ALTER TABLE documents ADD COLUMN invoice_no VARCHAR(60) DEFAULT ''",
+    ):
+        try:
+            _conn.execute(_text(_stmt))
+            _conn.commit()
+        except Exception:
+            pass  # column already exists
 
 app = FastAPI(title="CATDAY System")
 app.add_middleware(SessionMiddleware, secret_key=os.environ.get("SECRET_KEY", "catday-dev-secret"))
@@ -32,6 +46,7 @@ templates.env.filters["rm"] = lambda v: f"{(v or 0):,.2f}"
 app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
 
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "catdayhook")
+BASE_URL = os.environ.get("BASE_URL", "https://catday-system.onrender.com").rstrip("/")
 # URL-safe token derived from the secret — base64 secrets contain +/= which
 # break URL path segments, so the webhook path uses this hex digest instead.
 import hashlib as _hashlib
@@ -192,7 +207,8 @@ def verify_document(doc_id: int, request: Request,
                     section: str = Form(...), doc_type: str = Form(...),
                     supplier: str = Form(""), amount: float = Form(0),
                     month: str = Form(""), description: str = Form(""),
-                    category: str = Form(""), db: Session = Depends(get_db)):
+                    category: str = Form(""), invoice_no: str = Form(""),
+                    db: Session = Depends(get_db)):
     user = current_user(request, db)
     if not user or user.role not in ("admin", "manager"):
         return RedirectResponse("/", status_code=302)
@@ -203,14 +219,21 @@ def verify_document(doc_id: int, request: Request,
     doc.section, doc.doc_type, doc.supplier = section, doc_type, supplier
     doc.amount, doc.month = amount, month or month_str()
     doc.description, doc.category = description, category
+    doc.invoice_no = invoice_no.strip()
     doc.status, doc.verified_by, doc.verified_at = "Verified", user.display_name, datetime.utcnow()
 
     # Route to the right module
-    if section in ("Purchase", "Expense"):
+    if section in ("Purchase", "Expense", "Staff Claim"):
         pay_no = telegram_bot.next_counter(db, "PAY", "PAY-")
-        grp = "CAPEX" if section == "Purchase" else "OPEX"
+        if section == "Staff Claim":
+            grp, category = "OPEX", "Staff Claim"
+            # For claims the "supplier" is the claimant staff member being reimbursed
+            supplier = supplier or doc.sender
+        else:
+            grp = "CAPEX" if section == "Purchase" else "OPEX"
         p = M.Payment(pay_no=pay_no, supplier=supplier, description=description,
                       category=category, grp=grp, amount=amount, month=doc.month,
+                      invoice_no=invoice_no.strip(),
                       status="Categorized" if category else "Unsorted",
                       notes=f"from {doc.doc_no} ({doc.sender})")
         db.add(p)
@@ -251,8 +274,14 @@ def serve_file(path: str, request: Request, db: Session = Depends(get_db)):
 
 
 # ─────────────────────────── PAYMENTS ───────────────────────────
+ERRORS = {
+    "mixed": "One voucher pays ONE company only — the payments you ticked belong to different suppliers. Create a separate voucher per supplier. 一张凭单只能支付一家公司。",
+    "payee_mismatch": "The payee name doesn't match the supplier of the selected payments. Leave payee blank to use the supplier automatically.",
+}
+
+
 @app.get("/payments", response_class=HTMLResponse)
-def payments(request: Request, status: str = "", db: Session = Depends(get_db)):
+def payments(request: Request, status: str = "", error: str = "", db: Session = Depends(get_db)):
     q = db.query(M.Payment).order_by(M.Payment.id.desc())
     if status:
         q = q.filter(M.Payment.status == status)
@@ -262,17 +291,18 @@ def payments(request: Request, status: str = "", db: Session = Depends(get_db)):
                       .filter(M.Supplier.active == True).order_by(M.Supplier.name).all()]  # noqa: E712
     return render(request, db, "payments.html", "payments",
                   payments=q.limit(300).all(), flt=status, open_total=open_total,
-                  supplier_names=supplier_names)
+                  supplier_names=supplier_names, error=ERRORS.get(error, ""))
 
 
 @app.post("/payments/new")
 def new_payment(request: Request, supplier: str = Form(""), description: str = Form(...),
                 category: str = Form(""), grp: str = Form(""), amount: float = Form(...),
-                pdate: str = Form(""), db: Session = Depends(get_db)):
+                invoice_no: str = Form(""), pdate: str = Form(""), db: Session = Depends(get_db)):
     d = parse_date(pdate)
     pay_no = telegram_bot.next_counter(db, "PAY", "PAY-")
     db.add(M.Payment(pay_no=pay_no, date=d, supplier=supplier, description=description,
                      category=category, grp=grp, amount=amount, month=month_str(d),
+                     invoice_no=invoice_no.strip(),
                      status="Categorized" if category else "Unsorted", notes="manual entry"))
     db.commit()
     return RedirectResponse("/payments", status_code=302)
@@ -351,11 +381,21 @@ async def create_voucher(request: Request, db: Session = Depends(get_db)):
                                       M.Payment.status.in_(["Unsorted", "Categorized"])).all()
     if not pays:
         return RedirectResponse("/payments", status_code=302)
-    if not payee:
-        payee = pays[0].supplier or "Payee"
+
+    # Accounting rule: one voucher pays exactly one company/person.
+    distinct = {(p.supplier or "").strip().lower() for p in pays}
+    if len(distinct) > 1:
+        return RedirectResponse("/payments?error=mixed", status_code=302)
+    supplier_name = pays[0].supplier or ""
+    if payee and supplier_name and payee.strip().lower() != supplier_name.strip().lower():
+        return RedirectResponse("/payments?error=payee_mismatch", status_code=302)
+    payee = payee or supplier_name or "Payee"
+
     pv_no = telegram_bot.next_counter(db, "PV", "PV-")
     total = sum(p.amount for p in pays)
-    items = [{"date": f"{p.date:%d/%m/%y}", "description": p.description, "amount": p.amount}
+    items = [{"date": f"{p.date:%d/%m/%y}", "description": p.description, "amount": p.amount,
+              "invoice_no": p.invoice_no,
+              "doc_url": f"{BASE_URL}/files/{p.documents[0].file_path}" if p.documents else ""}
              for p in pays]
     settings = {s.key: s.value for s in db.query(M.Setting).all()}
     sup = find_supplier(db, payee)
@@ -536,17 +576,20 @@ def payroll(request: Request, db: Session = Depends(get_db)):
                   staff=staff, runs=runs, totals=totals)
 
 
+def _apply_statutory(s: M.Staff):
+    st = calc_statutory(s.base_salary + s.allowance)
+    s.epf_employer, s.epf_employee = st["epf_er"], st["epf_ee"]
+    s.socso_employer, s.socso_employee = st["socso_er"], st["socso_ee"]
+    s.eis_employer, s.eis_employee = st["eis_er"], st["eis_ee"]
+
+
 @app.post("/payroll/staff/new")
 def staff_new(request: Request, name: str = Form(...), position: str = Form(""),
               base_salary: float = Form(0), allowance: float = Form(0),
-              epf_employer: float = Form(0), epf_employee: float = Form(0),
-              socso_employer: float = Form(0), socso_employee: float = Form(0),
-              eis_employer: float = Form(0), eis_employee: float = Form(0),
               db: Session = Depends(get_db)):
-    db.add(M.Staff(name=name, position=position, base_salary=base_salary, allowance=allowance,
-                   epf_employer=epf_employer, epf_employee=epf_employee,
-                   socso_employer=socso_employer, socso_employee=socso_employee,
-                   eis_employer=eis_employer, eis_employee=eis_employee))
+    s = M.Staff(name=name, position=position, base_salary=base_salary, allowance=allowance)
+    _apply_statutory(s)
+    db.add(s)
     db.commit()
     return RedirectResponse("/payroll", status_code=302)
 
@@ -554,17 +597,12 @@ def staff_new(request: Request, name: str = Form(...), position: str = Form(""),
 @app.post("/payroll/staff/{sid}/update")
 def staff_update(sid: int, request: Request, name: str = Form(...), position: str = Form(""),
                  base_salary: float = Form(0), allowance: float = Form(0),
-                 epf_employer: float = Form(0), epf_employee: float = Form(0),
-                 socso_employer: float = Form(0), socso_employee: float = Form(0),
-                 eis_employer: float = Form(0), eis_employee: float = Form(0),
-                 active: str = Form("on"), db: Session = Depends(get_db)):
+                 active: str = Form(""), db: Session = Depends(get_db)):
     s = db.get(M.Staff, sid)
     if s:
         s.name, s.position = name, position
         s.base_salary, s.allowance = base_salary, allowance
-        s.epf_employer, s.epf_employee = epf_employer, epf_employee
-        s.socso_employer, s.socso_employee = socso_employer, socso_employee
-        s.eis_employer, s.eis_employee = eis_employer, eis_employee
+        _apply_statutory(s)   # EPF/SOCSO/EIS always follow the latest salary
         s.active = active == "on"
         db.commit()
     return RedirectResponse("/payroll", status_code=302)
@@ -580,11 +618,12 @@ def payroll_run(month: str = Form(...), db: Session = Depends(get_db)):
     db.add(run)
     db.flush()
     for s in db.query(M.Staff).filter(M.Staff.active == True).all():  # noqa: E712
+        st = calc_statutory(s.base_salary + s.allowance)
         db.add(M.PayrollItem(run_id=run.id, staff_name=s.name, position=s.position,
                              base=s.base_salary, allowance=s.allowance,
-                             epf_er=s.epf_employer, epf_ee=s.epf_employee,
-                             socso_er=s.socso_employer, socso_ee=s.socso_employee,
-                             eis_er=s.eis_employer, eis_ee=s.eis_employee))
+                             epf_er=st["epf_er"], epf_ee=st["epf_ee"],
+                             socso_er=st["socso_er"], socso_ee=st["socso_ee"],
+                             eis_er=st["eis_er"], eis_ee=st["eis_ee"]))
     db.flush()
     run.total_net = sum(i.net for i in run.items)
     run.total_cost = sum(i.employer_cost for i in run.items)
@@ -604,17 +643,31 @@ def payroll_run_view(rid: int, request: Request, db: Session = Depends(get_db)):
 def payroll_item_update(rid: int, iid: int, request: Request,
                         base: float = Form(0), allowance: float = Form(0),
                         overtime: float = Form(0), bonus: float = Form(0),
-                        epf_ee: float = Form(0), socso_ee: float = Form(0),
-                        eis_ee: float = Form(0), deductions: float = Form(0),
+                        deductions: float = Form(0),
                         remarks: str = Form(""), db: Session = Depends(get_db)):
     run = db.get(M.PayrollRun, rid)
     item = db.get(M.PayrollItem, iid)
     if run and item and item.run_id == rid and run.status == "Draft":
         item.base, item.allowance, item.overtime, item.bonus = base, allowance, overtime, bonus
-        item.epf_ee, item.socso_ee, item.eis_ee = epf_ee, socso_ee, eis_ee
         item.deductions, item.remarks = deductions, remarks
+        # Statutory always recalculated from the latest gross
+        st = calc_statutory(item.gross)
+        item.epf_er, item.epf_ee = st["epf_er"], st["epf_ee"]
+        item.socso_er, item.socso_ee = st["socso_er"], st["socso_ee"]
+        item.eis_er, item.eis_ee = st["eis_er"], st["eis_ee"]
         run.total_net = sum(i.net for i in run.items)
         run.total_cost = sum(i.employer_cost for i in run.items)
+        db.commit()
+    return RedirectResponse(f"/payroll/run/{rid}", status_code=302)
+
+
+@app.post("/payroll/run/{rid}/reopen")
+def payroll_reopen(rid: int, request: Request, db: Session = Depends(get_db)):
+    """Reopen a confirmed run for correction — payslips regenerate on next confirm."""
+    user = current_user(request, db)
+    run = db.get(M.PayrollRun, rid)
+    if run and run.status == "Confirmed" and user and user.role == "admin":
+        run.status = "Draft"
         db.commit()
     return RedirectResponse(f"/payroll/run/{rid}", status_code=302)
 

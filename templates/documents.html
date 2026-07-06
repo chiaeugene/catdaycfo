@@ -43,7 +43,8 @@
           {% for t in M.DOC_TYPES %}<option {% if d.doc_type==t %}selected{% endif %}>{{ t }}</option>{% endfor %}
         </select>
       </div>
-      <div><label>Supplier 供应商</label><input name="supplier" value="{{ d.supplier }}"></div>
+      <div><label>Supplier / Claimant 供应商/申请人</label><input name="supplier" value="{{ d.supplier }}"></div>
+      <div><label>Invoice No. 发票号</label><input name="invoice_no" value="{{ d.invoice_no }}"></div>
       <div><label>Amount (RM) 金额</label><input type="number" step="0.01" name="amount" value="{{ d.amount }}"></div>
       <div><label>Month 月份</label><input name="month" value="{{ d.month }}" placeholder="Jul 2026"></div>
       <div>
@@ -58,7 +59,7 @@
     <div class="vc-actions">
       <button type="submit" class="success">{{ icon('check', 14) }} Verify &amp; Post 审核入账</button>
       <span class="meta" style="color:var(--muted);font-size:11.5px">
-        Purchase → Payments (CAPEX) · Expense → Payments (OPEX) · Petty Cash → cash book · Bank-in / Filing → archive only
+        Purchase → Payments (CAPEX) · Expense → Payments (OPEX) · Staff Claim → Payments (reimburse the claimant) · Petty Cash → cash book · Bank-in / Filing → archive only
       </span>
     </div>
   </form>

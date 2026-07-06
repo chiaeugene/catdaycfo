@@ -2,7 +2,9 @@
 {% from "icons.html" import icon %}
 {% block content %}
 <div class="pagehead"><h1>Payments 付款记录</h1></div>
-<div class="sub">Categorize payments, tick the ones to pay, then create a Payment Voucher</div>
+<div class="sub">Categorize payments, tick the ones to pay, then create a Payment Voucher — one voucher pays one company only</div>
+
+{% if error %}<div class="error">{{ error }}</div>{% endif %}
 
 <div class="cards">
   <div class="card amber"><div class="label">Open (not on voucher) 未开凭单</div><div class="value">RM {{ open_total|rm }}</div></div>
@@ -18,9 +20,10 @@
 <div class="panel">
   <h2>Add manual payment 手动添加</h2>
   <form method="post" action="/payments/new">
-    <div class="formrow cols-payment">
+    <div class="formrow" style="grid-template-columns:132px 145px 105px minmax(150px,1fr) 140px 115px 115px auto">
       <div class="f-date"><label>Date 日期</label><input type="date" name="pdate" value="{{ today }}"></div>
       <div><label>Supplier 供应商</label><input name="supplier" list="suplist"></div>
+      <div><label>Invoice No.</label><input name="invoice_no"></div>
       <div><label>Description 描述</label><input name="description" required></div>
       <div><label>Category 类别</label><select name="category"><option value=""></option>{% for c in M.CATEGORIES %}<option>{{ c }}</option>{% endfor %}</select></div>
       <div><label>Group 分组</label><select name="grp"><option value=""></option>{% for g in M.GROUPS %}<option>{{ g }}</option>{% endfor %}</select></div>
@@ -35,18 +38,20 @@
 <table>
   <tr>
     <th class="checkbox-cell"><input type="checkbox" id="selall" onchange="toggleAll(this)" title="Select all"></th>
-    <th>ID</th><th>Date</th><th>Supplier</th><th>Description</th>
+    <th>ID</th><th>Date</th><th>Supplier</th><th>Invoice No.</th><th>Description</th>
     <th>Category</th><th>Group</th><th class="num">Amount</th><th>Status</th><th>PV</th><th></th></tr>
   {% for p in payments %}
   <tr>
     <td class="checkbox-cell">
       {% if p.status in ["Unsorted","Categorized"] %}
-      <input type="checkbox" name="pay_ids" value="{{ p.id }}" data-amt="{{ p.amount }}" onchange="updateBar()">
+      <input type="checkbox" name="pay_ids" value="{{ p.id }}" data-amt="{{ p.amount }}"
+             data-supplier="{{ p.supplier|lower }}" onchange="updateBar()">
       {% endif %}
     </td>
     <td class="mono">{{ p.pay_no }}</td>
     <td>{{ p.date.strftime('%d/%m/%y') }}</td>
     <td>{{ p.supplier }}</td>
+    <td class="mono">{{ p.invoice_no }}</td>
     <td>
       {% if p.documents %}<a href="/files/{{ p.documents[0].file_path }}" target="_blank">{{ p.description[:55] }}</a>
       {% else %}{{ p.description[:55] }}{% endif %}
@@ -72,7 +77,7 @@
     </td>
   </tr>
   {% else %}
-  <tr><td colspan="11" class="empty">No payments yet — verified Purchase/Expense documents appear here.</td></tr>
+  <tr><td colspan="12" class="empty">No payments yet — verified Purchase/Expense documents appear here.</td></tr>
   {% endfor %}
 </table>
 </div>
@@ -96,8 +101,16 @@ function boxes() { return Array.from(document.querySelectorAll('input[name="pay_
 function updateBar() {
   const on = boxes().filter(b => b.checked);
   const total = on.reduce((a, b) => a + parseFloat(b.dataset.amt || 0), 0);
-  document.getElementById('selcount').textContent = on.length + ' selected 已选';
-  document.getElementById('seltotal').textContent = 'RM ' + total.toLocaleString(undefined, {minimumFractionDigits: 2});
+  const suppliers = [...new Set(on.map(b => b.dataset.supplier || ''))];
+  const mixed = suppliers.length > 1;
+  const btn = document.querySelector('#selbar button[type="submit"]');
+  document.getElementById('selcount').textContent = mixed
+    ? '⚠ ' + suppliers.length + ' different companies — one voucher pays ONE company'
+    : on.length + ' selected 已选';
+  document.getElementById('seltotal').textContent = mixed ? '' :
+    'RM ' + total.toLocaleString(undefined, {minimumFractionDigits: 2});
+  btn.disabled = mixed;
+  btn.style.opacity = mixed ? .45 : 1;
   document.getElementById('selbar').classList.toggle('show', on.length > 0);
 }
 function toggleAll(el) { boxes().forEach(b => b.checked = el.checked); updateBar(); }

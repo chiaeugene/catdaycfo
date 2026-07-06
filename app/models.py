@@ -8,13 +8,13 @@ ROLES = ["admin", "manager", "staff"]
 
 CATEGORIES = [
     "Renovation", "Equipment", "Cat Supplies", "Grooming Supplies", "Utilities",
-    "Rental", "Salary", "Marketing", "Insurance", "Software", "Transport",
+    "Rental", "Salary", "Staff Claim", "Marketing", "Insurance", "Software", "Transport",
     "Admin", "Maintenance", "Staff Welfare", "Vet", "Misc",
 ]
 GROUPS = ["CAPEX", "OPEX", "COGS", "Payroll", "Petty Cash"]
 DOC_TYPES = ["Invoice", "Receipt", "Quotation", "Statement", "Bank-in Slip", "Payslip", "Other"]
 # Section = where a verified document is routed
-DOC_SECTIONS = ["Purchase", "Expense", "Petty Cash", "Bank-in Slip", "Payroll", "Filing Only"]
+DOC_SECTIONS = ["Purchase", "Expense", "Staff Claim", "Petty Cash", "Bank-in Slip", "Payroll", "Filing Only"]
 DOC_STATUS = ["Pending", "Verified", "Rejected"]
 PAY_STATUS = ["Unsorted", "Categorized", "On Voucher", "Paid"]
 PV_STATUS = ["Draft", "Approved", "Paid", "Void"]
@@ -47,6 +47,7 @@ class Document(Base):
     month: Mapped[str] = mapped_column(String(20), default="")     # "Jul 2026"
     description: Mapped[str] = mapped_column(Text, default="")
     category: Mapped[str] = mapped_column(String(50), default="")
+    invoice_no: Mapped[str] = mapped_column(String(60), default="")
     file_path: Mapped[str] = mapped_column(String(300))            # relative to uploads/
     mime: Mapped[str] = mapped_column(String(80), default="")
     status: Mapped[str] = mapped_column(String(30), default="Pending")
@@ -63,6 +64,7 @@ class Payment(Base):
     pay_no: Mapped[str] = mapped_column(String(20), unique=True)   # PAY-0001
     date: Mapped[date] = mapped_column(Date, default=date.today)
     supplier: Mapped[str] = mapped_column(String(150), default="")
+    invoice_no: Mapped[str] = mapped_column(String(60), default="")
     description: Mapped[str] = mapped_column(Text, default="")
     category: Mapped[str] = mapped_column(String(50), default="")
     grp: Mapped[str] = mapped_column(String(30), default="")

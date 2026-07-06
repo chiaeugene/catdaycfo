@@ -30,7 +30,7 @@ random.seed(42)
 Base.metadata.create_all(engine)
 db = SessionLocal()
 
-SAMPLE_VERSION = "v4-suppliers"
+SAMPLE_VERSION = "v5-invoice-claims"
 ver_setting = db.get(M.Setting, "SAMPLE_DATA_VERSION")
 
 if ver_setting and ver_setting.value == SAMPLE_VERSION:
@@ -127,40 +127,63 @@ def bank_line(payee):
 
 
 # ═══ 1. Documents + payments (verified pipeline) ═══
-# (day_offset, sender_role, supplier, description, amount, category, grp, doc_title)
+# (day_offset, sender_role, supplier, description, amount, category, grp, invoice_no, doc_title)
 PURCHASES = [
-    (0, "Ops Team",   "Uptown Realty",      "Rental July 2026",                17000.00, "Rental",            "OPEX",  "RENTAL INVOICE JUL-2026"),
-    (0, "Cat Care",   "Whiskers Wholesale", "Cat food bulk order 40 x 2kg",     1860.00, "Cat Supplies",      "COGS",  "INVOICE WW-3311"),
-    (1, "Ops Team",   "CleanPro Supplies",  "Cleaning chemicals + mop set",      412.60, "Maintenance",       "OPEX",  "RECEIPT CP-99213"),
-    (2, "Front Desk", "TNB",                "Electricity deposit adjustment",   1230.00, "Utilities",         "OPEX",  "TNB STATEMENT 06/26"),
-    (3, "Ops Team",   "TNJ Design",         "Renovation final touch-up works", 18500.00, "Renovation",        "CAPEX", "TNJ CLAIM #6"),
-    (4, "Groomer",    "GroomMaster MY",     "Shampoo, dryers consumables",       684.30, "Grooming Supplies", "COGS",  "INVOICE GM-2207"),
-    (5, "Front Desk", "Meow Media",         "Grand opening campaign boost",     3500.00, "Marketing",         "OPEX",  "INVOICE MM-0088"),
-    (6, "Ops Team",   "SoftInv Systems",    "Booking system subscription",       299.00, "Software",          "OPEX",  "INVOICE SI-77120"),
-    (7, "Cat Care",   "Litter King",        "Premium litter 30 bags",            945.00, "Cat Supplies",      "COGS",  "INVOICE LK-5501"),
-    (8, "Cat Care",   "Klinik Haiwan PJ",   "New cat health screening x4",       520.00, "Vet",               "OPEX",  "RECEIPT KH-1904"),
+    (0, "Ops Team",   "Uptown Realty",      "Rental July 2026",                17000.00, "Rental",            "OPEX",  "UR-2607-114",  "RENTAL INVOICE JUL-2026"),
+    (0, "Cat Care",   "Whiskers Wholesale", "Cat food bulk order 40 x 2kg",     1860.00, "Cat Supplies",      "COGS",  "WW-3311",      "INVOICE WW-3311"),
+    (1, "Ops Team",   "CleanPro Supplies",  "Cleaning chemicals + mop set",      412.60, "Maintenance",       "OPEX",  "CP-99213",     "RECEIPT CP-99213"),
+    (2, "Front Desk", "TNB",                "Electricity deposit adjustment",   1230.00, "Utilities",         "OPEX",  "TNB-0626-88",  "TNB STATEMENT 06/26"),
+    (3, "Ops Team",   "TNJ Design",         "Renovation final touch-up works", 18500.00, "Renovation",        "CAPEX", "TNJ-CLM-006",  "TNJ CLAIM #6"),
+    (4, "Groomer",    "GroomMaster MY",     "Shampoo, dryers consumables",       684.30, "Grooming Supplies", "COGS",  "GM-2207",      "INVOICE GM-2207"),
+    (5, "Front Desk", "Meow Media",         "Grand opening campaign boost",     3500.00, "Marketing",         "OPEX",  "MM-0088",      "INVOICE MM-0088"),
+    (6, "Ops Team",   "SoftInv Systems",    "Booking system subscription",       299.00, "Software",          "OPEX",  "SI-77120",     "INVOICE SI-77120"),
+    (7, "Cat Care",   "Litter King",        "Premium litter 30 bags",            945.00, "Cat Supplies",      "COGS",  "LK-5501",      "INVOICE LK-5501"),
+    (8, "Cat Care",   "Klinik Haiwan PJ",   "New cat health screening x4",       520.00, "Vet",               "OPEX",  "KH-1904",      "RECEIPT KH-1904"),
 ]
 
 payments = []
-for off, sender, supplier, desc, amt, cat, grp, title in PURCHASES:
+for off, sender, supplier, desc, amt, cat, grp, inv_no, title in PURCHASES:
     d = DAYS[off]
-    doc_no, rel = make_doc_pdf(title, [f"Supplier: {supplier}", f"Date: {d:%d/%m/%Y}",
+    doc_no, rel = make_doc_pdf(title, [f"Supplier: {supplier}", f"Invoice No: {inv_no}",
+                                       f"Date: {d:%d/%m/%Y}",
                                        f"Description: {desc}", f"TOTAL: RM {amt:,.2f}"], d)
     pay_no = counter("PAY", "PAY-")
     p = M.Payment(pay_no=pay_no, date=d, supplier=supplier, description=desc,
-                  category=cat, grp=grp, amount=amt, month=mstr(d),
+                  category=cat, grp=grp, amount=amt, month=mstr(d), invoice_no=inv_no,
                   status="Categorized", notes=f"from {doc_no} ({sender})")
     db.add(p)
     db.flush()
     doc = M.Document(doc_no=doc_no, received_at=datetime.combine(d, datetime.min.time()) + timedelta(hours=random.randint(9, 18)),
                      sender=sender, section="Purchase" if grp == "CAPEX" else "Expense",
                      doc_type="Invoice", supplier=supplier, amount=amt, month=mstr(d),
-                     description=desc, category=cat, file_path=rel, mime="application/pdf",
+                     description=desc, category=cat, invoice_no=inv_no,
+                     file_path=rel, mime="application/pdf",
                      status="Verified", ai_classified=True, verified_by=ADMIN,
                      verified_at=datetime.combine(d, datetime.min.time()) + timedelta(hours=20),
                      payment_id=p.id)
     db.add(doc)
     payments.append(p)
+
+# A verified staff claim: Groomer paid out of pocket, gets reimbursed via voucher
+d = DAYS[7]
+doc_no, rel = make_doc_pdf("PETROL RECEIPT - CLAIM", [
+    "Claimant: Siti (Groomer)", "Date: " + f"{d:%d/%m/%Y}",
+    "Petrol for mobile grooming visit", "TOTAL: RM 68.20"], d)
+claim_pay_no = counter("PAY", "PAY-")
+claim = M.Payment(pay_no=claim_pay_no, date=d, supplier="Siti (Groomer)",
+                  description="Claim: petrol for mobile grooming visit",
+                  category="Staff Claim", grp="OPEX", amount=68.20, month=mstr(d),
+                  status="Categorized", notes=f"from {doc_no} (Groomer)")
+db.add(claim)
+db.flush()
+db.add(M.Document(doc_no=doc_no, received_at=datetime.combine(d, datetime.min.time()) + timedelta(hours=15),
+                  sender="Groomer", section="Staff Claim", doc_type="Receipt",
+                  supplier="Siti (Groomer)", amount=68.20, month=mstr(d),
+                  description="Claim: petrol for mobile grooming visit", category="Staff Claim",
+                  file_path=rel, mime="application/pdf", status="Verified",
+                  ai_classified=True, verified_by=ADMIN,
+                  verified_at=datetime.combine(d, datetime.min.time()) + timedelta(hours=20),
+                  payment_id=claim.id))
 
 # 2 documents still pending verification (today's inbox)
 for sender, desc, amt, title in [
@@ -183,10 +206,20 @@ company = settings.get("COMPANY_NAME", "CATDAY SDN BHD")
 address = settings.get("COMPANY_ADDRESS", "Uptown PJ")
 
 
+BASE_URL = os.environ.get("BASE_URL", "https://catday-system.onrender.com").rstrip("/")
+
+
 def build_voucher(pays, payee, status, created=ADMIN, approved=""):
+    # One voucher = one payee company (enforced in the app; sample data follows suit)
+    assert len({(p.supplier or "").lower() for p in pays}) == 1, "mixed suppliers in sample voucher"
     pv_no = counter("PV", "PV-")
     total = sum(p.amount for p in pays)
-    items = [{"date": f"{p.date:%d/%m/%y}", "description": p.description, "amount": p.amount} for p in pays]
+    items = []
+    for p in pays:
+        doc = db.query(M.Document).filter(M.Document.payment_id == p.id).first()
+        items.append({"date": f"{p.date:%d/%m/%y}", "description": p.description,
+                      "amount": p.amount, "invoice_no": p.invoice_no,
+                      "doc_url": f"{BASE_URL}/files/{doc.file_path}" if doc else ""})
     rel = pdfgen.voucher_pdf(pv_no, payee, items, total, company, address,
                              bank=bank_dict(payee))
     v = M.Voucher(pv_no=pv_no, date=pays[-1].date, payee=payee, total=total,
@@ -200,7 +233,7 @@ def build_voucher(pays, payee, status, created=ADMIN, approved=""):
 
 
 v1 = build_voucher([payments[0]], "Uptown Realty", "Paid", approved=ADMIN)        # rental
-v2 = build_voucher([payments[1], payments[6]], "Whiskers Wholesale", "Approved", approved=ADMIN)
+v2 = build_voucher([payments[1]], "Whiskers Wholesale", "Approved", approved=ADMIN)
 v3 = build_voucher([payments[4]], "TNJ Design", "Draft")                              # renovation claim
 
 # Listing containing the paid + approved vouchers

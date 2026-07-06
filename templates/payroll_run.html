@@ -25,7 +25,14 @@
   <form method="post" action="/payroll/run/{{ run.id }}/delete">
     <button type="submit" class="danger">{{ icon('trash', 13) }} Delete draft</button>
   </form>
-  <span style="color:var(--muted);font-size:12px">Confirming locks the numbers — payslip PDFs become available per staff member.</span>
+  <span style="color:var(--muted);font-size:12px">EPF / SOCSO / EIS recalculate automatically whenever you adjust a row. You can reopen the run later if a mistake slips through.</span>
+</div>
+{% else %}
+<div class="panel" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+  <form method="post" action="/payroll/run/{{ run.id }}/reopen">
+    <button type="submit" class="secondary">{{ icon('edit', 13) }} Reopen for correction 重新打开修改</button>
+  </form>
+  <span style="color:var(--muted);font-size:12px">Reopening puts the run back to Draft — adjust, then confirm again and payslips regenerate with the corrected numbers.</span>
 </div>
 {% endif %}
 
@@ -86,11 +93,11 @@
         <div><label>Allowance RM</label><input type="number" step="0.01" name="allowance" value="{{ i.allowance }}"></div>
         <div><label>Overtime RM</label><input type="number" step="0.01" name="overtime" value="{{ i.overtime }}"></div>
         <div><label>Bonus RM</label><input type="number" step="0.01" name="bonus" value="{{ i.bonus }}"></div>
-        <div><label>EPF — Employee</label><input type="number" step="0.01" name="epf_ee" value="{{ i.epf_ee }}"></div>
-        <div><label>SOCSO — Employee</label><input type="number" step="0.01" name="socso_ee" value="{{ i.socso_ee }}"></div>
-        <div><label>EIS — Employee</label><input type="number" step="0.01" name="eis_ee" value="{{ i.eis_ee }}"></div>
         <div><label>Other deductions RM</label><input type="number" step="0.01" name="deductions" value="{{ i.deductions }}"></div>
-        <div class="full"><label>Remarks (shows on payslip)</label><input name="remarks" value="{{ i.remarks }}"></div>
+        <div><label>Remarks (on payslip)</label><input name="remarks" value="{{ i.remarks }}"></div>
+        <div class="full" style="background:var(--blue-bg);color:var(--blue);border-radius:8px;padding:9px 12px;font-size:11.5px;font-weight:600">
+          EPF, SOCSO &amp; EIS recalculate automatically from the new gross when you save.
+        </div>
       </div>
     </div>
     <div class="dlg-foot">
