@@ -103,19 +103,27 @@ TEXT_PROMPT = (
     "You are the intake AI for CATDAY, a premium cat hotel in Malaysia. A staff member "
     "typed a message to the finance/ops bot. Figure out what it is, even if they didn't "
     "follow any template. Return ONLY a JSON object (no markdown) with keys:\n"
-    '"intake_type": one of ["Sales Report","Petty Cash","Staff Claim","Boarding Log","Unknown"],\n'
-    f'"sales": for a Sales Report, a list of {{"stream": one of {STREAMS}, "amount": number}} extracted from the message, else [],\n'
+    '"intake_type": one of ["Purchase","Expense","Petty Cash","Staff Claim","Sales Report","Boarding Log","Unknown"],\n'
+    f'"sales": for a Sales Report, a list of {{"stream": one of {STREAMS}, "amount": number}}, else [],\n'
     '"boarding": for a Boarding Log, {"checked_in": int, "checked_out": int, "occupancy": int}, else null,\n'
-    '"amount": for Petty Cash or Staff Claim, the RM amount as a number, else 0,\n'
-    '"category": for Petty Cash/Staff Claim, best guess from '
-    f'{CATEGORIES}, else "",\n'
-    '"supplier": for Staff Claim, the claimant staff name if mentioned, else "",\n'
+    '"amount": the RM amount as a number (for Purchase/Expense/Petty Cash/Staff Claim), else 0,\n'
+    f'"category": best guess from {CATEGORIES}, else "",\n'
+    '"supplier": the supplier/company name; for Staff Claim the claimant staff name; else "",\n'
+    '"invoice_no": the invoice/receipt/reference number if mentioned, else "",\n'
     '"description": one short line summarising the message,\n'
     '"date": the date mentioned as "yyyy-mm-dd" if any, else "".\n'
-    "Rules: daily takings / sales / 营业额 / grooming+boarding amounts = Sales Report. "
-    "Cats checked in/out / occupancy / 寄宿 counts = Boarding Log. "
-    "'I paid ... claim/reimburse' = Staff Claim. Small cash bought something = Petty Cash. "
-    "Greetings or unclear chatter = Unknown."
+    "Routing rules:\n"
+    "- A supplier/company invoice for goods or services, especially with an invoice number "
+    "or a business name (e.g. 'Purchase from Whiskers Wholesale invoice WW-3312 RM1860') "
+    "= \"Purchase\" if it's an asset/equipment/renovation, otherwise \"Expense\".\n"
+    "- Small out-of-pocket cash spending with NO supplier invoice (e.g. 'bought cat litter RM48') "
+    "= \"Petty Cash\".\n"
+    "- 'I paid ... please claim/reimburse me' = \"Staff Claim\".\n"
+    "- Daily takings / sales / 营业额 = \"Sales Report\".\n"
+    "- Cats checked in/out / occupancy / 寄宿 counts = \"Boarding Log\".\n"
+    "- Greetings or unclear chatter = \"Unknown\".\n"
+    "Key distinction: if a business/supplier name OR an invoice number is present, it is a "
+    "Purchase/Expense, NOT Petty Cash — even if the item is small."
 )
 
 
@@ -148,13 +156,16 @@ def _classify_text_claude(text: str, key: str) -> dict:
     out["amount"] = float(out.get("amount") or 0)
     out.setdefault("sales", [])
     out.setdefault("boarding", None)
+    out.setdefault("supplier", "")
+    out.setdefault("invoice_no", "")
     return out
 
 
 def _classify_text_heuristic(text: str) -> dict:
     t = text.lower()
     out = {"intake_type": "Unknown", "sales": [], "boarding": None, "amount": 0.0,
-           "category": "", "supplier": "", "description": text[:80], "date": "", "ai": False}
+           "category": "", "supplier": "", "invoice_no": "", "description": text[:80],
+           "date": "", "ai": False}
 
     # Sales report FIRST (the word "boarding" is also a sales stream)
     streams_found = []
@@ -182,8 +193,23 @@ def _classify_text_heuristic(text: str) -> dict:
 
     amt = re.search(r"rm\s*([\d,]+\.?\d*)", t)
     amt_val = float(amt.group(1).replace(",", "")) if amt else 0.0
+    # "invoice" before "inv" so the short form doesn't match the prefix of the long one
+    inv = re.search(r"\b(?:invoice|inv|ref)\b[#:.\s-]*([a-z0-9][a-z0-9/-]{2,20})", t)
+    invoice_no = inv.group(1).upper() if inv else ""
+    sup = re.search(r"(?:supplier|from|payee|vendor|供应商)[:\s]+([A-Za-z][\w &.'-]{2,40})", text, re.I)
+    supplier = ""
+    if sup:
+        # stop the name at the next field keyword / delimiter
+        supplier = re.split(r"\s*(?:,|\n|invoice|inv\b|amount|rm\s|for:|date:)",
+                            sup.group(1), maxsplit=1, flags=re.I)[0].strip()
+
     if re.search(r"claim|reimburs|报销|paid.*(myself|out of pocket)", t):
-        out["intake_type"] = "Staff Claim"; out["amount"] = amt_val; out["category"] = "Staff Claim"
+        out.update(intake_type="Staff Claim", amount=amt_val, category="Staff Claim")
+    # Supplier invoice / purchase (business name or invoice no present) → Expense/Purchase
+    elif invoice_no or supplier or re.search(r"purchase|invoice|发票|采购", t):
+        is_capex = bool(re.search(r"renovation|equipment|furniture|machine|asset|装修|设备", t))
+        out.update(intake_type="Purchase" if is_capex else "Expense",
+                   amount=amt_val, supplier=supplier, invoice_no=invoice_no)
     elif re.search(r"petty|cash|bought|beli|买|买了", t) and amt_val:
-        out["intake_type"] = "Petty Cash"; out["amount"] = amt_val
+        out.update(intake_type="Petty Cash", amount=amt_val)
     return out

@@ -181,14 +181,16 @@ def handle_text_report(chat_id, from_name: str, text: str, db: Session,
                 "Try one of these formats — or send a photo:\n请用以下格式，或发送照片：\n\n" + HELP_TEXT)
         return
 
-    section_map = {"Sales Report": "Sales Report", "Petty Cash": "Petty Cash",
-                   "Staff Claim": "Staff Claim", "Boarding Log": "Boarding Log"}
-    section = section_map.get(itype, "Filing Only")
+    # intake_type doubles as the routing section for most types
+    section = {"Sales Report": "Sales Report", "Petty Cash": "Petty Cash",
+               "Staff Claim": "Staff Claim", "Boarding Log": "Boarding Log",
+               "Purchase": "Purchase", "Expense": "Expense"}.get(itype, "Filing Only")
     doc_no = next_counter(db, "DOC", "DOC-")
 
     payload = {}
     summary_lines = []
     amount = float(cls.get("amount") or 0)
+    invoice_no = cls.get("invoice_no", "")
 
     if itype == "Sales Report":
         sales = [s for s in cls.get("sales", []) if s.get("amount")]
@@ -200,14 +202,24 @@ def handle_text_report(chat_id, from_name: str, text: str, db: Session,
         payload = {"boarding": b}
         summary_lines = [f"🏨 Check-in: {b.get('checked_in', 0)}  ·  Check-out: {b.get('checked_out', 0)}"
                          f"  ·  In-house: {b.get('occupancy', 0)}"]
+    elif itype in ("Purchase", "Expense"):
+        if cls.get("supplier"):
+            summary_lines.append(f"🏪 Supplier 供应商: {cls['supplier']}")
+        if invoice_no:
+            summary_lines.append(f"🧾 Invoice 发票号: {invoice_no}")
+        summary_lines.append(f"💰 Amount 金额: RM {amount:,.2f}")
+        if cls.get("category"):
+            summary_lines.append(f"🏷 Category 类别: {cls['category']}")
     elif itype in ("Petty Cash", "Staff Claim"):
         summary_lines = [f"💰 Amount: RM {amount:,.2f}"]
         if cls.get("category"):
             summary_lines.append(f"🏷 Category: {cls['category']}")
 
     doc = Document(
-        doc_no=doc_no, sender=from_name, section=section, doc_type="Report",
+        doc_no=doc_no, sender=from_name, section=section,
+        doc_type="Invoice" if itype in ("Purchase", "Expense") else "Report",
         intake_type=itype, supplier=cls.get("supplier", ""), amount=amount,
+        invoice_no=invoice_no,
         month=f"{date.today():%b %Y}", description=cls.get("description") or text[:120],
         category=cls.get("category", ""), payload_json=json.dumps(payload),
         raw_text=text, ai_classified=cls.get("ai", False), status="Pending",
