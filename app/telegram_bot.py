@@ -74,10 +74,23 @@ def handle_update(update: dict, db: Session):
     if not msg:
         return
     chat_id = msg["chat"]["id"]
+    chat_type = msg.get("chat", {}).get("type", "private")
+    is_group = chat_type in ("group", "supergroup")
     frm = msg.get("from", {})
     from_id = str(frm.get("id", ""))
     from_name = " ".join(filter(None, [frm.get("first_name"), frm.get("last_name")])) \
         or frm.get("username") or from_id
+
+    # In a group the bot sees every message (privacy mode off). Only act on messages
+    # explicitly aimed at it: a file, or text that starts with the bot name / mentions it,
+    # or replies to the bot — otherwise stay silent so it doesn't spam the chat.
+    text = (msg.get("text") or msg.get("caption") or "").strip()
+    bot_un = "@catdaycfobot"
+    mentioned = bot_un.lower() in text.lower()
+    replied_to_bot = bool(msg.get("reply_to_message", {}).get("from", {}).get("is_bot"))
+    # strip the @mention so the AI classifies the actual content
+    if mentioned:
+        text = text.replace(bot_un, "").replace(bot_un.lower(), "").strip()
 
     # Whitelist: '*' or registered telegram_ids
     wl_setting = db.get(Setting, "TELEGRAM_WHITELIST")
@@ -86,7 +99,8 @@ def handle_update(update: dict, db: Session):
         allowed = {x.strip() for x in wl.split(",")}
         known = {u.telegram_id for u in db.query(User).filter(User.telegram_id != "").all()}
         if from_id not in allowed | known:
-            tg_send(chat_id, f"⛔ Not authorized. 无权限。\nYour Telegram ID: `{from_id}`\n(Ask admin to add you.)")
+            if not is_group:   # never scold people inside a group
+                tg_send(chat_id, f"⛔ Not authorized. 无权限。\nYour Telegram ID: `{from_id}`\n(Ask admin to add you.)")
             return
 
     # Extract file
@@ -103,11 +117,15 @@ def handle_update(update: dict, db: Session):
 
     # No file → treat as a typed report (or a command / greeting)
     if not file_id:
-        text = (msg.get("text") or "").strip()
         if not text or text.startswith("/"):
-            tg_send(chat_id, HELP_TEXT)
+            if not is_group:            # greetings/commands: reply only in private
+                tg_send(chat_id, HELP_TEXT)
             return
-        handle_text_report(chat_id, from_name, text, db)
+        # In a group, only parse text aimed at the bot (mention or reply to it);
+        # in private, parse everything. Stay silent on unrecognised group chatter.
+        if is_group and not (mentioned or replied_to_bot):
+            return
+        handle_text_report(chat_id, from_name, text, db, silent_if_unknown=is_group)
         return
 
     tg_send(chat_id, "📄 Document received, processing...\n文件已收到，处理中...")
@@ -150,15 +168,17 @@ def handle_update(update: dict, db: Session):
            "ℹ️ Basic classification only.  仅基础分类。"))
 
 
-def handle_text_report(chat_id, from_name: str, text: str, db: Session):
+def handle_text_report(chat_id, from_name: str, text: str, db: Session,
+                       silent_if_unknown: bool = False):
     """A typed report (no file). Classify → pending Document → await verification."""
     cls = claude_ai.classify_text(text)
     itype = cls.get("intake_type", "Unknown")
 
     if itype == "Unknown":
-        tg_send(chat_id,
-            "🤔 I couldn't tell what this is.\n我无法识别这条信息。\n\n"
-            "Try one of these formats — or send a photo:\n请用以下格式，或发送照片：\n\n" + HELP_TEXT)
+        if not silent_if_unknown:   # in a group, don't reply to chatter
+            tg_send(chat_id,
+                "🤔 I couldn't tell what this is.\n我无法识别这条信息。\n\n"
+                "Try one of these formats — or send a photo:\n请用以下格式，或发送照片：\n\n" + HELP_TEXT)
         return
 
     section_map = {"Sales Report": "Sales Report", "Petty Cash": "Petty Cash",
