@@ -17,6 +17,9 @@ class Base(DeclarativeBase):
 MIGRATIONS = [
     "ALTER TABLE payments ADD COLUMN invoice_no VARCHAR(60) DEFAULT ''",
     "ALTER TABLE documents ADD COLUMN invoice_no VARCHAR(60) DEFAULT ''",
+    "ALTER TABLE documents ADD COLUMN intake_type VARCHAR(30) DEFAULT 'Document'",
+    "ALTER TABLE documents ADD COLUMN payload_json TEXT DEFAULT ''",
+    "ALTER TABLE documents ADD COLUMN raw_text TEXT DEFAULT ''",
 ]
 
 

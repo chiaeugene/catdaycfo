@@ -49,6 +49,7 @@ NAV = [
     ("listings", "/listings", "list", "Listings", ("admin", "manager")),
     ("pettycash", "/pettycash", "coins", "Petty Cash", ("admin", "manager", "staff")),
     ("sales", "/sales", "cart", "Sales", ("admin", "manager", "staff")),
+    ("boarding", "/boarding", "cat", "Boarding", ("admin", "manager", "staff")),
     ("payroll", "/payroll", "banknote", "Payroll", ("admin",)),
     ("pnl", "/pnl", "chart", "P&L Report", ("admin",)),
     ("settings", "/settings", "settings", "Settings", ("admin",)),
@@ -153,13 +154,22 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
 # ─────────────────────────── DOCUMENTS (VERIFICATION) ───────────────────────────
 @app.get("/documents", response_class=HTMLResponse)
 def documents(request: Request, view: str = "pending", db: Session = Depends(get_db)):
+    import json as _json
     pending = db.query(M.Document).filter(M.Document.status == "Pending") \
         .order_by(M.Document.id).all()
     q = db.query(M.Document).filter(M.Document.status != "Pending") \
         .order_by(M.Document.id.desc())
     processed = q.limit(200).all()
+    # Decode report payloads for the template
+    payloads = {}
+    for d in pending:
+        if d.payload_json:
+            try:
+                payloads[d.id] = _json.loads(d.payload_json)
+            except Exception:
+                payloads[d.id] = {}
     return render(request, db, "documents.html", "documents",
-                  pending=pending, processed=processed, view=view)
+                  pending=pending, processed=processed, view=view, payloads=payloads)
 
 
 @app.post("/documents/upload")
@@ -191,12 +201,7 @@ async def upload_document(request: Request, file: UploadFile = File(...),
 
 
 @app.post("/documents/{doc_id}/verify")
-def verify_document(doc_id: int, request: Request,
-                    section: str = Form(...), doc_type: str = Form(...),
-                    supplier: str = Form(""), amount: float = Form(0),
-                    month: str = Form(""), description: str = Form(""),
-                    category: str = Form(""), invoice_no: str = Form(""),
-                    db: Session = Depends(get_db)):
+async def verify_document(doc_id: int, request: Request, db: Session = Depends(get_db)):
     user = current_user(request, db)
     if not user or user.role not in ("admin", "manager"):
         return RedirectResponse("/", status_code=302)
@@ -204,10 +209,19 @@ def verify_document(doc_id: int, request: Request,
     if not doc or doc.status != "Pending":
         return RedirectResponse("/documents", status_code=302)
 
-    doc.section, doc.doc_type, doc.supplier = section, doc_type, supplier
-    doc.amount, doc.month = amount, month or month_str()
-    doc.description, doc.category = description, category
-    doc.invoice_no = invoice_no.strip()
+    f = await request.form()
+    section = str(f.get("section", doc.section))
+    supplier = str(f.get("supplier", "")).strip()
+    amount = float(f.get("amount") or 0)
+    month = str(f.get("month", "")).strip()
+    description = str(f.get("description", "")).strip()
+    category = str(f.get("category", "")).strip()
+    invoice_no = str(f.get("invoice_no", "")).strip()
+
+    doc.section = section
+    doc.doc_type = str(f.get("doc_type", doc.doc_type))
+    doc.supplier, doc.amount, doc.month = supplier, amount, month or month_str()
+    doc.description, doc.category, doc.invoice_no = description, category, invoice_no
     doc.status, doc.verified_by, doc.verified_at = "Verified", user.display_name, datetime.utcnow()
 
     # Route to the right module
@@ -215,13 +229,12 @@ def verify_document(doc_id: int, request: Request,
         pay_no = telegram_bot.next_counter(db, "PAY", "PAY-")
         if section == "Staff Claim":
             grp, category = "OPEX", "Staff Claim"
-            # For claims the "supplier" is the claimant staff member being reimbursed
-            supplier = supplier or doc.sender
+            supplier = supplier or doc.sender   # claimant is reimbursed
         else:
             grp = "CAPEX" if section == "Purchase" else "OPEX"
         p = M.Payment(pay_no=pay_no, supplier=supplier, description=description,
                       category=category, grp=grp, amount=amount, month=doc.month,
-                      invoice_no=invoice_no.strip(),
+                      invoice_no=invoice_no,
                       status="Categorized" if category else "Unsorted",
                       notes=f"from {doc.doc_no} ({doc.sender})")
         db.add(p)
@@ -231,6 +244,25 @@ def verify_document(doc_id: int, request: Request,
         db.add(M.PettyCashEntry(date=date.today(), description=description or doc.doc_no,
                                 category=category, amount_out=amount, month=doc.month,
                                 recorded_by=user.display_name, document_id=doc.id))
+    elif section == "Sales Report":
+        rdate = parse_date(str(f.get("rdate", "")))
+        total = 0.0
+        for stream in M.STREAMS:
+            val = float(f.get(f"sales_{stream}") or 0)
+            if val:
+                db.add(M.SalesEntry(date=rdate, stream=stream,
+                                    description=f"Daily report ({doc.doc_no})",
+                                    amount=val, method="Mixed", month=month_str(rdate),
+                                    recorded_by=doc.sender))
+                total += val
+        doc.amount = total
+    elif section == "Boarding Log":
+        db.add(M.BoardingLog(
+            date=parse_date(str(f.get("rdate", ""))),
+            checked_in=int(float(f.get("checked_in") or 0)),
+            checked_out=int(float(f.get("checked_out") or 0)),
+            occupancy=int(float(f.get("occupancy") or 0)),
+            notes=description, recorded_by=doc.sender))
     # Bank-in Slip / Payroll / Filing Only → filed, no transaction record
     db.commit()
     return RedirectResponse("/documents", status_code=302)
@@ -547,6 +579,30 @@ def sales_new(request: Request, stream: str = Form(...), description: str = Form
                         recorded_by=user.display_name if user else ""))
     db.commit()
     return RedirectResponse("/sales", status_code=302)
+
+
+# ─────────────────────────── BOARDING ───────────────────────────
+@app.get("/boarding", response_class=HTMLResponse)
+def boarding(request: Request, db: Session = Depends(get_db)):
+    logs = db.query(M.BoardingLog).order_by(M.BoardingLog.date.desc(), M.BoardingLog.id.desc()).limit(120).all()
+    latest = logs[0] if logs else None
+    mo = month_str()
+    mo_in = sum(l.checked_in for l in logs if month_str(l.date) == mo)
+    mo_out = sum(l.checked_out for l in logs if month_str(l.date) == mo)
+    return render(request, db, "boarding.html", "boarding",
+                  logs=logs, latest=latest, mo_in=mo_in, mo_out=mo_out, month=mo)
+
+
+@app.post("/boarding/new")
+def boarding_new(request: Request, bdate: str = Form(""), checked_in: int = Form(0),
+                 checked_out: int = Form(0), occupancy: int = Form(0),
+                 notes: str = Form(""), db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    db.add(M.BoardingLog(date=parse_date(bdate), checked_in=checked_in or 0,
+                         checked_out=checked_out or 0, occupancy=occupancy or 0,
+                         notes=notes, recorded_by=user.display_name if user else ""))
+    db.commit()
+    return RedirectResponse("/boarding", status_code=302)
 
 
 # ─────────────────────────── PAYROLL ───────────────────────────

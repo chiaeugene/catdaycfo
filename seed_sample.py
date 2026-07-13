@@ -31,7 +31,7 @@ Base.metadata.create_all(engine)
 run_migrations()
 db = SessionLocal()
 
-SAMPLE_VERSION = "v5-invoice-claims"
+SAMPLE_VERSION = "v6-bot-reports"
 ver_setting = db.get(M.Setting, "SAMPLE_DATA_VERSION")
 
 if ver_setting and ver_setting.value == SAMPLE_VERSION:
@@ -42,7 +42,7 @@ if ver_setting and ver_setting.value == SAMPLE_VERSION:
 # Wipe any previous sample data (from an older version of this script) before reseeding.
 if db.query(M.SalesEntry).count() > 0 or db.query(M.Document).count() > 0:
     for model in (M.PayrollItem, M.PayrollRun, M.PettyCashEntry, M.SalesEntry,
-                  M.Voucher, M.Listing, M.Document, M.Payment, M.Supplier):
+                  M.BoardingLog, M.Voucher, M.Listing, M.Document, M.Payment, M.Supplier):
         db.query(model).delete()
     for name in ("DOC", "PAY", "PV", "PL"):
         c = db.get(M.Counter, name)
@@ -295,6 +295,33 @@ for i, d in enumerate(DAYS):
     if i == 8:
         db.add(M.SalesEntry(date=d, stream="Cat Sales", description="Ragdoll kitten — deposit",
                             amount=2500, method="Bank Transfer", month=mstr(d), recorded_by="Front Desk"))
+
+# ═══ 4b. Boarding logs (verified history) + a few pending bot reports ═══
+import json as _json
+occ = 8
+for i, d in enumerate(DAYS):
+    ci = random.randint(1, 4); co = random.randint(0, 3)
+    occ = max(0, occ + ci - co)
+    db.add(M.BoardingLog(date=d, checked_in=ci, checked_out=co, occupancy=occ,
+                         notes="", recorded_by="Front Desk"))
+
+# Pending items that arrived via the bot as typed text (awaiting verification)
+db.add(M.Document(doc_no=counter("DOC", "DOC-"),
+    received_at=datetime.now() - timedelta(hours=2), sender="Front Desk",
+    section="Sales Report", doc_type="Report", intake_type="Sales Report",
+    amount=910, month=mstr(DAYS[-1]), description="Daily takings",
+    raw_text="Sales today: boarding 560, grooming 240, retail 110",
+    payload_json=_json.dumps({"sales": [{"stream": "Boarding", "amount": 560},
+                                        {"stream": "Grooming", "amount": 240},
+                                        {"stream": "Retail", "amount": 110}]}),
+    status="Pending", ai_classified=True))
+db.add(M.Document(doc_no=counter("DOC", "DOC-"),
+    received_at=datetime.now() - timedelta(hours=1), sender="Cat Care",
+    section="Boarding Log", doc_type="Report", intake_type="Boarding Log",
+    month=mstr(DAYS[-1]), description="End of day headcount",
+    raw_text="check in 3, check out 1, now 22 cats",
+    payload_json=_json.dumps({"boarding": {"checked_in": 3, "checked_out": 1, "occupancy": 22}}),
+    status="Pending", ai_classified=True))
 
 # ═══ 5. Confirmed payroll run for Jun 2026 ═══
 run = M.PayrollRun(month="Jun 2026", run_date=date(2026, 6, 28), status="Confirmed")

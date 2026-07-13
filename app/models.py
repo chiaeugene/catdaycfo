@@ -13,8 +13,11 @@ CATEGORIES = [
 ]
 GROUPS = ["CAPEX", "OPEX", "COGS", "Payroll", "Petty Cash"]
 DOC_TYPES = ["Invoice", "Receipt", "Quotation", "Statement", "Bank-in Slip", "Payslip", "Other"]
-# Section = where a verified document is routed
-DOC_SECTIONS = ["Purchase", "Expense", "Staff Claim", "Petty Cash", "Bank-in Slip", "Payroll", "Filing Only"]
+# Section = where a verified submission is routed
+DOC_SECTIONS = ["Purchase", "Expense", "Staff Claim", "Petty Cash", "Sales Report",
+                "Boarding Log", "Bank-in Slip", "Payroll", "Filing Only"]
+# Intake type = what kind of thing the bot received
+INTAKE_TYPES = ["Document", "Sales Report", "Petty Cash", "Staff Claim", "Boarding Log"]
 DOC_STATUS = ["Pending", "Verified", "Rejected"]
 PAY_STATUS = ["Unsorted", "Categorized", "On Voucher", "Paid"]
 PV_STATUS = ["Draft", "Approved", "Paid", "Void"]
@@ -48,7 +51,10 @@ class Document(Base):
     description: Mapped[str] = mapped_column(Text, default="")
     category: Mapped[str] = mapped_column(String(50), default="")
     invoice_no: Mapped[str] = mapped_column(String(60), default="")
-    file_path: Mapped[str] = mapped_column(String(300))            # relative to uploads/
+    intake_type: Mapped[str] = mapped_column(String(30), default="Document")
+    payload_json: Mapped[str] = mapped_column(Text, default="")     # structured data for reports
+    raw_text: Mapped[str] = mapped_column(Text, default="")         # original message text
+    file_path: Mapped[str] = mapped_column(String(300), default="") # relative to uploads/ (blank for text)
     mime: Mapped[str] = mapped_column(String(80), default="")
     status: Mapped[str] = mapped_column(String(30), default="Pending")
     ai_classified: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -126,6 +132,17 @@ class SalesEntry(Base):
     amount: Mapped[float] = mapped_column(Float, default=0.0)
     method: Mapped[str] = mapped_column(String(30), default="Cash")
     month: Mapped[str] = mapped_column(String(20), default="")
+    recorded_by: Mapped[str] = mapped_column(String(100), default="")
+
+
+class BoardingLog(Base):
+    __tablename__ = "boarding_logs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    date: Mapped[date] = mapped_column(Date, default=date.today)
+    checked_in: Mapped[int] = mapped_column(Integer, default=0)
+    checked_out: Mapped[int] = mapped_column(Integer, default=0)
+    occupancy: Mapped[int] = mapped_column(Integer, default=0)   # cats in-house at end of day
+    notes: Mapped[str] = mapped_column(Text, default="")
     recorded_by: Mapped[str] = mapped_column(String(100), default="")
 
 

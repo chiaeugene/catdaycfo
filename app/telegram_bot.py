@@ -3,6 +3,7 @@
 The same handle_update() is used by the production webhook (FastAPI route)
 and by poll_bot.py for local development.
 """
+import json
 import os
 from datetime import datetime, date
 
@@ -15,13 +16,20 @@ from .models import Document, Payment, Setting, User
 UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "uploads")
 
 HELP_TEXT = (
-    "🐱 *CATDAY Finance Bot*\n\n"
-    "Send me a photo or PDF of any document:\n发送文件照片或PDF给我：\n"
-    "• Invoice 发票\n• Receipt 收据\n• Quotation 报价单\n• Statement 对账单\n\n"
-    "I will file it, classify it, and log it in the system automatically.\n"
-    "我会自动归档、分类并记录到系统。\n\n"
-    "💡 Tip: add a caption describing the payment for better accuracy.\n"
-    "提示：附上说明文字可提高识别准确度。"
+    "🐱 *CATDAY Bot*\n\n"
+    "📸 *Send a photo/PDF* of any document — invoice, receipt, bank-in slip — "
+    "I'll read it and file it.\n发送发票/收据/银行水单照片，我会自动识别归档。\n\n"
+    "⌨️ *Or just type a report* — you don't need a fixed format, I'll understand:\n"
+    "也可以直接打字汇报，不必按固定格式：\n\n"
+    "🛒 *Daily sales 每日营业额*\n"
+    "`Sales today: boarding 440, grooming 300, retail 120`\n\n"
+    "🐷 *Petty cash 零用金*\n"
+    "`Bought cat litter RM48`\n\n"
+    "🧾 *Staff claim 员工报销*\n"
+    "`Claim petrol RM68, I paid myself`\n\n"
+    "🏨 *Boarding log 寄宿记录*\n"
+    "`Check in 3, check out 1, now 22 cats`\n\n"
+    "Everything goes to the admin for verification first. ✅\n所有记录先经管理员审核。"
 )
 
 
@@ -93,8 +101,13 @@ def handle_update(update: dict, db: Session):
         filename = d.get("file_name") or f"document_{datetime.now():%Y%m%d_%H%M%S}"
         mime = d.get("mime_type") or "application/octet-stream"
 
+    # No file → treat as a typed report (or a command / greeting)
     if not file_id:
-        tg_send(chat_id, HELP_TEXT)
+        text = (msg.get("text") or "").strip()
+        if not text or text.startswith("/"):
+            tg_send(chat_id, HELP_TEXT)
+            return
+        handle_text_report(chat_id, from_name, text, db)
         return
 
     tg_send(chat_id, "📄 Document received, processing...\n文件已收到，处理中...")
@@ -135,3 +148,58 @@ def handle_update(update: dict, db: Session):
         "🕐 *Awaiting verification 等待审核* — an admin will verify and post it to the system.\n"
         + ("🤖 Pre-filled by AI.  AI 已预填资料。" if cls.get("ai") else
            "ℹ️ Basic classification only.  仅基础分类。"))
+
+
+def handle_text_report(chat_id, from_name: str, text: str, db: Session):
+    """A typed report (no file). Classify → pending Document → await verification."""
+    cls = claude_ai.classify_text(text)
+    itype = cls.get("intake_type", "Unknown")
+
+    if itype == "Unknown":
+        tg_send(chat_id,
+            "🤔 I couldn't tell what this is.\n我无法识别这条信息。\n\n"
+            "Try one of these formats — or send a photo:\n请用以下格式，或发送照片：\n\n" + HELP_TEXT)
+        return
+
+    section_map = {"Sales Report": "Sales Report", "Petty Cash": "Petty Cash",
+                   "Staff Claim": "Staff Claim", "Boarding Log": "Boarding Log"}
+    section = section_map.get(itype, "Filing Only")
+    doc_no = next_counter(db, "DOC", "DOC-")
+
+    payload = {}
+    summary_lines = []
+    amount = float(cls.get("amount") or 0)
+
+    if itype == "Sales Report":
+        sales = [s for s in cls.get("sales", []) if s.get("amount")]
+        payload = {"sales": sales}
+        amount = sum(float(s["amount"]) for s in sales)
+        summary_lines = [f"🛒 {s['stream']}: RM {float(s['amount']):,.2f}" for s in sales]
+    elif itype == "Boarding Log":
+        b = cls.get("boarding") or {}
+        payload = {"boarding": b}
+        summary_lines = [f"🏨 Check-in: {b.get('checked_in', 0)}  ·  Check-out: {b.get('checked_out', 0)}"
+                         f"  ·  In-house: {b.get('occupancy', 0)}"]
+    elif itype in ("Petty Cash", "Staff Claim"):
+        summary_lines = [f"💰 Amount: RM {amount:,.2f}"]
+        if cls.get("category"):
+            summary_lines.append(f"🏷 Category: {cls['category']}")
+
+    doc = Document(
+        doc_no=doc_no, sender=from_name, section=section, doc_type="Report",
+        intake_type=itype, supplier=cls.get("supplier", ""), amount=amount,
+        month=f"{date.today():%b %Y}", description=cls.get("description") or text[:120],
+        category=cls.get("category", ""), payload_json=json.dumps(payload),
+        raw_text=text, ai_classified=cls.get("ai", False), status="Pending",
+    )
+    db.add(doc)
+    db.commit()
+
+    body = "\n".join(summary_lines)
+    tg_send(chat_id,
+        f"✅ *Got it — {itype}!  已收到！*\n\n"
+        f"📋 ID: `{doc_no}`\n"
+        + (body + "\n" if body else "")
+        + "\n🕐 *Awaiting verification 等待审核* — admin will confirm before it enters the system.\n"
+        + ("🤖 Understood by AI.  AI 已识别。" if cls.get("ai") else
+           "ℹ️ Basic parsing.  基础识别。"))

@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block content %}
+<div class="pagehead"><h1>Boarding Log 寄宿记录</h1></div>
+<div class="sub">Daily check-in / check-out and how many cats are in-house. Reports typed to the bot land here after verification.</div>
+
+<div class="cards">
+  <div class="card blue"><div class="label">In-house now 现有猫数</div><div class="value">{{ latest.occupancy if latest else 0 }}</div>
+    <div class="hint">{% if latest %}as of {{ latest.date.strftime('%d/%m/%y') }}{% else %}no logs yet{% endif %}</div></div>
+  <div class="card green"><div class="label">Checked in — {{ month }} 本月入住</div><div class="value">{{ mo_in }}</div></div>
+  <div class="card amber"><div class="label">Checked out — {{ month }} 本月退房</div><div class="value">{{ mo_out }}</div></div>
+</div>
+
+<div class="panel">
+  <h2>New log 新记录</h2>
+  <form method="post" action="/boarding/new">
+    <div class="formrow" style="grid-template-columns:150px 120px 120px 150px minmax(160px,1fr) auto">
+      <div class="f-date"><label>Date 日期</label><input type="date" name="bdate" value="{{ today }}"></div>
+      <div><label>Checked in 入住</label><input type="number" name="checked_in" value="0"></div>
+      <div><label>Checked out 退房</label><input type="number" name="checked_out" value="0"></div>
+      <div><label>In-house now 现有</label><input type="number" name="occupancy" value="0"></div>
+      <div><label>Note 备注</label><input name="notes"></div>
+      <div class="f-btn"><button type="submit">＋ Record 记录</button></div>
+    </div>
+  </form>
+</div>
+
+<div class="tablewrap">
+  <table>
+    <tr><th>Date</th><th class="num">Checked in</th><th class="num">Checked out</th>
+        <th class="num">In-house</th><th>Note</th><th>By</th></tr>
+    {% for l in logs %}
+    <tr>
+      <td>{{ l.date.strftime('%d/%m/%y') }}</td>
+      <td class="num" style="color:var(--green);font-weight:700">{{ '+' ~ l.checked_in if l.checked_in else '' }}</td>
+      <td class="num" style="color:var(--amber);font-weight:700">{{ '−' ~ l.checked_out if l.checked_out else '' }}</td>
+      <td class="num"><b>{{ l.occupancy }}</b></td>
+      <td>{{ l.notes }}</td>
+      <td>{{ l.recorded_by }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="6" class="empty">No boarding logs yet — staff can type e.g. “check in 3, check out 1, now 22 cats” to the bot.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+{% endblock %}
