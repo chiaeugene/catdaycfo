@@ -14,6 +14,7 @@ from . import claude_ai
 from .models import Document, Payment, Setting, User
 
 UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "uploads")
+BASE_URL = os.environ.get("BASE_URL", "https://catday-system.onrender.com").rstrip("/")
 
 HELP_TEXT = (
     "🐱 *CATDAY Bot*\n\n"
@@ -37,15 +38,21 @@ def bot_token() -> str:
     return os.environ.get("TELEGRAM_BOT_TOKEN", "")
 
 
-def tg_send(chat_id, text: str):
+def tg_send(chat_id, text: str, buttons=None):
+    """buttons: list of rows, each a list of {text, url} dicts → inline keyboard."""
     token = bot_token()
     if not token:
         return
-    httpx.post(
-        f"https://api.telegram.org/bot{token}/sendMessage",
-        json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"},
-        timeout=30,
-    )
+    payload = {"chat_id": str(chat_id), "text": text, "parse_mode": "Markdown"}
+    if buttons:
+        payload["reply_markup"] = {"inline_keyboard": buttons}
+    httpx.post(f"https://api.telegram.org/bot{token}/sendMessage",
+               json=payload, timeout=30)
+
+
+def verify_button():
+    """Inline button that opens the Verification queue on the web app."""
+    return [[{"text": "🔗 Open verification 打开审核", "url": f"{BASE_URL}/documents"}]]
 
 
 def tg_get_file(file_id: str) -> tuple[bytes, str]:
@@ -165,7 +172,8 @@ def handle_update(update: dict, db: Session):
         + f"🗓 Month 月份: {month}\n\n"
         "🕐 *Awaiting verification 等待审核* — an admin will verify and post it to the system.\n"
         + ("🤖 Pre-filled by AI.  AI 已预填资料。" if cls.get("ai") else
-           "ℹ️ Basic classification only.  仅基础分类。"))
+           "ℹ️ Basic classification only.  仅基础分类。"),
+        buttons=verify_button())
 
 
 def handle_text_report(chat_id, from_name: str, text: str, db: Session,
@@ -234,4 +242,5 @@ def handle_text_report(chat_id, from_name: str, text: str, db: Session,
         + (body + "\n" if body else "")
         + "\n🕐 *Awaiting verification 等待审核* — admin will confirm before it enters the system.\n"
         + ("🤖 Understood by AI.  AI 已识别。" if cls.get("ai") else
-           "ℹ️ Basic parsing.  基础识别。"))
+           "ℹ️ Basic parsing.  基础识别。"),
+        buttons=verify_button())

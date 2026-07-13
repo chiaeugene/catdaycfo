@@ -12,6 +12,21 @@ CATEGORIES = [
     "Admin", "Maintenance", "Staff Welfare", "Vet", "Misc",
 ]
 GROUPS = ["CAPEX", "OPEX", "COGS", "Payroll", "Petty Cash"]
+
+# Which P&L group a category belongs to (cat-hotel logic).
+# Consumable goods used to deliver boarding/grooming = COGS; assets = CAPEX;
+# services/overheads = OPEX; salary = Payroll.
+CATEGORY_GROUP = {
+    "Renovation": "CAPEX", "Equipment": "CAPEX",
+    "Cat Supplies": "COGS", "Grooming Supplies": "COGS", "Vet": "COGS",
+    "Salary": "Payroll",
+}
+
+
+def group_for(category: str, section: str = "") -> str:
+    if category in CATEGORY_GROUP:
+        return CATEGORY_GROUP[category]
+    return "CAPEX" if section == "Purchase" else "OPEX"
 DOC_TYPES = ["Invoice", "Receipt", "Quotation", "Statement", "Bank-in Slip", "Payslip", "Other"]
 # Section = where a verified submission is routed
 DOC_SECTIONS = ["Purchase", "Expense", "Staff Claim", "Petty Cash", "Sales Report",

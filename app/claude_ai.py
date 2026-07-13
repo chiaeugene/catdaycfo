@@ -8,15 +8,26 @@ import httpx
 
 from .models import CATEGORIES, DOC_TYPES, DOC_SECTIONS, STREAMS
 
+# Shared Purchase-vs-Expense rule, written for a cat hotel & grooming centre
+PE_RULE = (
+    'Routing (think like a cat hotel & grooming centre):\n'
+    '- "Purchase" = buying a physical THING: cat food, cat litter, treats/nutrition, '
+    'grooming supplies (shampoo, conditioner, dryer parts), grooming tools, retail stock for resale, '
+    'vet/medical supplies, cages, furniture, equipment, renovation/fit-out materials.\n'
+    '- "Expense" = paying for a SERVICE or bill with no physical goods: rent, electricity/water/internet, '
+    'marketing/advertising, software subscriptions, insurance, accounting/professional fees, '
+    'transport/courier, aircon servicing / pest control / cleaning services, bank charges.\n'
+    '- "Staff Claim" = a receipt a staff member paid personally and wants reimbursed.\n'
+    '- "Petty Cash" = small out-of-pocket cash with NO supplier invoice/business name.\n'
+    '- "Bank-in Slip" = bank deposit slip. "Payroll" = salary document. '
+    '"Filing Only" = quotation/statement/anything not creating a transaction.'
+)
+
 PROMPT = (
-    "You are a finance document classifier for CATDAY, a premium cat hotel in Malaysia. "
+    "You are a finance document classifier for CATDAY, a premium cat hotel & grooming centre in Malaysia. "
     "Analyze this document and return ONLY a JSON object (no markdown fences) with keys:\n"
     f'"doc_type": one of {DOC_TYPES},\n'
-    f'"section": one of {DOC_SECTIONS} — routing rules: large supplier invoices/asset purchases = "Purchase"; '
-    'utility bills, subscriptions, service invoices = "Expense"; '
-    'a receipt a staff member paid personally and wants reimbursed (caption mentions claim/reimburse/paid myself) = "Staff Claim"; '
-    'small cash receipts (shop/petrol/food, typically under RM200 cash) = "Petty Cash"; '
-    'bank deposit slips = "Bank-in Slip"; salary documents = "Payroll"; quotations/statements/anything not creating a transaction = "Filing Only",\n'
+    f'"section": one of {DOC_SECTIONS}.\n' + PE_RULE + "\n"
     '"supplier": company/shop name (for Staff Claim: the claimant staff name from the caption) or "",\n'
     '"invoice_no": the invoice/receipt/reference number printed on the document, or "",\n'
     '"amount": total amount as a number (no currency symbol) or 0,\n'
@@ -64,11 +75,14 @@ def _classify_claude(data: bytes, mime: str, caption: str, key: str) -> dict:
 
 def _classify_heuristic(caption: str, filename: str, mime: str) -> dict:
     t = f"{caption} {filename}".lower()
+    goods = r"food|litter|treat|shampoo|conditioner|dryer|groom|supplies|litter|nutrition|kibble|equipment|cage|furniture|renovation|stock|retail|猫粮|猫砂|美容"
     doc_type, section = "Other", "Filing Only"
     if re.search(r"bank[- ]?in|deposit|cdm|存款", t):
         doc_type, section = "Bank-in Slip", "Bank-in Slip"
     elif re.search(r"claim|reimburs|报销", t):
         doc_type, section = "Receipt", "Staff Claim"
+    elif re.search(goods, t):
+        doc_type, section = "Invoice", "Purchase"
     elif re.search(r"invoice|inv[-_ ]?\d|发票", t):
         doc_type, section = "Invoice", "Expense"
     elif re.search(r"petty|cash|零用", t):
@@ -112,18 +126,13 @@ TEXT_PROMPT = (
     '"invoice_no": the invoice/receipt/reference number if mentioned, else "",\n'
     '"description": one short line summarising the message,\n'
     '"date": the date mentioned as "yyyy-mm-dd" if any, else "".\n'
-    "Routing rules:\n"
-    "- A supplier/company invoice for goods or services, especially with an invoice number "
-    "or a business name (e.g. 'Purchase from Whiskers Wholesale invoice WW-3312 RM1860') "
-    "= \"Purchase\" if it's an asset/equipment/renovation, otherwise \"Expense\".\n"
-    "- Small out-of-pocket cash spending with NO supplier invoice (e.g. 'bought cat litter RM48') "
-    "= \"Petty Cash\".\n"
-    "- 'I paid ... please claim/reimburse me' = \"Staff Claim\".\n"
+    + PE_RULE + "\n"
     "- Daily takings / sales / 营业额 = \"Sales Report\".\n"
     "- Cats checked in/out / occupancy / 寄宿 counts = \"Boarding Log\".\n"
     "- Greetings or unclear chatter = \"Unknown\".\n"
-    "Key distinction: if a business/supplier name OR an invoice number is present, it is a "
-    "Purchase/Expense, NOT Petty Cash — even if the item is small."
+    "Key distinction: if a business/supplier name OR invoice number is present it is a "
+    "Purchase (goods) or Expense (service), NOT Petty Cash — even if small. "
+    "Buying cat food / litter / grooming supplies from a supplier = Purchase."
 )
 
 
@@ -203,13 +212,22 @@ def _classify_text_heuristic(text: str) -> dict:
         supplier = re.split(r"\s*(?:,|\n|invoice|inv\b|amount|rm\s|for:|date:)",
                             sup.group(1), maxsplit=1, flags=re.I)[0].strip()
 
+    has_vendor = bool(invoice_no or supplier or re.search(r"purchase|采购", t))
+    cat_goods = re.search(r"food|litter|treat|nutrition|kibble|猫粮|猫砂", t)
+    groom_goods = re.search(r"shampoo|conditioner|dryer|groom|美容", t)
+    asset_goods = re.search(r"equipment|cage|furniture|renovation|机器|设备|装修", t)
+    goods = cat_goods or groom_goods or asset_goods
+    goods_cat = ("Cat Supplies" if cat_goods else "Grooming Supplies" if groom_goods
+                 else "Equipment" if asset_goods else "")
+
     if re.search(r"claim|reimburs|报销|paid.*(myself|out of pocket)", t):
         out.update(intake_type="Staff Claim", amount=amt_val, category="Staff Claim")
-    # Supplier invoice / purchase (business name or invoice no present) → Expense/Purchase
-    elif invoice_no or supplier or re.search(r"purchase|invoice|发票|采购", t):
-        is_capex = bool(re.search(r"renovation|equipment|furniture|machine|asset|装修|设备", t))
-        out.update(intake_type="Purchase" if is_capex else "Expense",
-                   amount=amt_val, supplier=supplier, invoice_no=invoice_no)
+    # Goods FROM A SUPPLIER (name/invoice) = Purchase; small cash with no vendor = Petty Cash
+    elif goods and has_vendor:
+        out.update(intake_type="Purchase", amount=amt_val, supplier=supplier,
+                   invoice_no=invoice_no, category=goods_cat)
+    elif has_vendor or re.search(r"invoice|发票", t):
+        out.update(intake_type="Expense", amount=amt_val, supplier=supplier, invoice_no=invoice_no)
     elif re.search(r"petty|cash|bought|beli|买|买了", t) and amt_val:
-        out.update(intake_type="Petty Cash", amount=amt_val)
+        out.update(intake_type="Petty Cash", amount=amt_val, category=goods_cat)
     return out

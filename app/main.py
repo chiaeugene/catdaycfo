@@ -231,7 +231,7 @@ async def verify_document(doc_id: int, request: Request, db: Session = Depends(g
             grp, category = "OPEX", "Staff Claim"
             supplier = supplier or doc.sender   # claimant is reimbursed
         else:
-            grp = "CAPEX" if section == "Purchase" else "OPEX"
+            grp = M.group_for(category, section)   # cat-hotel category → P&L group
         p = M.Payment(pay_no=pay_no, supplier=supplier, description=description,
                       category=category, grp=grp, amount=amount, month=doc.month,
                       invoice_no=invoice_no,
