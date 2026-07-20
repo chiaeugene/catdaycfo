@@ -214,8 +214,12 @@ def payslip_pdf(month: str, item, company="CATDAY SDN BHD", address="Uptown PJ")
         earnings.append(["Allowance", f"{item.allowance:,.2f}"])
     if item.overtime:
         earnings.append(["Overtime", f"{item.overtime:,.2f}"])
+    if item.commission:
+        earnings.append(["Commission", f"{item.commission:,.2f}"])
     if item.bonus:
         earnings.append(["Bonus", f"{item.bonus:,.2f}"])
+    if item.leave_deduction:
+        earnings.append([f"Less: Unpaid Leave ({item.unpaid_leave_days:g}d)", f"-{item.leave_deduction:,.2f}"])
     earnings.append(["Gross Pay", f"{item.gross:,.2f}"])
 
     deductions = [

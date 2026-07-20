@@ -43,6 +43,40 @@ PAY_METHODS = ["Cash", "Bank Transfer", "Card", "TNG", "Cheque"]
 # Malaysian SST — service tax 6%/8% on services; sales tax 10% on goods.
 TAX_TYPES = {"None": 0.0, "SST 6%": 0.06, "SST 8%": 0.08, "Sales Tax 10%": 0.10}
 
+# Malaysian banks + their bulk-payment / IBG file layouts. `cols` is the column
+# order the bank's enterprise portal expects. VALIDATE against the bank's own
+# downloaded template before first live upload — banks revise these.
+MY_BANK_FORMATS = {
+    "Maybank (M2E/Maybank2u Biz)": {
+        "code": "MBB", "cols": ["Payment Type", "Beneficiary Name", "Beneficiary Account",
+                                  "Bank Code", "Amount", "Reference", "Email"]},
+    "CIMB (BizChannel)": {
+        "code": "CIMB", "cols": ["Beneficiary Name", "Beneficiary Account", "Bank",
+                                   "Amount", "Payment Reference", "Beneficiary Reference"]},
+    "Public Bank (PBe Biz)": {
+        "code": "PBB", "cols": ["Account No", "Beneficiary Name", "Bank Code",
+                                 "Amount", "Reference", "Payment Description"]},
+    "RHB (Reflex)": {
+        "code": "RHB", "cols": ["Beneficiary Name", "Account No", "Bank Code",
+                                 "Amount", "Payment Ref", "Recipient Ref"]},
+    "Hong Leong (ConnectFirst)": {
+        "code": "HLB", "cols": ["Beneficiary Name", "Beneficiary Account", "Bank Code",
+                                 "Amount (RM)", "Reference", "Description"]},
+    "AmBank (AmAccess Biz)": {
+        "code": "AMB", "cols": ["Beneficiary Name", "Account Number", "Bank",
+                                 "Amount", "Reference No", "Remarks"]},
+    "Generic IBG / DuitNow": {
+        "code": "GEN", "cols": ["Beneficiary Name", "Account Number", "Bank Name",
+                                 "Amount", "Reference"]},
+}
+# Bank codes (BIC/clearing) for the beneficiary bank column
+MY_BANK_CODES = {
+    "Maybank": "MBBEMYKL", "CIMB Bank": "CIBBMYKL", "Public Bank": "PBBEMYKL",
+    "RHB Bank": "RHBBMYKL", "Hong Leong Bank": "HLBBMYKL", "AmBank": "ARBKMYKL",
+    "Bank Islam": "BIMBMYKL", "OCBC Bank": "OCBCMYKL", "UOB Bank": "UOVBMYKL",
+    "Alliance Bank": "MFBBMYKL",
+}
+
 
 class User(Base):
     __tablename__ = "users"
@@ -129,9 +163,19 @@ class Listing(Base):
     vouchers = relationship("Voucher", backref="listing", foreign_keys="Voucher.listing_id")
 
 
+class PettyCashAccount(Base):
+    """A company may run several petty-cash tins/floats (e.g. Front Desk, Grooming)."""
+    __tablename__ = "petty_cash_accounts"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(80), unique=True)
+    float_target: Mapped[float] = mapped_column(Float, default=5000.0)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
 class PettyCashEntry(Base):
     __tablename__ = "petty_cash"
     id: Mapped[int] = mapped_column(primary_key=True)
+    account_id: Mapped[int | None] = mapped_column(ForeignKey("petty_cash_accounts.id"), nullable=True)
     date: Mapped[date] = mapped_column(Date, default=date.today)
     description: Mapped[str] = mapped_column(Text, default="")
     category: Mapped[str] = mapped_column(String(50), default="")
@@ -141,6 +185,7 @@ class PettyCashEntry(Base):
     recorded_by: Mapped[str] = mapped_column(String(100), default="")
     document_id: Mapped[int | None] = mapped_column(ForeignKey("documents.id"), nullable=True)
     document = relationship("Document")
+    account = relationship("PettyCashAccount")
 
 
 class SalesEntry(Base):
@@ -218,7 +263,10 @@ class PayrollItem(Base):
     base: Mapped[float] = mapped_column(Float, default=0.0)
     allowance: Mapped[float] = mapped_column(Float, default=0.0)
     overtime: Mapped[float] = mapped_column(Float, default=0.0)
+    commission: Mapped[float] = mapped_column(Float, default=0.0)
     bonus: Mapped[float] = mapped_column(Float, default=0.0)
+    unpaid_leave_days: Mapped[float] = mapped_column(Float, default=0.0)
+    leave_deduction: Mapped[float] = mapped_column(Float, default=0.0)   # RM docked for unpaid leave
     epf_er: Mapped[float] = mapped_column(Float, default=0.0)
     epf_ee: Mapped[float] = mapped_column(Float, default=0.0)
     socso_er: Mapped[float] = mapped_column(Float, default=0.0)
@@ -231,7 +279,7 @@ class PayrollItem(Base):
 
     @property
     def gross(self):
-        return self.base + self.allowance + self.overtime + self.bonus
+        return self.base + self.allowance + self.overtime + self.commission + self.bonus - self.leave_deduction
 
     @property
     def net(self):

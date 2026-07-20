@@ -65,7 +65,11 @@ def tg_get_file(file_id: str) -> tuple[bytes, str]:
 
 
 def next_counter(db: Session, name: str, prefix: str) -> str:
-    from .models import Counter
+    from .models import Counter, Setting
+    # Prefix override from Settings, e.g. PREFIX_PV = "CD-PV-"
+    ps = db.get(Setting, f"PREFIX_{name}")
+    if ps and ps.value.strip():
+        prefix = ps.value.strip()
     c = db.get(Counter, name)
     if not c:
         c = Counter(name=name, value=1)

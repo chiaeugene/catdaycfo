@@ -5,7 +5,16 @@
   <h1>Petty Cash Book 零用金账簿</h1>
   <a class="btn secondary" href="/export/pettycash.csv">{{ icon('file', 14) }} Export CSV</a>
 </div>
-<div class="sub">Cash in hand for small expenses — every entry updates the running balance</div>
+<div class="sub">Cash in hand for small expenses — every entry updates the running balance. Switch accounts if you run more than one tin.</div>
+
+<div class="filters" style="align-items:center">
+  {% for a in accounts %}
+  <a href="/pettycash?account={{ a.id }}" class="{% if a.id == acc.id %}on{% endif %}">🐷 {{ a.name }}</a>
+  {% endfor %}
+  {% if user.role in ['admin','manager'] %}
+  <button class="secondary small" onclick="document.getElementById('dlg-newpc').showModal()" style="margin-left:6px">＋ New account</button>
+  {% endif %}
+</div>
 
 <div class="cards">
   <div class="card {% if balance < float_target * 0.2 %}red{% elif balance < float_target * 0.5 %}amber{% else %}green{% endif %}">
@@ -23,6 +32,7 @@
 <div class="panel">
   <h2>New entry 新记录</h2>
   <form method="post" action="/pettycash/new" id="pcform">
+    <input type="hidden" name="account_id" value="{{ acc.id }}">
     <div class="formrow" style="grid-template-columns:150px 132px minmax(180px,1fr) 160px 130px auto">
       <div>
         <label>Type 类型</label>
@@ -78,6 +88,23 @@
   {% endfor %}
 </div>
 {% endif %}
+
+<dialog id="dlg-newpc">
+  <form method="post" action="/pettycash/account/new">
+    <div class="dlg-head"><b>＋ New petty cash account</b>
+      <button type="button" class="x" onclick="this.closest('dialog').close()">✕</button></div>
+    <div class="dlg-body">
+      <div class="dlg-grid">
+        <div><label>Account name 名称</label><input name="name" required placeholder="e.g. Grooming Tin"></div>
+        <div><label>Float target RM 目标</label><input type="number" step="0.01" name="float_target" value="1000"></div>
+      </div>
+    </div>
+    <div class="dlg-foot">
+      <button type="button" class="ghost" onclick="this.closest('dialog').close()">Cancel</button>
+      <button type="submit">Create 创建</button>
+    </div>
+  </form>
+</dialog>
 {% endblock %}
 
 {% block scripts %}

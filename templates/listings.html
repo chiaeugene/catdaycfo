@@ -4,6 +4,17 @@
 <div class="pagehead"><h1>Payment Listings 付款清单</h1></div>
 <div class="sub">Voucher batches for approval and bank processing — every voucher expands to its payments and original documents, so the person making the bank transaction can verify each line.</div>
 
+<div class="panel" style="padding:14px 18px">
+  <form method="get" action="/listings">
+    <div class="formrow" style="grid-template-columns:minmax(160px,1fr) 160px auto auto">
+      <div><label>Search 搜索 (PL code)</label><input name="q" value="{{ q }}" placeholder="e.g. PL-0001"></div>
+      <div><label>Status 状态</label><select name="status"><option value="">All</option>{% for s in pl_status %}<option {% if flt==s %}selected{% endif %}>{{ s }}</option>{% endfor %}</select></div>
+      <div class="f-btn"><button type="submit">Search</button></div>
+      <div class="f-btn"><a class="btn secondary" href="/listings">Clear</a></div>
+    </div>
+  </form>
+</div>
+
 <div class="tablewrap">
 <table>
   <tr><th>PL #</th><th>Date</th><th class="num">Total</th>
@@ -23,6 +34,9 @@
         {% endif %}
         {% if l.status in ['Draft','Submitted'] %}
         <form method="post" action="/listings/{{ l.id }}/action"><input type="hidden" name="action" value="processed"><button class="small success" type="submit">{{ icon('check', 12) }} Processed</button></form>
+        {% endif %}
+        {% if l.status in ['Submitted','Processed'] %}
+        <button class="small secondary" onclick="document.getElementById('dlg-bank-{{ l.id }}').showModal()">{{ icon('landmark', 12) }} Bank file</button>
         {% endif %}
       </div>
     </td>
@@ -64,4 +78,27 @@
   {% endfor %}
 </table>
 </div>
+
+{# ── Bank bulk-transfer export dialogs ── #}
+{% for l in listings %}{% if l.status in ['Submitted','Processed'] %}
+<dialog id="dlg-bank-{{ l.id }}">
+  <div class="dlg-head"><b>{{ icon('landmark', 15) }} Bank bulk transfer — {{ l.pl_no }}</b>
+    <button type="button" class="x" onclick="this.closest('dialog').close()">✕</button></div>
+  <div class="dlg-body">
+    <p style="font-size:12.5px;color:var(--muted);margin-bottom:14px">
+      Download a bulk-payment file for {{ l.vouchers|length }} payee(s), total <b>RM {{ l.total|rm }}</b>,
+      ready to upload to your bank's enterprise portal. Each payee uses their bank account from Suppliers.
+    </p>
+    <div class="actions" style="flex-direction:column;align-items:stretch;gap:8px">
+      {% for bank in M.MY_BANK_FORMATS %}
+      <a class="btn secondary" style="justify-content:space-between" href="/listings/{{ l.id }}/bank-file?bank={{ bank|urlencode }}">
+        {{ bank }} <span style="font-size:11px;color:var(--muted)">↓ CSV</span></a>
+      {% endfor %}
+    </div>
+    <div style="background:var(--amber-bg);color:var(--amber);border-radius:8px;padding:9px 12px;font-size:11px;font-weight:600;margin-top:14px">
+      ⚠️ Verify the column layout against your bank's own downloaded template before the first live upload — banks revise these formats. Payees without a bank account on file will have blank account fields.
+    </div>
+  </div>
+</dialog>
+{% endif %}{% endfor %}
 {% endblock %}

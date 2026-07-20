@@ -4,6 +4,17 @@
 <div class="pagehead"><h1>Payment Vouchers 付款凭单</h1></div>
 <div class="sub">Each voucher shows its payments with links to the original supporting documents — verify before approving or paying. Tick unlisted vouchers to batch them into a Payment Listing.</div>
 
+<div class="panel" style="padding:14px 18px">
+  <form method="get" action="/vouchers">
+    <div class="formrow" style="grid-template-columns:minmax(160px,1fr) 160px auto auto">
+      <div><label>Search 搜索 (PV code / payee)</label><input name="q" value="{{ q }}" placeholder="e.g. PV-0001, TNJ"></div>
+      <div><label>Status 状态</label><select name="status"><option value="">All</option>{% for s in pv_status %}<option {% if flt==s %}selected{% endif %}>{{ s }}</option>{% endfor %}</select></div>
+      <div class="f-btn"><button type="submit">Search</button></div>
+      <div class="f-btn"><a class="btn secondary" href="/vouchers">Clear</a></div>
+    </div>
+  </form>
+</div>
+
 <form method="post" action="/listings/create">
 <div class="tablewrap">
 <table>

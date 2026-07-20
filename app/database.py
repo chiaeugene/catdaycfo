@@ -25,6 +25,10 @@ MIGRATIONS = [
     "ALTER TABLE sales ADD COLUMN tax_type VARCHAR(20) DEFAULT 'None'",
     "ALTER TABLE sales ADD COLUMN tax_amount FLOAT DEFAULT 0",
     "ALTER TABLE payroll_items ADD COLUMN pcb FLOAT DEFAULT 0",
+    "ALTER TABLE payroll_items ADD COLUMN commission FLOAT DEFAULT 0",
+    "ALTER TABLE payroll_items ADD COLUMN unpaid_leave_days FLOAT DEFAULT 0",
+    "ALTER TABLE payroll_items ADD COLUMN leave_deduction FLOAT DEFAULT 0",
+    "ALTER TABLE petty_cash ADD COLUMN account_id INTEGER",
 ]
 
 

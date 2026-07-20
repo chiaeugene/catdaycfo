@@ -7,6 +7,24 @@
 </div>
 <div class="sub">Unpaid supplier invoices grouped by how long they've been outstanding — as of {{ today.strftime('%d/%m/%Y') }}. Chase the 60+ day columns first.</div>
 
+<div class="panel">
+  <form method="get" action="/reports/ap-aging">
+    <div class="formrow" style="grid-template-columns:minmax(160px,1fr) 150px 160px auto auto">
+      <div><label>Supplier 供应商</label>
+        <select name="supplier"><option value="">All suppliers</option>
+          {% for n in supplier_names %}<option {% if f_supplier==n %}selected{% endif %}>{{ n }}</option>{% endfor %}</select></div>
+      <div><label>Age bucket 账龄</label>
+        <select name="bucket"><option value="">All ages</option>
+          {% for b in buckets %}<option {% if f_bucket==b %}selected{% endif %}>{{ b }}</option>{% endfor %}</select></div>
+      <div><label>Status 状态</label>
+        <select name="status"><option value="">All</option>
+          {% for s in ["Unsorted","Categorized","On Voucher"] %}<option {% if f_status==s %}selected{% endif %}>{{ s }}</option>{% endfor %}</select></div>
+      <div class="f-btn"><button type="submit">Filter</button></div>
+      <div class="f-btn"><a class="btn secondary" href="/reports/ap-aging">Clear</a></div>
+    </div>
+  </form>
+</div>
+
 <div class="cards">
   <div class="card red"><div class="label">Total outstanding 未付总额</div><div class="value">RM {{ grand|rm }}</div></div>
   {% for b in buckets %}

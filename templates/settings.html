@@ -68,6 +68,16 @@
       <input name="COMPANY_NAME" value="{{ settings.get('COMPANY_NAME','CATDAY SDN BHD') }}" style="width:100%;margin-bottom:12px">
       <label>Company address 公司地址</label>
       <input name="COMPANY_ADDRESS" value="{{ settings.get('COMPANY_ADDRESS','Uptown PJ') }}" style="width:100%;margin-bottom:12px">
+      <label>Company reg. no (ROC) 公司注册号</label>
+      <input name="COMPANY_ROC" value="{{ settings.get('COMPANY_ROC','') }}" placeholder="e.g. 202401012345 (1234567-A)" style="width:100%;margin-bottom:12px">
+      <label style="font-weight:800;color:var(--brand-deep);margin-top:6px">Document code prefixes 单据编号前缀</label>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+        <div><label>Document (DOC)</label><input name="PREFIX_DOC" value="{{ settings.get('PREFIX_DOC','DOC-') }}"></div>
+        <div><label>Payment (PAY)</label><input name="PREFIX_PAY" value="{{ settings.get('PREFIX_PAY','PAY-') }}"></div>
+        <div><label>Voucher (PV)</label><input name="PREFIX_PV" value="{{ settings.get('PREFIX_PV','PV-') }}"></div>
+        <div><label>Listing (PL)</label><input name="PREFIX_PL" value="{{ settings.get('PREFIX_PL','PL-') }}"></div>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:12px">New records use these prefixes (e.g. change PV- to CD-PV-). Existing codes are unchanged.</div>
       <label>Telegram whitelist 白名单 (* = anyone, or comma-separated IDs)</label>
       <input name="TELEGRAM_WHITELIST" value="{{ settings.get('TELEGRAM_WHITELIST','*') }}" style="width:100%;margin-bottom:12px">
       <label>Petty cash float target 零用金目标 RM</label>

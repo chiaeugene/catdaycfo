@@ -31,7 +31,7 @@ Base.metadata.create_all(engine)
 run_migrations()
 db = SessionLocal()
 
-SAMPLE_VERSION = "v7-bookkeeper"
+SAMPLE_VERSION = "v8-sdnbhd"
 ver_setting = db.get(M.Setting, "SAMPLE_DATA_VERSION")
 
 if ver_setting and ver_setting.value == SAMPLE_VERSION:
@@ -41,8 +41,9 @@ if ver_setting and ver_setting.value == SAMPLE_VERSION:
 
 # Wipe any previous sample data (from an older version of this script) before reseeding.
 if db.query(M.SalesEntry).count() > 0 or db.query(M.Document).count() > 0:
-    for model in (M.PayrollItem, M.PayrollRun, M.StatutoryPaid, M.PettyCashEntry, M.SalesEntry,
-                  M.BoardingLog, M.Voucher, M.Listing, M.Document, M.Payment, M.Supplier):
+    for model in (M.PayrollItem, M.PayrollRun, M.StatutoryPaid, M.PettyCashEntry,
+                  M.PettyCashAccount, M.SalesEntry, M.BoardingLog, M.Voucher, M.Listing,
+                  M.Document, M.Payment, M.Supplier):
         db.query(model).delete()
     for name in ("DOC", "PAY", "PV", "PL"):
         c = db.get(M.Counter, name)

@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block content %}
+<div class="pagehead"><h1>General Ledger 总账</h1></div>
+<div class="sub">Every money movement in one place — search by code (PV-0001, PAY-0003…), date, name or description.</div>
+
+<div class="panel">
+  <form method="get" action="/reports/gl">
+    <div class="formrow" style="grid-template-columns:minmax(180px,1fr) 150px 150px 150px auto auto">
+      <div><label>Search 搜索 (code / name / description)</label><input name="q" value="{{ q }}" placeholder="e.g. PV-0001, TNB, cat food"></div>
+      <div><label>From 从</label><input type="date" name="frm" value="{{ frm }}"></div>
+      <div><label>To 到</label><input type="date" name="to" value="{{ to }}"></div>
+      <div><label>Type 类型</label>
+        <select name="kind"><option value="">All</option>{% for k in kinds %}<option {% if kind==k %}selected{% endif %}>{{ k }}</option>{% endfor %}</select></div>
+      <div class="f-btn"><button type="submit">{{ icon('eye', 14) }} Search</button></div>
+      <div class="f-btn"><a class="btn secondary" href="/reports/gl">Clear</a></div>
+    </div>
+  </form>
+</div>
+
+<div class="cards">
+  <div class="card"><div class="label">Entries 条数</div><div class="value">{{ count }}</div></div>
+  <div class="card green"><div class="label">Money in 收入</div><div class="value">RM {{ total_in|rm }}</div></div>
+  <div class="card red"><div class="label">Money out 支出</div><div class="value">RM {{ total_out|rm }}</div></div>
+</div>
+
+<div class="tablewrap">
+  <table>
+    <tr><th>Date</th><th>Code</th><th>Type</th><th>Party</th><th>Description</th>
+        <th class="num">In</th><th class="num">Out</th><th></th></tr>
+    {% for e in entries %}
+    <tr>
+      <td>{{ e.date.strftime('%d/%m/%y') }}</td>
+      <td class="mono"><b>{{ e.code }}</b></td>
+      <td><span class="badge {{ 'paid' if e.type=='Sale' else 'draft' if e.type in ['Voucher','Listing'] else 'onvoucher' }}">{{ e.type }}</span></td>
+      <td>{{ e.party or '—' }}</td>
+      <td>{{ e.desc[:52] }}</td>
+      <td class="num" style="color:var(--green)">{{ e.cin|rm if e.cin else '' }}</td>
+      <td class="num" style="color:var(--red)">{{ e.cout|rm if e.cout else '' }}</td>
+      <td><a href="{{ e.link }}" style="font-size:11px">open →</a></td>
+    </tr>
+    {% else %}
+    <tr><td colspan="8" class="empty">No transactions match your search.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+{% if count > 500 %}<div class="sub" style="margin-top:10px">Showing first 500 of {{ count }} — narrow the search to see more.</div>{% endif %}
+{% endblock %}
