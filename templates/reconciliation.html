@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block content %}
+<div class="pagehead">
+  <h1>Bank Reconciliation 银行对账</h1>
+  {% if user.role in ['admin','manager'] %}
+  <button class="secondary" onclick="document.getElementById('dlg-newacc').showModal()">＋ New bank account</button>
+  {% endif %}
+</div>
+<div class="sub">Import your bank statement, then match each line against a paid voucher, sale, or petty cash top-up. Unmatched lines need investigation.</div>
+
+{% if not accounts %}
+<div class="panel empty">No bank accounts yet — add one to start reconciling.</div>
+{% else %}
+
+<div class="filters">
+  {% for a in accounts %}
+  <a href="/reconciliation?account={{ a.id }}" class="{% if a.id == acc.id %}on{% endif %}">🏦 {{ a.name }}</a>
+  {% endfor %}
+</div>
+
+<div class="cards">
+  <div class="card blue"><div class="label">Bank account 银行账户</div><div class="value" style="font-size:16px">{{ acc.bank_name or '—' }}</div>
+    <div class="hint mono">{{ acc.account_no or 'no account no.' }}</div></div>
+  <div class="card amber"><div class="label">Unmatched lines 未对账</div><div class="value">{{ unmatched_count }}</div></div>
+  <div class="card green"><div class="label">Reconciled net 已对账净额</div><div class="value">RM {{ reconciled_total|rm }}</div></div>
+  <div class="card red"><div class="label">Unreconciled net 未对账净额</div><div class="value">RM {{ unreconciled_total|rm }}</div></div>
+</div>
+
+<div class="panel">
+  <h2>Import statement 导入银行月结单</h2>
+  <form method="post" action="/reconciliation/import" enctype="multipart/form-data">
+    <input type="hidden" name="account_id" value="{{ acc.id }}">
+    <div class="formrow cols-upload">
+      <div><label>CSV file 文件</label><input type="file" name="file" accept=".csv" required style="padding-top:7px"></div>
+      <div><label>Expected columns 所需栏位</label>
+        <input value="Date, Description, Amount (+in / -out)" disabled style="opacity:.6"></div>
+      <div class="f-btn"><button type="submit">{{ icon('upload', 14) }} Import</button></div>
+    </div>
+  </form>
+  <div style="font-size:11px;color:var(--muted);margin-top:8px">
+    Export your bank's transaction history as CSV and upload here. If your bank uses separate Debit/Credit columns instead of one Amount column, that works too.
+  </div>
+</div>
+
+<h2>Statement lines 对账明细</h2>
+<div class="tablewrap">
+  <table>
+    <tr><th>Date</th><th>Description</th><th>Ref</th><th class="num">Amount</th><th>Status</th><th></th></tr>
+    {% for l in lines %}
+    <tr {% if l.matched %}style="opacity:.55"{% endif %}>
+      <td>{{ l.date.strftime('%d/%m/%y') }}</td>
+      <td>{{ l.description[:50] }}</td>
+      <td class="mono">{{ l.ref }}</td>
+      <td class="num" style="{% if l.amount < 0 %}color:var(--red){% else %}color:var(--green){% endif %};font-weight:700">{{ l.amount|rm }}</td>
+      <td>
+        {% if l.matched %}
+        <span class="badge paid">Matched · {{ l.matched_type }}</span>
+        {% else %}
+        <span class="badge pending">Unmatched</span>
+        {% endif %}
+      </td>
+      <td>
+        {% if l.matched %}
+        <form method="post" action="/reconciliation/unmatch/{{ l.id }}"><button class="small secondary" type="submit">Undo</button></form>
+        {% else %}
+        <form method="post" action="/reconciliation/match" class="inline">
+          <input type="hidden" name="line_id" value="{{ l.id }}">
+          <select name="txn_type_id" onchange="this.form.querySelector('[name=txn_type]').value=this.value.split('|')[0]; this.form.querySelector('[name=txn_id]').value=this.value.split('|')[1]" class="slim" style="max-width:220px">
+            <option value="">Match to…</option>
+            {% for c in candidates %}
+            <option value="{{ c.type }}|{{ c.id }}" {% if (c.amount > 0) == (l.amount > 0) and (c.amount|abs - l.amount|abs)|abs < 0.01 %}selected{% endif %}>
+              {{ c.date.strftime('%d/%m') }} · {{ c.desc[:34] }} · RM {{ c.amount|rm }}
+            </option>
+            {% endfor %}
+          </select>
+          <input type="hidden" name="txn_type">
+          <input type="hidden" name="txn_id">
+          <button class="small" type="submit">Match</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="6" class="empty">No statement lines yet — import a CSV above.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+
+{% if candidates %}
+<div class="panel" style="margin-top:18px">
+  <h2>Unmatched book transactions 未对账的账簿记录 ({{ candidates|length }})</h2>
+  <div class="tablewrap" style="box-shadow:none;border:none">
+  <table>
+    <tr><th>Date</th><th>Type</th><th>Party</th><th>Description</th><th class="num">Amount</th></tr>
+    {% for c in candidates %}
+    <tr>
+      <td>{{ c.date.strftime('%d/%m/%y') }}</td>
+      <td><span class="badge draft">{{ c.type }}</span></td>
+      <td>{{ c.party }}</td>
+      <td>{{ c.desc[:50] }}</td>
+      <td class="num" style="{% if c.amount < 0 %}color:var(--red){% else %}color:var(--green){% endif %}">{{ c.amount|rm }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div>
+</div>
+{% endif %}
+{% endif %}
+
+<dialog id="dlg-newacc">
+  <form method="post" action="/reconciliation/account/new">
+    <div class="dlg-head"><b>＋ New bank account</b>
+      <button type="button" class="x" onclick="this.closest('dialog').close()">✕</button></div>
+    <div class="dlg-body">
+      <div class="dlg-grid">
+        <div class="full"><label>Account name 名称</label><input name="name" required placeholder="e.g. Maybank Current"></div>
+        <div><label>Bank 银行</label><input name="bank_name" list="banklist"></div>
+        <div><label>Account No. 账号</label><input name="account_no"></div>
+        <div class="full"><label>Opening balance RM 期初余额</label><input type="number" step="0.01" name="opening_balance" value="0"></div>
+      </div>
+    </div>
+    <div class="dlg-foot">
+      <button type="button" class="ghost" onclick="this.closest('dialog').close()">Cancel</button>
+      <button type="submit">Create 创建</button>
+    </div>
+  </form>
+</dialog>
+<datalist id="banklist">{% for b in M.MY_BANKS %}<option value="{{ b }}">{% endfor %}</datalist>
+{% endblock %}

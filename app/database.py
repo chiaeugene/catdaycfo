@@ -29,6 +29,8 @@ MIGRATIONS = [
     "ALTER TABLE payroll_items ADD COLUMN unpaid_leave_days FLOAT DEFAULT 0",
     "ALTER TABLE payroll_items ADD COLUMN leave_deduction FLOAT DEFAULT 0",
     "ALTER TABLE petty_cash ADD COLUMN account_id INTEGER",
+    "ALTER TABLE suppliers ADD COLUMN tin VARCHAR(30) DEFAULT ''",
+    "ALTER TABLE suppliers ADD COLUMN brn VARCHAR(30) DEFAULT ''",
 ]
 
 

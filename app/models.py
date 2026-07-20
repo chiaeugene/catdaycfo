@@ -303,6 +303,36 @@ class Supplier(Base):
     email: Mapped[str] = mapped_column(String(100), default="")
     notes: Mapped[str] = mapped_column(Text, default="")
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    tin: Mapped[str] = mapped_column(String(30), default="")     # LHDN Tax ID (e-Invoice)
+    brn: Mapped[str] = mapped_column(String(30), default="")     # Business Registration No.
+
+
+class BankAccount(Base):
+    """A company bank account used for reconciliation (may run several)."""
+    __tablename__ = "bank_accounts"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(80), unique=True)   # e.g. "Maybank Current"
+    bank_name: Mapped[str] = mapped_column(String(80), default="")
+    account_no: Mapped[str] = mapped_column(String(40), default="")
+    opening_balance: Mapped[float] = mapped_column(Float, default=0.0)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class BankStatementLine(Base):
+    """One imported line from a bank statement, to be matched against a system record."""
+    __tablename__ = "bank_statement_lines"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    bank_account_id: Mapped[int] = mapped_column(ForeignKey("bank_accounts.id"))
+    date: Mapped[date] = mapped_column(Date, default=date.today)
+    description: Mapped[str] = mapped_column(Text, default="")
+    ref: Mapped[str] = mapped_column(String(80), default="")
+    amount: Mapped[float] = mapped_column(Float, default=0.0)   # +credit(in) / -debit(out)
+    matched: Mapped[bool] = mapped_column(Boolean, default=False)
+    matched_type: Mapped[str] = mapped_column(String(30), default="")   # Voucher/Sale/PettyCash/Manual
+    matched_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    matched_note: Mapped[str] = mapped_column(String(200), default="")
+    import_batch: Mapped[str] = mapped_column(String(40), default="")
+    account = relationship("BankAccount")
 
 
 SUPPLIER_TYPES = ["Supplier", "Contractor", "Service Provider", "Landlord", "Utility"]

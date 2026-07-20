@@ -31,7 +31,7 @@ Base.metadata.create_all(engine)
 run_migrations()
 db = SessionLocal()
 
-SAMPLE_VERSION = "v8-sdnbhd"
+SAMPLE_VERSION = "v9-recon-einvoice"
 ver_setting = db.get(M.Setting, "SAMPLE_DATA_VERSION")
 
 if ver_setting and ver_setting.value == SAMPLE_VERSION:
@@ -43,7 +43,7 @@ if ver_setting and ver_setting.value == SAMPLE_VERSION:
 if db.query(M.SalesEntry).count() > 0 or db.query(M.Document).count() > 0:
     for model in (M.PayrollItem, M.PayrollRun, M.StatutoryPaid, M.PettyCashEntry,
                   M.PettyCashAccount, M.SalesEntry, M.BoardingLog, M.Voucher, M.Listing,
-                  M.Document, M.Payment, M.Supplier):
+                  M.Document, M.Payment, M.Supplier, M.BankStatementLine, M.BankAccount):
         db.query(model).delete()
     for name in ("DOC", "PAY", "PV", "PL"):
         c = db.get(M.Counter, name)
@@ -106,10 +106,17 @@ SUPPLIERS = [
     ("Klinik Haiwan PJ",   "Service Provider", "Public Bank",     "3160 448 872",   "Klinik Haiwan PJ Sdn Bhd",     "Dr. Priya",   "03-7960 3312"),
     ("TNB",                "Utility",          "",                "",               "",                              "",            "1-300-88-5454"),
 ]
+# A few suppliers already have TIN/BRN on file (e-Invoice readiness demo — most don't yet)
+SUP_TIN = {
+    "uptown realty": ("C2584796040", "202001012345"),
+    "tnj design": ("C2871122010", "201901087654"),
+}
 SUP_BY_NAME = {}
 for name, styp, bank, acct, holder, contact, phone in SUPPLIERS:
+    tin, brn = SUP_TIN.get(name.lower(), ("", ""))
     s = M.Supplier(name=name, sup_type=styp, bank_name=bank, account_no=acct,
-                   account_holder=holder, contact_person=contact, phone=phone)
+                   account_holder=holder, contact_person=contact, phone=phone,
+                   tin=tin, brn=brn)
     db.add(s)
     SUP_BY_NAME[name.lower()] = s
 db.flush()
@@ -339,11 +346,32 @@ db.flush()
 run.total_net = sum(i.net for i in run.items)
 run.total_cost = sum(i.employer_cost for i in run.items)
 
+# ═══ 6. Bank account + statement lines for reconciliation demo ═══
+bank_acc = M.BankAccount(name="Maybank Current", bank_name="Maybank",
+                         account_no="5142 0091 2260", opening_balance=50000.0)
+db.add(bank_acc)
+db.flush()
+# v1 (rental, Paid) = -17000; one line matches it. Plus a couple of unmatched lines
+# to demonstrate what "needs investigation" looks like.
+db.add(M.BankStatementLine(bank_account_id=bank_acc.id, date=DAYS[0],
+                           description="IBG PYMT UPTOWN REALTY", ref="PV-0001",
+                           amount=-17000.0))
+db.add(M.BankStatementLine(bank_account_id=bank_acc.id, date=DAYS[3],
+                           description="DUITNOW QR RECEIVED", ref="",
+                           amount=440.0))   # unmatched on purpose — needs investigation
+db.add(M.BankStatementLine(bank_account_id=bank_acc.id, date=DAYS[6],
+                           description="BANK CHARGES", ref="",
+                           amount=-12.0))   # unmatched — genuine bank fee, no book entry yet
+
 ver = db.get(M.Setting, "SAMPLE_DATA_VERSION")
 if not ver:
     ver = M.Setting(key="SAMPLE_DATA_VERSION")
     db.add(ver)
 ver.value = SAMPLE_VERSION
+
+for k, v in {"COMPANY_TIN": "", "COMPANY_MSIC": ""}.items():
+    if not db.get(M.Setting, k):
+        db.add(M.Setting(key=k, value=v))
 
 db.commit()
 print(f"Sample data loaded: {len(PURCHASES)} verified docs+payments, 2 pending docs,")

@@ -53,6 +53,8 @@
       <div><label>Contact Person 联系人</label><input name="contact_person" value="{{ s.contact_person if s else '' }}"></div>
       <div><label>Phone 电话</label><input name="phone" value="{{ s.phone if s else '' }}" inputmode="tel"></div>
       <div class="full"><label>Email</label><input name="email" type="email" value="{{ s.email if s else '' }}"></div>
+      <div><label>TIN (e-Invoice)</label><input name="tin" value="{{ s.tin if s else '' }}"></div>
+      <div><label>BRN (Reg. No.)</label><input name="brn" value="{{ s.brn if s else '' }}"></div>
       <div class="full"><label>Notes 备注</label><input name="notes" value="{{ s.notes if s else '' }}"></div>
       {% if s %}
       <div class="full" style="display:flex;align-items:center;gap:8px">

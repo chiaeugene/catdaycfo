@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block content %}
+<div class="pagehead"><h1>e-Invoice / MyInvois Readiness LHDN电子发票准备度</h1></div>
+<div class="sub">
+  LHDN is rolling out mandatory e-Invoicing for Malaysian businesses. This page tracks the data
+  you'll need (Tax ID, business registration, MSIC code) so you're ready when your turnover
+  threshold requires submission — it does <b>not</b> submit invoices to LHDN's MyInvois system.
+</div>
+
+<div class="panel" style="background:var(--amber-bg);border-color:var(--amber)">
+  <div style="font-size:12.5px;color:var(--amber);font-weight:600;line-height:1.6">
+    ⚠️ <b>What this is not:</b> full e-Invoice submission requires registering with LHDN's MyInvois
+    portal, a digital certificate, and real-time API integration (UBL/JSON format, validation,
+    QR codes, credit notes). That is a separate project once CatDay's revenue threshold requires it.
+    This page only makes sure the underlying data (TIN, BRN, MSIC) is captured now, so that
+    integration is a much smaller lift later.
+  </div>
+</div>
+
+<div class="cards">
+  <div class="card {% if company_ready %}green{% else %}red{% endif %}">
+    <div class="label">Company TIN/MSIC 公司资料</div>
+    <div class="value" style="font-size:16px">{{ 'Ready ✓' if company_ready else 'Incomplete' }}</div>
+    <div class="hint">{% if not company_ready %}Set in Settings{% endif %}</div>
+  </div>
+  <div class="card {% if pct == 100 %}green{% elif pct >= 50 %}amber{% else %}red{% endif %}">
+    <div class="label">Suppliers with TIN 供应商资料</div>
+    <div class="value">{{ pct }}%</div>
+    <div class="hint">{{ with_tin|length }} of {{ suppliers|length }} suppliers</div>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>Company e-Invoice details 公司资料</h2>
+  <form method="post" action="/settings/save">
+    <div class="formrow" style="grid-template-columns:1fr 1fr auto">
+      <div><label>Company TIN (LHDN Tax ID)</label><input name="COMPANY_TIN" value="{{ settings.get('COMPANY_TIN','') }}" placeholder="e.g. C1234567890"></div>
+      <div><label>MSIC Code (business activity)</label><input name="COMPANY_MSIC" value="{{ settings.get('COMPANY_MSIC','') }}" placeholder="e.g. 96099"></div>
+      <div class="f-btn"><button type="submit">Save 保存</button></div>
+    </div>
+  </form>
+  <div style="font-size:11px;color:var(--muted);margin-top:8px">
+    Find your MSIC code at the <a href="https://www.dosm.gov.my" target="_blank">DOSM MSIC classification search</a>. Cat boarding/grooming typically falls under "Other personal service activities" (96099) — confirm with your accountant.
+  </div>
+</div>
+
+<h2>Suppliers missing TIN — {{ without_tin|length }} of {{ suppliers|length }}</h2>
+<div class="tablewrap">
+  <table>
+    <tr><th>Supplier</th><th>Type</th><th>TIN</th><th>BRN</th><th></th></tr>
+    {% for s in suppliers %}
+    <tr {% if s.tin %}style="opacity:.5"{% endif %}>
+      <td><b>{{ s.name }}</b></td>
+      <td>{{ s.sup_type }}</td>
+      <td class="mono">{{ s.tin or '—' }}</td>
+      <td class="mono">{{ s.brn or '—' }}</td>
+      <td>
+        <details class="rowedit">
+          <summary>{{ 'edit' if s.tin else 'add TIN' }}</summary>
+          <form method="post" action="/suppliers/{{ s.id }}/tin" class="inline" style="margin-top:8px">
+            <input name="tin" value="{{ s.tin }}" placeholder="TIN" class="slim" style="width:130px">
+            <input name="brn" value="{{ s.brn }}" placeholder="BRN" class="slim" style="width:130px">
+            <button class="small" type="submit">Save</button>
+          </form>
+        </details>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="5" class="empty">No suppliers yet.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+{% endblock %}

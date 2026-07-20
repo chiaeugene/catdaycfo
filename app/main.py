@@ -31,6 +31,7 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 templates.env.filters["rm"] = lambda v: f"{(v or 0):,.2f}"
+templates.env.filters["abs"] = lambda v: abs(v or 0)
 app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
 
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "catdayhook")
@@ -66,6 +67,8 @@ NAV_GROUPS = [
         ("apaging", "/reports/ap-aging", "list", "AP Aging", ("admin", "manager")),
         ("statutory", "/reports/statutory", "landmark", "Statutory", ("admin",)),
         ("tax", "/reports/tax", "receipt", "SST / Tax", ("admin", "manager")),
+        ("reconciliation", "/reconciliation", "banknote", "Bank Reconciliation", ("admin", "manager")),
+        ("einvoice", "/reports/einvoice-readiness", "receipt", "e-Invoice Readiness", ("admin",)),
     ]),
     ("Setup", [
         ("settings", "/settings", "settings", "Settings", ("admin",)),
@@ -403,6 +406,7 @@ def supplier_new(request: Request, name: str = Form(...), sup_type: str = Form("
                  bank_name: str = Form(""), account_no: str = Form(""),
                  account_holder: str = Form(""), contact_person: str = Form(""),
                  phone: str = Form(""), email: str = Form(""), notes: str = Form(""),
+                 tin: str = Form(""), brn: str = Form(""),
                  db: Session = Depends(get_db)):
     user = current_user(request, db)
     if not user or user.role not in ("admin", "manager"):
@@ -410,7 +414,8 @@ def supplier_new(request: Request, name: str = Form(...), sup_type: str = Form("
     if not db.query(M.Supplier).filter(func.lower(M.Supplier.name) == name.strip().lower()).first():
         db.add(M.Supplier(name=name.strip(), sup_type=sup_type, bank_name=bank_name.strip(),
                           account_no=account_no.strip(), account_holder=account_holder.strip(),
-                          contact_person=contact_person, phone=phone, email=email, notes=notes))
+                          contact_person=contact_person, phone=phone, email=email, notes=notes,
+                          tin=tin.strip(), brn=brn.strip()))
         db.commit()
     return RedirectResponse("/suppliers", status_code=302)
 
@@ -420,6 +425,7 @@ def supplier_update(sid: int, request: Request, name: str = Form(...), sup_type:
                     bank_name: str = Form(""), account_no: str = Form(""),
                     account_holder: str = Form(""), contact_person: str = Form(""),
                     phone: str = Form(""), email: str = Form(""), notes: str = Form(""),
+                    tin: str = Form(""), brn: str = Form(""),
                     active: str = Form(""), db: Session = Depends(get_db)):
     user = current_user(request, db)
     if not user or user.role not in ("admin", "manager"):
@@ -429,6 +435,7 @@ def supplier_update(sid: int, request: Request, name: str = Form(...), sup_type:
         s.name, s.sup_type = name.strip(), sup_type
         s.bank_name, s.account_no, s.account_holder = bank_name.strip(), account_no.strip(), account_holder.strip()
         s.contact_person, s.phone, s.email, s.notes = contact_person, phone, email, notes
+        s.tin, s.brn = tin.strip(), brn.strip()
         s.active = active == "on"
         db.commit()
     return RedirectResponse("/suppliers", status_code=302)
@@ -917,6 +924,183 @@ def payslip_download(rid: int, iid: int, request: Request, db: Session = Depends
                         content_disposition_type="inline")
 
 
+# ─────────────────────────── BANK RECONCILIATION ───────────────────────────
+def _unmatched_system_txns(db: Session, bank_account_id: int):
+    """Candidate book-side transactions not yet matched to any statement line."""
+    matched = {(l.matched_type, l.matched_id) for l in
+               db.query(M.BankStatementLine).filter(M.BankStatementLine.matched == True).all()}  # noqa: E712
+    out = []
+    for v in db.query(M.Voucher).filter(M.Voucher.status == "Paid").all():
+        if ("Voucher", v.id) not in matched:
+            out.append({"type": "Voucher", "id": v.id, "date": v.date, "party": v.payee,
+                       "desc": f"{v.pv_no} · {v.payee}", "amount": -v.total})
+    for s in db.query(M.SalesEntry).all():
+        if ("Sale", s.id) not in matched:
+            out.append({"type": "Sale", "id": s.id, "date": s.date, "party": s.stream,
+                       "desc": f"{s.stream} · {s.description[:30]}", "amount": s.amount})
+    for e in db.query(M.PettyCashEntry).filter(M.PettyCashEntry.amount_in > 0).all():
+        if ("PettyCash", e.id) not in matched:
+            out.append({"type": "PettyCash", "id": e.id, "date": e.date, "party": "Petty cash",
+                       "desc": f"Top-up · {e.description[:30]}", "amount": -e.amount_in})
+    out.sort(key=lambda x: x["date"], reverse=True)
+    return out
+
+
+@app.get("/reconciliation", response_class=HTMLResponse)
+def reconciliation(request: Request, account: int = 0, db: Session = Depends(get_db)):
+    accounts = db.query(M.BankAccount).filter(M.BankAccount.active == True).order_by(M.BankAccount.id).all()  # noqa: E712
+    acc = db.get(M.BankAccount, account) if account else (accounts[0] if accounts else None)
+    lines, candidates = [], []
+    reconciled_total = unreconciled_total = 0.0
+    if acc:
+        all_lines = db.query(M.BankStatementLine).filter(
+            M.BankStatementLine.bank_account_id == acc.id).order_by(
+            M.BankStatementLine.date.desc(), M.BankStatementLine.id.desc()).all()
+        lines = all_lines
+        reconciled_total = sum(l.amount for l in all_lines if l.matched)
+        unreconciled_total = sum(l.amount for l in all_lines if not l.matched)
+        candidates = _unmatched_system_txns(db, acc.id)
+    unmatched_count = sum(1 for l in lines if not l.matched)
+    return render(request, db, "reconciliation.html", "reconciliation",
+                  accounts=accounts, acc=acc, lines=lines, candidates=candidates,
+                  reconciled_total=reconciled_total, unreconciled_total=unreconciled_total,
+                  unmatched_count=unmatched_count)
+
+
+@app.post("/reconciliation/account/new")
+def reconciliation_account_new(request: Request, name: str = Form(...), bank_name: str = Form(""),
+                               account_no: str = Form(""), opening_balance: float = Form(0),
+                               db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user or user.role not in ("admin", "manager"):
+        return RedirectResponse("/", status_code=302)
+    if name.strip() and not db.query(M.BankAccount).filter(
+            func.lower(M.BankAccount.name) == name.strip().lower()).first():
+        db.add(M.BankAccount(name=name.strip(), bank_name=bank_name, account_no=account_no,
+                             opening_balance=opening_balance or 0))
+        db.commit()
+    return RedirectResponse("/reconciliation", status_code=302)
+
+
+@app.post("/reconciliation/import")
+async def reconciliation_import(request: Request, account_id: int = Form(...),
+                                file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """Import a bank statement CSV. Expected columns (case-insensitive, flexible order):
+    Date, Description, Amount  — Amount: positive = money in, negative = money out.
+    Also accepts separate Debit / Credit columns instead of a single Amount."""
+    import csv, io, uuid
+    user = current_user(request, db)
+    if not user or user.role not in ("admin", "manager"):
+        return RedirectResponse("/", status_code=302)
+    raw = (await file.read()).decode("utf-8-sig", errors="replace")
+    reader = csv.DictReader(io.StringIO(raw))
+    batch = uuid.uuid4().hex[:8]
+    added = 0
+    for row in reader:
+        keys = {k.strip().lower(): k for k in row.keys() if k}
+        def get(*names):
+            for n in names:
+                if n in keys and row[keys[n]].strip():
+                    return row[keys[n]].strip()
+            return ""
+        d_raw = get("date")
+        desc = get("description", "details", "particulars", "narrative")
+        ref = get("reference", "ref", "cheque no")
+        amt_raw = get("amount")
+        debit = get("debit", "withdrawal")
+        credit = get("credit", "deposit")
+        try:
+            d = parse_date(d_raw) if d_raw else date.today()
+        except Exception:
+            continue
+        if amt_raw:
+            try:
+                amount = float(amt_raw.replace(",", ""))
+            except ValueError:
+                continue
+        else:
+            try:
+                amount = (float(credit.replace(",", "")) if credit else 0.0) - \
+                         (float(debit.replace(",", "")) if debit else 0.0)
+            except ValueError:
+                continue
+        if amount == 0 and not desc:
+            continue
+        db.add(M.BankStatementLine(bank_account_id=account_id, date=d, description=desc,
+                                   ref=ref, amount=amount, import_batch=batch))
+        added += 1
+    db.commit()
+    return RedirectResponse(f"/reconciliation?account={account_id}", status_code=302)
+
+
+@app.post("/reconciliation/match")
+def reconciliation_match(request: Request, line_id: int = Form(...), txn_type: str = Form(...),
+                         txn_id: int = Form(...), db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user or user.role not in ("admin", "manager"):
+        return RedirectResponse("/", status_code=302)
+    line = db.get(M.BankStatementLine, line_id)
+    if line:
+        line.matched, line.matched_type, line.matched_id = True, txn_type, txn_id
+        db.commit()
+    return RedirectResponse(f"/reconciliation?account={line.bank_account_id}" if line else "/reconciliation",
+                            status_code=302)
+
+
+@app.post("/reconciliation/unmatch/{line_id}")
+def reconciliation_unmatch(line_id: int, request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user or user.role not in ("admin", "manager"):
+        return RedirectResponse("/", status_code=302)
+    line = db.get(M.BankStatementLine, line_id)
+    if line:
+        line.matched, line.matched_type, line.matched_id = False, "", None
+        db.commit()
+    return RedirectResponse(f"/reconciliation?account={line.bank_account_id}" if line else "/reconciliation",
+                            status_code=302)
+
+
+@app.post("/reconciliation/delete/{line_id}")
+def reconciliation_delete_line(line_id: int, request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user or user.role != "admin":
+        return RedirectResponse("/", status_code=302)
+    line = db.get(M.BankStatementLine, line_id)
+    if line:
+        acc_id = line.bank_account_id
+        db.delete(line)
+        db.commit()
+        return RedirectResponse(f"/reconciliation?account={acc_id}", status_code=302)
+    return RedirectResponse("/reconciliation", status_code=302)
+
+
+# ─────────────────────────── e-INVOICE / MyInvois READINESS ───────────────────────────
+@app.get("/reports/einvoice-readiness", response_class=HTMLResponse)
+def einvoice_readiness(request: Request, db: Session = Depends(get_db)):
+    settings = {s.key: s.value for s in db.query(M.Setting).all()}
+    suppliers = db.query(M.Supplier).filter(M.Supplier.active == True).order_by(M.Supplier.name).all()  # noqa: E712
+    with_tin = [s for s in suppliers if s.tin.strip()]
+    without_tin = [s for s in suppliers if not s.tin.strip()]
+    company_ready = bool(settings.get("COMPANY_TIN", "").strip()) and bool(settings.get("COMPANY_MSIC", "").strip())
+    pct = round(len(with_tin) / len(suppliers) * 100) if suppliers else 0
+    return render(request, db, "einvoice_readiness.html", "einvoice",
+                  settings=settings, suppliers=suppliers, with_tin=with_tin,
+                  without_tin=without_tin, company_ready=company_ready, pct=pct)
+
+
+@app.post("/suppliers/{sid}/tin")
+def supplier_update_tin(sid: int, request: Request, tin: str = Form(""), brn: str = Form(""),
+                        db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user or user.role not in ("admin", "manager"):
+        return RedirectResponse("/", status_code=302)
+    s = db.get(M.Supplier, sid)
+    if s:
+        s.tin, s.brn = tin.strip(), brn.strip()
+        db.commit()
+    return RedirectResponse("/reports/einvoice-readiness", status_code=302)
+
+
 # ─────────────────────────── GENERAL LEDGER ───────────────────────────
 @app.get("/reports/gl", response_class=HTMLResponse)
 def general_ledger(request: Request, q: str = "", frm: str = "", to: str = "",
@@ -1272,7 +1456,7 @@ async def settings_save(request: Request, db: Session = Depends(get_db)):
     form = await request.form()
     for key in ("COMPANY_NAME", "COMPANY_ADDRESS", "TELEGRAM_WHITELIST", "PETTY_CASH_FLOAT",
                 "PASSCODE", "SST_REGISTERED", "SST_NUMBER", "COMPANY_ROC", "COMPANY_BANK",
-                "COMPANY_BANK_ACCOUNT",
+                "COMPANY_BANK_ACCOUNT", "COMPANY_TIN", "COMPANY_MSIC",
                 "PREFIX_DOC", "PREFIX_PAY", "PREFIX_PV", "PREFIX_PL"):
         if key in form:
             s = db.get(M.Setting, key)
