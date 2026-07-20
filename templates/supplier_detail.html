@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block content %}
+<div class="pagehead">
+  <h1>{{ s.name }}</h1>
+  <a class="btn secondary" href="/suppliers">← All suppliers</a>
+</div>
+<div class="sub">
+  <span class="badge draft">{{ s.sup_type }}</span>
+  {% if s.contact_person %} · {{ s.contact_person }}{% endif %}{% if s.phone %} · {{ s.phone }}{% endif %}
+</div>
+
+<div class="cards">
+  <div class="card"><div class="label">Bank 银行</div><div class="value" style="font-size:15px">{{ s.bank_name or '—' }}</div>
+    <div class="hint mono">{{ s.account_no or 'no account on file' }}</div></div>
+  <div class="card red"><div class="label">Outstanding 未付</div><div class="value">RM {{ outstanding|rm }}</div></div>
+  <div class="card green"><div class="label">Paid to date 已付</div><div class="value">RM {{ paid|rm }}</div></div>
+  <div class="card blue"><div class="label">Total billed 总额</div><div class="value">RM {{ total_all|rm }}</div></div>
+</div>
+
+<h2>Transactions 交易记录</h2>
+<div class="tablewrap">
+  <table>
+    <tr><th>Payment</th><th>Date</th><th>Invoice</th><th>Description</th><th>Category</th>
+        <th class="num">Amount</th><th>Status</th><th>Voucher</th></tr>
+    {% for p in pays %}
+    <tr>
+      <td class="mono">{{ p.pay_no }}</td>
+      <td>{{ p.date.strftime('%d/%m/%y') }}</td>
+      <td class="mono">{{ p.invoice_no }}</td>
+      <td>{% if p.documents %}<a href="/files/{{ p.documents[0].file_path }}" target="_blank">{{ p.description[:40] }} 📎</a>{% else %}{{ p.description[:40] }}{% endif %}</td>
+      <td>{{ p.category }}</td>
+      <td class="num">{{ p.amount|rm }}</td>
+      <td><span class="badge {{ p.status.replace(' ','')|lower }}">{{ p.status }}</span></td>
+      <td class="mono">{% if p.voucher %}<a href="/vouchers">{{ p.voucher.pv_no }}</a>{% else %}—{% endif %}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="8" class="empty">No transactions with this supplier yet.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+
+{% if docs %}
+<div class="panel" style="margin-top:18px">
+  <h2>Documents 文件</h2>
+  <div class="docchips">
+    {% for d in docs %}
+    <a class="docchip" href="/files/{{ d.file_path }}" target="_blank">{{ icon('paperclip', 12) }} {{ d.doc_no }} · {{ d.invoice_no or d.description[:24] }}</a>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+{% endblock %}

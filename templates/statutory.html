@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block content %}
+<div class="pagehead"><h1>Statutory Liabilities 法定缴款</h1></div>
+<div class="sub">EPF (KWSP), SOCSO &amp; EIS (PERKESO) and PCB (LHDN) owed from confirmed payroll. All due by the <b>15th of the following month</b>. Mark each as paid once remitted.</div>
+
+<div class="cards">
+  <div class="card red"><div class="label">Total unpaid 未缴总额</div><div class="value">RM {{ total_owed|rm }}</div></div>
+</div>
+
+<div class="tablewrap">
+  <table>
+    <tr><th>Month</th><th>Type</th><th class="num">Amount</th><th>Due by</th><th>Status</th><th></th></tr>
+    {% for r in report %}
+    <tr {% if r.overdue %}style="background:var(--red-bg)"{% endif %}>
+      <td><b>{{ r.month }}</b></td>
+      <td>{{ r.kind }}
+        <span style="color:var(--muted);font-size:11px">
+          {{ '→ KWSP' if r.kind=='EPF' else '→ PERKESO' if r.kind in ['SOCSO','EIS'] else '→ LHDN' }}
+        </span></td>
+      <td class="num">{{ r.amount|rm }}</td>
+      <td>{{ r.due.strftime('%d/%m/%Y') if r.due else '—' }}{% if r.overdue %} <span class="badge void">OVERDUE</span>{% endif %}</td>
+      <td>{% if r.paid %}<span class="badge paid">Paid {{ r.paid_date.strftime('%d/%m') }}</span>{% else %}<span class="badge pending">Owed</span>{% endif %}</td>
+      <td>
+        {% if user.role == 'admin' %}
+        <form method="post" action="/reports/statutory/pay">
+          <input type="hidden" name="month" value="{{ r.month }}">
+          <input type="hidden" name="kind" value="{{ r.kind }}">
+          <input type="hidden" name="amount" value="{{ r.amount }}">
+          <button class="small {{ 'secondary' if r.paid else 'success' }}" type="submit">
+            {{ 'Undo' if r.paid else 'Mark paid' }}</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="6" class="empty">No confirmed payroll yet — statutory amounts appear here once you confirm a payroll run.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+
+<div class="panel" style="margin-top:16px;max-width:640px">
+  <h2>Reminder 提示</h2>
+  <div style="font-size:12.5px;color:var(--muted);line-height:1.7">
+    • <b>EPF</b> → KWSP · <b>SOCSO + EIS</b> → PERKESO · <b>PCB (MTD)</b> → LHDN<br>
+    • All contributions must be paid by the <b>15th</b> of the following month to avoid penalties.<br>
+    • PCB is entered per employee in the payroll draft (use the LHDN PCB calculator or your payroll schedule).
+  </div>
+</div>
+{% endblock %}

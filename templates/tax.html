@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block content %}
+<div class="pagehead"><h1>SST / Tax Summary 税务汇总 — {{ month }}</h1></div>
+<div class="sub">
+  Malaysian SST — output tax (on your sales) vs input tax (on your purchases).
+  {% if sst_registered %}SST No: <b>{{ sst_no }}</b>{% else %}<b>Not SST-registered</b> — tracked for reference; you only file SST-02 once registered (turnover &gt; RM500k/yr).{% endif %}
+</div>
+
+<div class="filters">
+  {% for m in months %}<a href="/reports/tax?month={{ m }}" class="{% if m == month %}on{% endif %}">{{ m }}</a>{% endfor %}
+</div>
+
+<div class="cards">
+  <div class="card green"><div class="label">Output tax (sales) 销项税</div><div class="value">RM {{ total_out|rm }}</div></div>
+  <div class="card blue"><div class="label">Input tax (purchases) 进项税</div><div class="value">RM {{ total_in|rm }}</div></div>
+  <div class="card {% if net_tax >= 0 %}red{% else %}green{% endif %}">
+    <div class="label">Net tax {{ 'payable' if net_tax >= 0 else 'claimable' }} 应缴/可退</div>
+    <div class="value">RM {{ (net_tax if net_tax >= 0 else -net_tax)|rm }}</div></div>
+</div>
+
+<div class="grid2">
+  <div>
+    <h2>Output tax — sales 销项税</h2>
+    <div class="tablewrap">
+    <table>
+      <tr><th>Date</th><th>Stream</th><th>Tax type</th><th class="num">Amount</th><th class="num">Tax</th></tr>
+      {% for s in out_tax %}
+      <tr><td>{{ s.date.strftime('%d/%m') }}</td><td>{{ s.stream }}</td><td>{{ s.tax_type }}</td>
+          <td class="num">{{ s.amount|rm }}</td><td class="num">{{ s.tax_amount|rm }}</td></tr>
+      {% else %}<tr><td colspan="5" class="empty">No taxable sales for {{ month }}.</td></tr>{% endfor %}
+      {% if out_tax %}<tr class="total-row"><td colspan="4">Total output tax</td><td class="num">{{ total_out|rm }}</td></tr>{% endif %}
+    </table>
+    </div>
+  </div>
+  <div>
+    <h2>Input tax — purchases 进项税</h2>
+    <div class="tablewrap">
+    <table>
+      <tr><th>Payment</th><th>Supplier</th><th>Tax type</th><th class="num">Amount</th><th class="num">Tax</th></tr>
+      {% for p in in_tax %}
+      <tr><td class="mono">{{ p.pay_no }}</td><td>{{ p.supplier[:18] }}</td><td>{{ p.tax_type }}</td>
+          <td class="num">{{ p.amount|rm }}</td><td class="num">{{ p.tax_amount|rm }}</td></tr>
+      {% else %}<tr><td colspan="5" class="empty">No taxable purchases for {{ month }}.</td></tr>{% endfor %}
+      {% if in_tax %}<tr class="total-row"><td colspan="4">Total input tax</td><td class="num">{{ total_in|rm }}</td></tr>{% endif %}
+    </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

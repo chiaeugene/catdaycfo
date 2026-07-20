@@ -11,17 +11,30 @@
 <body>
 {% from "icons.html" import icon %}
 <div class="layout">
+  <!-- Mobile top bar -->
+  <div class="mobilebar">
+    <button class="navtoggle" onclick="document.body.classList.toggle('nav-open')" aria-label="Menu">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    </button>
+    <div class="mb-brand">🐱 CATDAY</div>
+    {% if pending_docs %}<a href="/documents" class="mb-pill">{{ pending_docs }} to verify</a>{% endif %}
+  </div>
+  <div class="nav-scrim" onclick="document.body.classList.remove('nav-open')"></div>
+
   <aside class="sidebar">
     <div class="brand">
       <div class="logo">CATDAY</div>
       <small>Finance · 财务系统</small>
     </div>
     <nav>
-      {% for url, ico, label in nav %}
-      <a href="{{ url }}" class="{% if (url == '/' and page == 'dashboard') or (url != '/' and url == '/' + page) %}active{% endif %}">
-        {{ icon(ico) }}<span>{{ label }}</span>
-        {% if url == '/documents' and pending_docs %}<span class="pill">{{ pending_docs }}</span>{% endif %}
-      </a>
+      {% for glabel, items in nav_groups %}
+        {% if glabel %}<div class="navlabel">{{ glabel }}</div>{% endif %}
+        {% for key, url, ico, label in items %}
+        <a href="{{ url }}" class="{% if key == page %}active{% endif %}" onclick="document.body.classList.remove('nav-open')">
+          {{ icon(ico) }}<span>{{ label }}</span>
+          {% if key == 'documents' and pending_docs %}<span class="pill">{{ pending_docs }}</span>{% endif %}
+        </a>
+        {% endfor %}
       {% endfor %}
     </nav>
     <div class="userbox">

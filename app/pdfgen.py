@@ -224,9 +224,11 @@ def payslip_pdf(month: str, item, company="CATDAY SDN BHD", address="Uptown PJ")
         ["SOCSO (Employee)", f"{item.socso_ee:,.2f}"],
         ["EIS (Employee)", f"{item.eis_ee:,.2f}"],
     ]
+    if item.pcb:
+        deductions.append(["PCB / MTD (Tax)", f"{item.pcb:,.2f}"])
     if item.deductions:
         deductions.append(["Other Deductions", f"{item.deductions:,.2f}"])
-    total_ded = item.epf_ee + item.socso_ee + item.eis_ee + item.deductions
+    total_ded = item.epf_ee + item.socso_ee + item.eis_ee + item.pcb + item.deductions
     deductions.append(["Total Deductions", f"{total_ded:,.2f}"])
 
     te = Table(earnings, colWidths=[55 * mm, 28 * mm])

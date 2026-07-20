@@ -31,7 +31,7 @@ Base.metadata.create_all(engine)
 run_migrations()
 db = SessionLocal()
 
-SAMPLE_VERSION = "v6-bot-reports"
+SAMPLE_VERSION = "v7-bookkeeper"
 ver_setting = db.get(M.Setting, "SAMPLE_DATA_VERSION")
 
 if ver_setting and ver_setting.value == SAMPLE_VERSION:
@@ -41,7 +41,7 @@ if ver_setting and ver_setting.value == SAMPLE_VERSION:
 
 # Wipe any previous sample data (from an older version of this script) before reseeding.
 if db.query(M.SalesEntry).count() > 0 or db.query(M.Document).count() > 0:
-    for model in (M.PayrollItem, M.PayrollRun, M.PettyCashEntry, M.SalesEntry,
+    for model in (M.PayrollItem, M.PayrollRun, M.StatutoryPaid, M.PettyCashEntry, M.SalesEntry,
                   M.BoardingLog, M.Voucher, M.Listing, M.Document, M.Payment, M.Supplier):
         db.query(model).delete()
     for name in ("DOC", "PAY", "PV", "PL"):
@@ -328,11 +328,12 @@ run = M.PayrollRun(month="Jun 2026", run_date=date(2026, 6, 28), status="Confirm
 db.add(run)
 db.flush()
 for s in db.query(M.Staff).filter(M.Staff.active == True).all():  # noqa: E712
+    pcb = 150.0 if s.base_salary >= 5000 else 0.0   # only higher earners hit PCB
     db.add(M.PayrollItem(run_id=run.id, staff_name=s.name, position=s.position,
                          base=s.base_salary, allowance=s.allowance,
                          epf_er=s.epf_employer, epf_ee=s.epf_employee,
                          socso_er=s.socso_employer, socso_ee=s.socso_employee,
-                         eis_er=s.eis_employer, eis_ee=s.eis_employee))
+                         eis_er=s.eis_employer, eis_ee=s.eis_employee, pcb=pcb))
 db.flush()
 run.total_net = sum(i.net for i in run.items)
 run.total_cost = sum(i.employer_cost for i in run.items)

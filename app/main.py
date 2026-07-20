@@ -40,20 +40,38 @@ BASE_URL = os.environ.get("BASE_URL", "https://catday-system.onrender.com").rstr
 import hashlib as _hashlib
 WEBHOOK_TOKEN = _hashlib.sha256(WEBHOOK_SECRET.encode()).hexdigest()[:40]
 
-NAV = [
-    ("dashboard", "/", "home", "Dashboard", ("admin", "manager", "staff")),
-    ("documents", "/documents", "inbox", "Verification", ("admin", "manager")),
-    ("payments", "/payments", "card", "Payments", ("admin", "manager")),
-    ("suppliers", "/suppliers", "landmark", "Suppliers", ("admin", "manager")),
-    ("vouchers", "/vouchers", "receipt", "Vouchers", ("admin", "manager")),
-    ("listings", "/listings", "list", "Listings", ("admin", "manager")),
-    ("pettycash", "/pettycash", "coins", "Petty Cash", ("admin", "manager", "staff")),
-    ("sales", "/sales", "cart", "Sales", ("admin", "manager", "staff")),
-    ("boarding", "/boarding", "cat", "Boarding", ("admin", "manager", "staff")),
-    ("payroll", "/payroll", "banknote", "Payroll", ("admin",)),
-    ("pnl", "/pnl", "chart", "P&L Report", ("admin",)),
-    ("settings", "/settings", "settings", "Settings", ("admin",)),
+# Grouped navigation: (group label, [(key, url, icon, label, roles), ...])
+NAV_GROUPS = [
+    ("", [
+        ("dashboard", "/", "home", "Dashboard", ("admin", "manager", "staff")),
+    ]),
+    ("Payables 应付", [
+        ("documents", "/documents", "inbox", "Verification", ("admin", "manager")),
+        ("payments", "/payments", "card", "Payments", ("admin", "manager")),
+        ("suppliers", "/suppliers", "landmark", "Suppliers", ("admin", "manager")),
+        ("vouchers", "/vouchers", "receipt", "Vouchers", ("admin", "manager")),
+        ("listings", "/listings", "list", "Listings", ("admin", "manager")),
+        ("pettycash", "/pettycash", "coins", "Petty Cash", ("admin", "manager", "staff")),
+    ]),
+    ("Income 收入", [
+        ("sales", "/sales", "cart", "Sales", ("admin", "manager", "staff")),
+        ("boarding", "/boarding", "cat", "Boarding", ("admin", "manager", "staff")),
+    ]),
+    ("People 人事", [
+        ("payroll", "/payroll", "banknote", "Payroll", ("admin",)),
+    ]),
+    ("Reports 报告", [
+        ("pnl", "/pnl", "chart", "P&L", ("admin",)),
+        ("apaging", "/reports/ap-aging", "list", "AP Aging", ("admin", "manager")),
+        ("statutory", "/reports/statutory", "landmark", "Statutory", ("admin",)),
+        ("tax", "/reports/tax", "receipt", "SST / Tax", ("admin", "manager")),
+    ]),
+    ("Setup", [
+        ("settings", "/settings", "settings", "Settings", ("admin",)),
+    ]),
 ]
+# Flat lookup for role checks
+NAV = [item for _, items in NAV_GROUPS for item in items]
 
 
 def render(request: Request, db: Session, template: str, page: str, **ctx):
@@ -63,11 +81,16 @@ def render(request: Request, db: Session, template: str, page: str, **ctx):
     allowed = next((roles for key, _, _, _, roles in NAV if key == page), ())
     if user.role not in allowed:
         return RedirectResponse("/", status_code=302)
-    nav = [(url, icon, label) for key, url, icon, label, roles in NAV if user.role in roles]
+    nav_groups = []
+    for glabel, items in NAV_GROUPS:
+        visible = [(key, url, icon, label) for key, url, icon, label, roles in items
+                   if user.role in roles]
+        if visible:
+            nav_groups.append((glabel, visible))
     pending_docs = db.query(M.Document).filter(M.Document.status == "Pending").count() \
         if user.role in ("admin", "manager") else 0
     return templates.TemplateResponse(request, template,
-        {"user": user, "nav": nav, "page": page, "M": M, "today": date.today(),
+        {"user": user, "nav_groups": nav_groups, "page": page, "M": M, "today": date.today(),
          "pending_docs": pending_docs, **ctx})
 
 
@@ -77,6 +100,14 @@ def month_str(d: date | None = None) -> str:
 
 def parse_date(s: str) -> date:
     return datetime.strptime(s, "%Y-%m-%d").date() if s else date.today()
+
+
+def tax_of(tax_type: str, amount: float) -> float:
+    """SST amount contained within a gross amount (tax-inclusive)."""
+    rate = M.TAX_TYPES.get(tax_type, 0.0)
+    if not rate:
+        return 0.0
+    return round(amount - amount / (1 + rate), 2)
 
 
 def find_supplier(db: Session, name: str) -> M.Supplier | None:
@@ -317,12 +348,14 @@ def payments(request: Request, status: str = "", error: str = "", db: Session = 
 @app.post("/payments/new")
 def new_payment(request: Request, supplier: str = Form(""), description: str = Form(...),
                 category: str = Form(""), grp: str = Form(""), amount: float = Form(...),
-                invoice_no: str = Form(""), pdate: str = Form(""), db: Session = Depends(get_db)):
+                invoice_no: str = Form(""), tax_type: str = Form("None"),
+                pdate: str = Form(""), db: Session = Depends(get_db)):
     d = parse_date(pdate)
     pay_no = telegram_bot.next_counter(db, "PAY", "PAY-")
     db.add(M.Payment(pay_no=pay_no, date=d, supplier=supplier, description=description,
                      category=category, grp=grp, amount=amount, month=month_str(d),
-                     invoice_no=invoice_no.strip(),
+                     invoice_no=invoice_no.strip(), tax_type=tax_type,
+                     tax_amount=tax_of(tax_type, amount),
                      status="Categorized" if category else "Unsorted", notes="manual entry"))
     db.commit()
     return RedirectResponse("/payments", status_code=302)
@@ -345,6 +378,23 @@ def update_payment(pid: int, request: Request, supplier: str = Form(""),
 def suppliers(request: Request, db: Session = Depends(get_db)):
     sups = db.query(M.Supplier).order_by(M.Supplier.name).all()
     return render(request, db, "suppliers.html", "suppliers", suppliers=sups)
+
+
+@app.get("/suppliers/{sid}", response_class=HTMLResponse)
+def supplier_detail(sid: int, request: Request, db: Session = Depends(get_db)):
+    s = db.get(M.Supplier, sid)
+    if not s:
+        return RedirectResponse("/suppliers", status_code=302)
+    pays = db.query(M.Payment).filter(func.lower(M.Payment.supplier) == s.name.lower()) \
+        .order_by(M.Payment.date.desc()).all()
+    total_all = sum(p.amount for p in pays)
+    paid = sum(p.amount for p in pays if p.status == "Paid")
+    outstanding = sum(p.amount for p in pays if p.status in ("Unsorted", "Categorized", "On Voucher"))
+    docs = db.query(M.Document).filter(func.lower(M.Document.supplier) == s.name.lower(),
+                                       M.Document.file_path != "") \
+        .order_by(M.Document.id.desc()).limit(50).all()
+    return render(request, db, "supplier_detail.html", "suppliers", s=s, pays=pays,
+                  total_all=total_all, paid=paid, outstanding=outstanding, docs=docs)
 
 
 @app.post("/suppliers/new")
@@ -571,11 +621,13 @@ def sales(request: Request, db: Session = Depends(get_db)):
 @app.post("/sales/new")
 def sales_new(request: Request, stream: str = Form(...), description: str = Form(""),
               amount: float = Form(...), method: str = Form("Cash"),
-              pdate: str = Form(""), db: Session = Depends(get_db)):
+              tax_type: str = Form("None"), pdate: str = Form(""),
+              db: Session = Depends(get_db)):
     user = current_user(request, db)
     d = parse_date(pdate)
     db.add(M.SalesEntry(date=d, stream=stream, description=description, amount=amount,
-                        method=method, month=month_str(d),
+                        method=method, month=month_str(d), tax_type=tax_type,
+                        tax_amount=tax_of(tax_type, amount),
                         recorded_by=user.display_name if user else ""))
     db.commit()
     return RedirectResponse("/sales", status_code=302)
@@ -687,13 +739,13 @@ def payroll_run_view(rid: int, request: Request, db: Session = Depends(get_db)):
 def payroll_item_update(rid: int, iid: int, request: Request,
                         base: float = Form(0), allowance: float = Form(0),
                         overtime: float = Form(0), bonus: float = Form(0),
-                        deductions: float = Form(0),
+                        pcb: float = Form(0), deductions: float = Form(0),
                         remarks: str = Form(""), db: Session = Depends(get_db)):
     run = db.get(M.PayrollRun, rid)
     item = db.get(M.PayrollItem, iid)
     if run and item and item.run_id == rid and run.status == "Draft":
         item.base, item.allowance, item.overtime, item.bonus = base, allowance, overtime, bonus
-        item.deductions, item.remarks = deductions, remarks
+        item.pcb, item.deductions, item.remarks = pcb, deductions, remarks
         # Statutory always recalculated from the latest gross
         st = calc_statutory(item.gross)
         item.epf_er, item.epf_ee = st["epf_er"], st["epf_ee"]
@@ -756,6 +808,159 @@ def payslip_download(rid: int, iid: int, request: Request, db: Session = Depends
     full = os.path.join(UPLOAD_DIR, rel)
     return FileResponse(full, filename=os.path.basename(full),
                         content_disposition_type="inline")
+
+
+# ─────────────────────────── REPORTS ───────────────────────────
+@app.get("/reports/ap-aging", response_class=HTMLResponse)
+def ap_aging(request: Request, db: Session = Depends(get_db)):
+    """Unpaid supplier payments grouped by supplier + age bucket."""
+    today = date.today()
+    open_pays = db.query(M.Payment).filter(
+        M.Payment.status.in_(["Unsorted", "Categorized", "On Voucher"])).all()
+    buckets = ["Current", "1-30", "31-60", "61-90", "90+"]
+    rows = {}   # supplier -> {bucket: amount, total, items}
+    for p in open_pays:
+        age = (today - p.date).days
+        b = ("Current" if age <= 0 else "1-30" if age <= 30 else "31-60" if age <= 60
+             else "61-90" if age <= 90 else "90+")
+        name = p.supplier or "(no supplier)"
+        r = rows.setdefault(name, {bk: 0.0 for bk in buckets})
+        r.setdefault("total", 0.0)
+        r.setdefault("items", [])
+        r[b] += p.amount
+        r["total"] += p.amount
+        r["items"].append((p, b, age))
+    totals = {bk: sum(r[bk] for r in rows.values()) for bk in buckets}
+    grand = sum(totals.values())
+    rows = dict(sorted(rows.items(), key=lambda kv: kv[1]["total"], reverse=True))
+    return render(request, db, "ap_aging.html", "apaging",
+                  rows=rows, buckets=buckets, totals=totals, grand=grand, today=today)
+
+
+@app.get("/reports/statutory", response_class=HTMLResponse)
+def statutory_report(request: Request, db: Session = Depends(get_db)):
+    """Monthly EPF/SOCSO/EIS/PCB owed from confirmed payroll runs, with paid status."""
+    from datetime import datetime as _dt
+    runs = db.query(M.PayrollRun).filter(M.PayrollRun.status == "Confirmed").all()
+    paid = {(s.month, s.kind): s for s in db.query(M.StatutoryPaid).all()}
+    months = {}
+    for run in runs:
+        m = months.setdefault(run.month, {"EPF": 0.0, "SOCSO": 0.0, "EIS": 0.0, "PCB": 0.0})
+        for it in run.items:
+            m["EPF"] += it.epf_er + it.epf_ee
+            m["SOCSO"] += it.socso_er + it.socso_ee
+            m["EIS"] += it.eis_er + it.eis_ee
+            m["PCB"] += it.pcb
+
+    def due_date(month_str_):
+        try:
+            base = _dt.strptime(month_str_, "%b %Y")
+            nxt = (base.month % 12) + 1
+            yr = base.year + (1 if base.month == 12 else 0)
+            return date(yr, nxt, 15)
+        except Exception:
+            return None
+
+    report = []
+    for mo, kinds in sorted(months.items(), key=lambda kv: due_date(kv[0]) or date.min):
+        for kind, amt in kinds.items():
+            if amt <= 0:
+                continue
+            rec = paid.get((mo, kind))
+            report.append({"month": mo, "kind": kind, "amount": amt,
+                           "due": due_date(mo), "paid": bool(rec),
+                           "paid_date": rec.paid_date if rec else None,
+                           "overdue": (not rec) and due_date(mo) and due_date(mo) < date.today()})
+    total_owed = sum(r["amount"] for r in report if not r["paid"])
+    return render(request, db, "statutory.html", "statutory",
+                  report=report, total_owed=total_owed)
+
+
+@app.post("/reports/statutory/pay")
+def statutory_pay(request: Request, month: str = Form(...), kind: str = Form(...),
+                  amount: float = Form(0), db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user or user.role != "admin":
+        return RedirectResponse("/", status_code=302)
+    existing = db.query(M.StatutoryPaid).filter_by(month=month, kind=kind).first()
+    if existing:
+        db.delete(existing)   # toggle back to owed
+    else:
+        db.add(M.StatutoryPaid(month=month, kind=kind, amount=amount,
+                               paid_date=date.today(), paid_by=user.display_name))
+    db.commit()
+    return RedirectResponse("/reports/statutory", status_code=302)
+
+
+@app.get("/reports/tax", response_class=HTMLResponse)
+def tax_report(request: Request, month: str = "", db: Session = Depends(get_db)):
+    mo = month or month_str()
+    months = sorted({m for (m,) in db.query(M.Payment.month).distinct() if m}
+                    | {m for (m,) in db.query(M.SalesEntry.month).distinct() if m}
+                    | {month_str()})
+    out_tax = db.query(M.SalesEntry).filter(M.SalesEntry.month == mo,
+                                            M.SalesEntry.tax_amount > 0).all()
+    in_tax = db.query(M.Payment).filter(M.Payment.month == mo,
+                                        M.Payment.tax_amount > 0,
+                                        M.Payment.status != "Void").all()
+    total_out = sum(s.tax_amount for s in out_tax)
+    total_in = sum(p.tax_amount for p in in_tax)
+    settings = {s.key: s.value for s in db.query(M.Setting).all()}
+    return render(request, db, "tax.html", "tax", month=mo, months=months,
+                  out_tax=out_tax, in_tax=in_tax, total_out=total_out, total_in=total_in,
+                  net_tax=total_out - total_in,
+                  sst_registered=settings.get("SST_REGISTERED", "no") == "yes",
+                  sst_no=settings.get("SST_NUMBER", ""))
+
+
+# ─────────────────────────── CSV EXPORTS ───────────────────────────
+def _csv_response(filename: str, header: list, rows: list):
+    import csv, io
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(header)
+    w.writerows(rows)
+    from fastapi.responses import Response
+    return Response(content=buf.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+@app.get("/export/payments.csv")
+def export_payments(request: Request, db: Session = Depends(get_db)):
+    if not current_user(request, db):
+        return RedirectResponse("/login", status_code=302)
+    rows = [[p.pay_no, p.date, p.supplier, p.invoice_no, p.description, p.category, p.grp,
+             p.amount, p.tax_type, p.tax_amount, p.month, p.status,
+             p.voucher.pv_no if p.voucher else ""]
+            for p in db.query(M.Payment).order_by(M.Payment.id).all()]
+    return _csv_response("payments.csv",
+        ["Payment No", "Date", "Supplier", "Invoice No", "Description", "Category", "Group",
+         "Amount", "Tax Type", "Tax Amount", "Month", "Status", "Voucher"], rows)
+
+
+@app.get("/export/sales.csv")
+def export_sales(request: Request, db: Session = Depends(get_db)):
+    if not current_user(request, db):
+        return RedirectResponse("/login", status_code=302)
+    rows = [[s.date, s.stream, s.description, s.amount, s.tax_type, s.tax_amount,
+             s.method, s.month, s.recorded_by]
+            for s in db.query(M.SalesEntry).order_by(M.SalesEntry.id).all()]
+    return _csv_response("sales.csv",
+        ["Date", "Stream", "Description", "Amount", "Tax Type", "Tax Amount",
+         "Method", "Month", "Recorded By"], rows)
+
+
+@app.get("/export/pettycash.csv")
+def export_pettycash(request: Request, db: Session = Depends(get_db)):
+    if not current_user(request, db):
+        return RedirectResponse("/login", status_code=302)
+    entries = db.query(M.PettyCashEntry).order_by(M.PettyCashEntry.date, M.PettyCashEntry.id).all()
+    rows, bal = [], 0.0
+    for e in entries:
+        bal += e.amount_in - e.amount_out
+        rows.append([e.date, e.description, e.category, e.amount_out, e.amount_in, bal, e.recorded_by])
+    return _csv_response("petty_cash.csv",
+        ["Date", "Description", "Category", "Out", "In", "Balance", "Recorded By"], rows)
 
 
 # ─────────────────────────── P&L ───────────────────────────
@@ -871,7 +1076,8 @@ async def settings_save(request: Request, db: Session = Depends(get_db)):
     if not me or me.role != "admin":
         return RedirectResponse("/", status_code=302)
     form = await request.form()
-    for key in ("COMPANY_NAME", "COMPANY_ADDRESS", "TELEGRAM_WHITELIST", "PETTY_CASH_FLOAT", "PASSCODE"):
+    for key in ("COMPANY_NAME", "COMPANY_ADDRESS", "TELEGRAM_WHITELIST", "PETTY_CASH_FLOAT",
+                "PASSCODE", "SST_REGISTERED", "SST_NUMBER"):
         if key in form:
             s = db.get(M.Setting, key)
             if not s:

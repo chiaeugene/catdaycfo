@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block content %}
+<div class="pagehead">
+  <h1>Accounts Payable Aging 应付账款账龄</h1>
+  <a class="btn secondary" href="/export/payments.csv">{{ icon('file', 14) }} Export CSV</a>
+</div>
+<div class="sub">Unpaid supplier invoices grouped by how long they've been outstanding — as of {{ today.strftime('%d/%m/%Y') }}. Chase the 60+ day columns first.</div>
+
+<div class="cards">
+  <div class="card red"><div class="label">Total outstanding 未付总额</div><div class="value">RM {{ grand|rm }}</div></div>
+  {% for b in buckets %}
+  <div class="card {{ 'red' if b in ['61-90','90+'] else 'amber' if b == '31-60' else '' }}">
+    <div class="label">{{ b }} days</div><div class="value" style="font-size:19px">RM {{ totals[b]|rm }}</div></div>
+  {% endfor %}
+</div>
+
+<div class="tablewrap">
+  <table>
+    <tr><th>Supplier</th>{% for b in buckets %}<th class="num">{{ b }}</th>{% endfor %}<th class="num">Total</th></tr>
+    {% for name, r in rows.items() %}
+    <tr>
+      <td><b>{{ name }}</b></td>
+      {% for b in buckets %}<td class="num" style="{% if r[b] and b in ['61-90','90+'] %}color:var(--red);font-weight:700{% endif %}">{{ r[b]|rm if r[b] else '' }}</td>{% endfor %}
+      <td class="num"><b>{{ r.total|rm }}</b></td>
+    </tr>
+    {% else %}
+    <tr><td colspan="{{ buckets|length + 2 }}" class="empty">Nothing outstanding — all supplier invoices are paid. 🎉</td></tr>
+    {% endfor %}
+    {% if rows %}
+    <tr class="total-row"><td>TOTAL</td>{% for b in buckets %}<td class="num">{{ totals[b]|rm }}</td>{% endfor %}<td class="num">{{ grand|rm }}</td></tr>
+    {% endif %}
+  </table>
+</div>
+
+{% if rows %}
+<div class="panel" style="margin-top:18px">
+  <h2>Detail 明细</h2>
+  <div class="tablewrap" style="box-shadow:none;border:none">
+  <table>
+    <tr><th>Payment</th><th>Date</th><th>Supplier</th><th>Invoice</th><th>Description</th><th>Age</th><th>Status</th><th class="num">Amount</th></tr>
+    {% for name, r in rows.items() %}{% for p, b, age in r['items'] %}
+    <tr>
+      <td class="mono">{{ p.pay_no }}</td>
+      <td>{{ p.date.strftime('%d/%m/%y') }}</td>
+      <td>{{ p.supplier or '—' }}</td>
+      <td class="mono">{{ p.invoice_no }}</td>
+      <td>{{ p.description[:44] }}</td>
+      <td style="{% if age > 60 %}color:var(--red);font-weight:700{% endif %}">{{ age }}d</td>
+      <td><span class="badge {{ p.status.replace(' ','')|lower }}">{{ p.status }}</span></td>
+      <td class="num">{{ p.amount|rm }}</td>
+    </tr>
+    {% endfor %}{% endfor %}
+  </table>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

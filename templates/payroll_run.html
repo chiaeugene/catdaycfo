@@ -41,7 +41,7 @@
   <tr><th>Staff</th><th>Position</th><th class="num">Basic</th><th class="num">Allow.</th>
       <th class="num">OT</th><th class="num">Bonus</th><th class="num">Gross</th>
       <th class="num">EPF Ee</th><th class="num">SOCSO Ee</th><th class="num">EIS Ee</th>
-      <th class="num">Other Ded.</th><th class="num">Net Pay</th><th class="num">Er Cost</th>
+      <th class="num">PCB</th><th class="num">Other Ded.</th><th class="num">Net Pay</th><th class="num">Er Cost</th>
       <th></th></tr>
   {% for i in run.items %}
   <tr>
@@ -55,6 +55,7 @@
     <td class="num">{{ i.epf_ee|rm }}</td>
     <td class="num">{{ i.socso_ee|rm }}</td>
     <td class="num">{{ i.eis_ee|rm }}</td>
+    <td class="num">{{ i.pcb|rm }}</td>
     <td class="num">{{ i.deductions|rm }}</td>
     <td class="num" style="color:var(--green);font-weight:800">{{ i.net|rm }}</td>
     <td class="num" style="color:var(--red)">{{ i.employer_cost|rm }}</td>
@@ -73,6 +74,7 @@
     <td class="num">{{ run.items|sum(attribute='epf_ee')|rm }}</td>
     <td class="num">{{ run.items|sum(attribute='socso_ee')|rm }}</td>
     <td class="num">{{ run.items|sum(attribute='eis_ee')|rm }}</td>
+    <td class="num">{{ run.items|sum(attribute='pcb')|rm }}</td>
     <td class="num">{{ run.items|sum(attribute='deductions')|rm }}</td>
     <td class="num">{{ run.total_net|rm }}</td>
     <td class="num">{{ run.total_cost|rm }}</td>
@@ -93,8 +95,9 @@
         <div><label>Allowance RM</label><input type="number" step="0.01" name="allowance" value="{{ i.allowance }}"></div>
         <div><label>Overtime RM</label><input type="number" step="0.01" name="overtime" value="{{ i.overtime }}"></div>
         <div><label>Bonus RM</label><input type="number" step="0.01" name="bonus" value="{{ i.bonus }}"></div>
+        <div><label>PCB / MTD RM (tax)</label><input type="number" step="0.01" name="pcb" value="{{ i.pcb }}"></div>
         <div><label>Other deductions RM</label><input type="number" step="0.01" name="deductions" value="{{ i.deductions }}"></div>
-        <div><label>Remarks (on payslip)</label><input name="remarks" value="{{ i.remarks }}"></div>
+        <div class="full"><label>Remarks (on payslip)</label><input name="remarks" value="{{ i.remarks }}"></div>
         <div class="full" style="background:var(--blue-bg);color:var(--blue);border-radius:8px;padding:9px 12px;font-size:11.5px;font-weight:600">
           EPF, SOCSO &amp; EIS recalculate automatically from the new gross when you save.
         </div>

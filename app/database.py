@@ -20,6 +20,11 @@ MIGRATIONS = [
     "ALTER TABLE documents ADD COLUMN intake_type VARCHAR(30) DEFAULT 'Document'",
     "ALTER TABLE documents ADD COLUMN payload_json TEXT DEFAULT ''",
     "ALTER TABLE documents ADD COLUMN raw_text TEXT DEFAULT ''",
+    "ALTER TABLE payments ADD COLUMN tax_type VARCHAR(20) DEFAULT 'None'",
+    "ALTER TABLE payments ADD COLUMN tax_amount FLOAT DEFAULT 0",
+    "ALTER TABLE sales ADD COLUMN tax_type VARCHAR(20) DEFAULT 'None'",
+    "ALTER TABLE sales ADD COLUMN tax_amount FLOAT DEFAULT 0",
+    "ALTER TABLE payroll_items ADD COLUMN pcb FLOAT DEFAULT 0",
 ]
 
 

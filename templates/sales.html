@@ -1,6 +1,10 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="pagehead"><h1>Sales Record 销售记录</h1></div>
+{% from "icons.html" import icon %}
+<div class="pagehead">
+  <h1>Sales Record 销售记录</h1>
+  <a class="btn secondary" href="/export/sales.csv">{{ icon('file', 14) }} Export CSV</a>
+</div>
 <div class="sub">Daily takings by revenue stream — {{ month }}</div>
 
 <div class="cards">
@@ -15,10 +19,11 @@
 <div class="panel">
   <h2>Record sale 记录销售</h2>
   <form method="post" action="/sales/new">
-    <div class="formrow cols-sale">
+    <div class="formrow" style="grid-template-columns:120px 140px minmax(150px,1fr) 105px 120px 130px auto">
       <div class="f-date"><label>Date 日期</label><input type="date" name="pdate" value="{{ today }}"></div>
       <div><label>Stream 类型</label><select name="stream">{% for s in M.STREAMS %}<option>{{ s }}</option>{% endfor %}</select></div>
       <div><label>Description 描述</label><input name="description"></div>
+      <div><label>SST 税</label><select name="tax_type">{% for t in M.TAX_TYPES %}<option>{{ t }}</option>{% endfor %}</select></div>
       <div><label>Amount RM 金额</label><input type="number" step="0.01" name="amount" required></div>
       <div><label>Method 方式</label><select name="method">{% for m in M.PAY_METHODS %}<option>{{ m }}</option>{% endfor %}</select></div>
       <div class="f-btn"><button type="submit">＋ Record 记录</button></div>

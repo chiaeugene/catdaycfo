@@ -40,6 +40,9 @@ PL_STATUS = ["Draft", "Submitted", "Processed"]
 STREAMS = ["Boarding", "Grooming", "Cat Sales", "Membership", "Retail", "Other"]
 PAY_METHODS = ["Cash", "Bank Transfer", "Card", "TNG", "Cheque"]
 
+# Malaysian SST — service tax 6%/8% on services; sales tax 10% on goods.
+TAX_TYPES = {"None": 0.0, "SST 6%": 0.06, "SST 8%": 0.08, "Sales Tax 10%": 0.10}
+
 
 class User(Base):
     __tablename__ = "users"
@@ -90,6 +93,8 @@ class Payment(Base):
     category: Mapped[str] = mapped_column(String(50), default="")
     grp: Mapped[str] = mapped_column(String(30), default="")
     amount: Mapped[float] = mapped_column(Float, default=0.0)
+    tax_type: Mapped[str] = mapped_column(String(20), default="None")
+    tax_amount: Mapped[float] = mapped_column(Float, default=0.0)
     month: Mapped[str] = mapped_column(String(20), default="")
     status: Mapped[str] = mapped_column(String(30), default="Unsorted")
     voucher_id: Mapped[int | None] = mapped_column(ForeignKey("vouchers.id"), nullable=True)
@@ -145,6 +150,8 @@ class SalesEntry(Base):
     stream: Mapped[str] = mapped_column(String(30), default="Boarding")
     description: Mapped[str] = mapped_column(Text, default="")
     amount: Mapped[float] = mapped_column(Float, default=0.0)
+    tax_type: Mapped[str] = mapped_column(String(20), default="None")
+    tax_amount: Mapped[float] = mapped_column(Float, default=0.0)
     method: Mapped[str] = mapped_column(String(30), default="Cash")
     month: Mapped[str] = mapped_column(String(20), default="")
     recorded_by: Mapped[str] = mapped_column(String(100), default="")
@@ -218,6 +225,7 @@ class PayrollItem(Base):
     socso_ee: Mapped[float] = mapped_column(Float, default=0.0)
     eis_er: Mapped[float] = mapped_column(Float, default=0.0)
     eis_ee: Mapped[float] = mapped_column(Float, default=0.0)
+    pcb: Mapped[float] = mapped_column(Float, default=0.0)          # monthly tax deduction (MTD)
     deductions: Mapped[float] = mapped_column(Float, default=0.0)   # other deductions
     remarks: Mapped[str] = mapped_column(String(200), default="")
 
@@ -227,7 +235,7 @@ class PayrollItem(Base):
 
     @property
     def net(self):
-        return self.gross - self.epf_ee - self.socso_ee - self.eis_ee - self.deductions
+        return self.gross - self.epf_ee - self.socso_ee - self.eis_ee - self.pcb - self.deductions
 
     @property
     def employer_cost(self):
@@ -252,6 +260,17 @@ class Supplier(Base):
 SUPPLIER_TYPES = ["Supplier", "Contractor", "Service Provider", "Landlord", "Utility"]
 MY_BANKS = ["Maybank", "CIMB Bank", "Public Bank", "RHB Bank", "Hong Leong Bank",
             "AmBank", "Bank Islam", "OCBC Bank", "UOB Bank", "Alliance Bank"]
+
+
+class StatutoryPaid(Base):
+    """Marks a monthly statutory remittance (EPF/SOCSO/EIS/PCB) as paid to the authority."""
+    __tablename__ = "statutory_paid"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    month: Mapped[str] = mapped_column(String(20))     # "Jul 2026"
+    kind: Mapped[str] = mapped_column(String(20))       # EPF / SOCSO / EIS / PCB
+    amount: Mapped[float] = mapped_column(Float, default=0.0)
+    paid_date: Mapped[date] = mapped_column(Date, default=date.today)
+    paid_by: Mapped[str] = mapped_column(String(100), default="")
 
 
 class Setting(Base):

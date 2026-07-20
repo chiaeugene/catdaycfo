@@ -73,7 +73,14 @@
       <label>Petty cash float target 零用金目标 RM</label>
       <input name="PETTY_CASH_FLOAT" value="{{ settings.get('PETTY_CASH_FLOAT','5000') }}" style="width:100%;margin-bottom:12px">
       <label>System passcode 系统通行码</label>
-      <input name="PASSCODE" value="{{ settings.get('PASSCODE','125180') }}" style="width:100%;margin-bottom:14px">
+      <input name="PASSCODE" value="{{ settings.get('PASSCODE','125180') }}" style="width:100%;margin-bottom:12px">
+      <label>SST registered? 是否注册SST</label>
+      <select name="SST_REGISTERED" style="width:100%;margin-bottom:12px">
+        <option value="no" {% if settings.get('SST_REGISTERED')!='yes' %}selected{% endif %}>No — track for reference</option>
+        <option value="yes" {% if settings.get('SST_REGISTERED')=='yes' %}selected{% endif %}>Yes — SST registered</option>
+      </select>
+      <label>SST number SST编号</label>
+      <input name="SST_NUMBER" value="{{ settings.get('SST_NUMBER','') }}" style="width:100%;margin-bottom:14px">
       <button type="submit">Save 保存</button>
     </form>
   </div>
