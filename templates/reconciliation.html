@@ -28,6 +28,22 @@
 </div>
 
 <div class="panel">
+  <h2>Balance proof 余额核对</h2>
+  <div class="tablewrap" style="box-shadow:none;border:none;max-width:420px">
+    <table>
+      <tr><td>Opening balance 期初余额</td><td class="num">{{ opening_balance|rm }}</td></tr>
+      <tr><td>+ Reconciled movements 已核对变动</td><td class="num">{{ reconciled_total|rm }}</td></tr>
+      <tr class="total-row"><td>= Balance per books 账簿余额</td><td class="num">{{ balance_per_books|rm }}</td></tr>
+      <tr><td>+ Unreconciled movements 未核对变动</td><td class="num">{{ unreconciled_total|rm }}</td></tr>
+      <tr class="total-row" style="border-top:3px solid var(--brand-hot)"><td>= Balance per bank statement 银行结单余额</td><td class="num">{{ balance_per_bank|rm }}</td></tr>
+    </table>
+  </div>
+  <div style="font-size:11px;color:var(--muted);margin-top:8px">
+    "Balance per books" only counts statement lines matched to a recorded transaction. If it doesn't equal what your actual bank app shows as of the last imported line, match or investigate the remaining unmatched lines below.
+  </div>
+</div>
+
+<div class="panel">
   <h2>Import statement 导入银行月结单</h2>
   <form method="post" action="/reconciliation/import" enctype="multipart/form-data">
     <input type="hidden" name="account_id" value="{{ acc.id }}">

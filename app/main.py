@@ -942,6 +942,12 @@ def _unmatched_system_txns(db: Session, bank_account_id: int):
         if ("PettyCash", e.id) not in matched:
             out.append({"type": "PettyCash", "id": e.id, "date": e.date, "party": "Petty cash",
                        "desc": f"Top-up · {e.description[:30]}", "amount": -e.amount_in})
+    for run in db.query(M.PayrollRun).filter(M.PayrollRun.status == "Confirmed").all():
+        if ("Payroll", run.id) not in matched:
+            out.append({"type": "Payroll", "id": run.id, "date": run.run_date,
+                       "party": f"{len(run.items)} staff",
+                       "desc": f"Payroll {run.month} · net pay to staff",
+                       "amount": -run.total_net})
     out.sort(key=lambda x: x["date"], reverse=True)
     return out
 
@@ -961,10 +967,14 @@ def reconciliation(request: Request, account: int = 0, db: Session = Depends(get
         unreconciled_total = sum(l.amount for l in all_lines if not l.matched)
         candidates = _unmatched_system_txns(db, acc.id)
     unmatched_count = sum(1 for l in lines if not l.matched)
+    opening_balance = acc.opening_balance if acc else 0.0
+    balance_per_bank = opening_balance + reconciled_total + unreconciled_total
+    balance_per_books = opening_balance + reconciled_total
     return render(request, db, "reconciliation.html", "reconciliation",
                   accounts=accounts, acc=acc, lines=lines, candidates=candidates,
                   reconciled_total=reconciled_total, unreconciled_total=unreconciled_total,
-                  unmatched_count=unmatched_count)
+                  unmatched_count=unmatched_count, opening_balance=opening_balance,
+                  balance_per_bank=balance_per_bank, balance_per_books=balance_per_books)
 
 
 @app.post("/reconciliation/account/new")
@@ -1134,19 +1144,22 @@ def general_ledger(request: Request, q: str = "", frm: str = "", to: str = "",
             if in_range(s.date) and match(s.stream, s.description, s.method):
                 entries.append({"date": s.date, "code": s.stream, "type": "Sale",
                                 "party": s.stream, "desc": s.description,
-                                "cin": s.amount, "cout": 0, "link": "/sales"})
+                                "cin": s.amount, "cout": 0, "link": "/sales",
+                                "match_key": ("Sale", s.id)})
     if kind in ("", "Petty Cash"):
         for e in db.query(M.PettyCashEntry).all():
             if in_range(e.date) and match(e.description, e.category, e.recorded_by):
                 entries.append({"date": e.date, "code": "PC", "type": "Petty Cash",
                                 "party": e.recorded_by, "desc": e.description,
-                                "cin": e.amount_in, "cout": e.amount_out, "link": "/pettycash"})
+                                "cin": e.amount_in, "cout": e.amount_out, "link": "/pettycash",
+                                "match_key": ("PettyCash", e.id)})
     if kind in ("", "Voucher"):
         for v in db.query(M.Voucher).all():
             if in_range(v.date) and match(v.pv_no, v.payee, v.status):
                 entries.append({"date": v.date, "code": v.pv_no, "type": "Voucher",
                                 "party": v.payee, "desc": f"Voucher · {v.status}",
-                                "cin": 0, "cout": v.total, "link": "/vouchers"})
+                                "cin": 0, "cout": v.total, "link": "/vouchers",
+                                "match_key": ("Voucher", v.id)})
     if kind in ("", "Listing"):
         for l in db.query(M.Listing).all():
             if in_range(l.date) and match(l.pl_no, l.status):
@@ -1163,7 +1176,14 @@ def general_ledger(request: Request, q: str = "", frm: str = "", to: str = "",
                 if in_range(rd):
                     entries.append({"date": rd, "code": f"PAYROLL-{run.month}", "type": "Payroll",
                                     "party": f"{len(run.items)} staff", "desc": f"Payroll {run.month}",
-                                    "cin": 0, "cout": run.total_cost, "link": f"/payroll/run/{run.id}"})
+                                    "cin": 0, "cout": run.total_cost, "link": f"/payroll/run/{run.id}",
+                                    "match_key": ("Payroll", run.id)})
+
+    matched_keys = {(l.matched_type, l.matched_id) for l in
+                    db.query(M.BankStatementLine).filter(M.BankStatementLine.matched == True).all()}  # noqa: E712
+    for e in entries:
+        key = e.pop("match_key", None)
+        e["reconciled"] = (key in matched_keys) if key else None
 
     entries.sort(key=lambda e: (e["date"], e["code"]), reverse=True)
     total_in = sum(e["cin"] for e in entries)
@@ -1362,17 +1382,33 @@ def pnl(request: Request, month: str = "", db: Session = Depends(get_db)):
         for p in pays:
             if p.grp == group:
                 out.setdefault(p.category or "Uncategorized", []).append(p)
-        return {k: (sum(x.amount for x in v), v) for k, v in sorted(out.items())}
+        return out
 
-    cogs = by_cat("COGS")
-    opex = by_cat("OPEX")
-    capex = by_cat("CAPEX")
-    other = {}
+    cogs_raw = by_cat("COGS")
+    opex_raw = by_cat("OPEX")
+    capex_raw = by_cat("CAPEX")
+    other_raw = {}
     for p in pays:
         if p.grp not in ("COGS", "OPEX", "CAPEX", "Payroll"):
-            other.setdefault(p.category or "Uncategorized", []).append(p)
-    other = {k: (sum(x.amount for x in v), v) for k, v in sorted(other.items())}
+            other_raw.setdefault(p.category or "Uncategorized", []).append(p)
 
+    # Petty cash spend rolls into the SAME categories as supplier purchases —
+    # otherwise identical cat-food spend shows in a different P&L bucket
+    # depending on whether it was paid by invoice or petty cash.
+    from types import SimpleNamespace
+    for e in db.query(M.PettyCashEntry).filter(M.PettyCashEntry.month == mo,
+                                               M.PettyCashEntry.amount_out > 0).all():
+        cat = e.category or "Uncategorized"
+        grp = M.group_for(cat)
+        row = SimpleNamespace(pay_no="PC", supplier=e.recorded_by,
+                              description=f"Petty cash: {e.description}", amount=e.amount_out)
+        target = cogs_raw if grp == "COGS" else capex_raw if grp == "CAPEX" else opex_raw
+        target.setdefault(cat, []).append(row)
+
+    def finalize(raw):
+        return {k: (sum(x.amount for x in v), v) for k, v in sorted(raw.items())}
+
+    cogs, opex, capex, other = finalize(cogs_raw), finalize(opex_raw), finalize(capex_raw), finalize(other_raw)
     total_cogs = sum(a for a, _ in cogs.values())
     total_opex = sum(a for a, _ in opex.values())
     total_capex = sum(a for a, _ in capex.values())
@@ -1382,19 +1418,15 @@ def pnl(request: Request, month: str = "", db: Session = Depends(get_db)):
     payroll_total = db.query(func.coalesce(func.sum(M.PayrollRun.total_cost), 0)) \
         .filter(M.PayrollRun.month == mo, M.PayrollRun.status == "Confirmed").scalar()
 
-    # Petty cash usage in month
-    petty_out = db.query(func.coalesce(func.sum(M.PettyCashEntry.amount_out), 0)) \
-        .filter(M.PettyCashEntry.month == mo).scalar()
-
     gross_profit = total_rev - total_cogs
-    total_operating = total_opex + total_other + payroll_total + petty_out
+    total_operating = total_opex + total_other + payroll_total
     net = gross_profit - total_operating
 
     return render(request, db, "pnl.html", "pnl", month=mo, months=months,
                   revenue=revenue, total_rev=total_rev,
                   cogs=cogs, total_cogs=total_cogs, gross_profit=gross_profit,
                   opex=opex, total_opex=total_opex, other=other, total_other=total_other,
-                  payroll_total=payroll_total, petty_out=petty_out,
+                  payroll_total=payroll_total,
                   total_operating=total_operating, net=net,
                   capex=capex, total_capex=total_capex)
 

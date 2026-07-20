@@ -27,7 +27,7 @@
 <div class="tablewrap">
   <table>
     <tr><th>Date</th><th>Code</th><th>Type</th><th>Party</th><th>Description</th>
-        <th class="num">In</th><th class="num">Out</th><th></th></tr>
+        <th class="num">In</th><th class="num">Out</th><th>Bank</th><th></th></tr>
     {% for e in entries %}
     <tr>
       <td>{{ e.date.strftime('%d/%m/%y') }}</td>
@@ -37,10 +37,19 @@
       <td>{{ e.desc[:52] }}</td>
       <td class="num" style="color:var(--green)">{{ e.cin|rm if e.cin else '' }}</td>
       <td class="num" style="color:var(--red)">{{ e.cout|rm if e.cout else '' }}</td>
+      <td>
+        {% if e.reconciled is none %}
+        <span class="badge" style="opacity:.4">N/A</span>
+        {% elif e.reconciled %}
+        <span class="badge paid">Reconciled</span>
+        {% else %}
+        <span class="badge pending">Unreconciled</span>
+        {% endif %}
+      </td>
       <td><a href="{{ e.link }}" style="font-size:11px">open →</a></td>
     </tr>
     {% else %}
-    <tr><td colspan="8" class="empty">No transactions match your search.</td></tr>
+    <tr><td colspan="9" class="empty">No transactions match your search.</td></tr>
     {% endfor %}
   </table>
 </div>
