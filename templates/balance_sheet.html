@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block content %}
+<div class="pagehead"><h1>Balance Sheet 资产负债表</h1></div>
+<div class="sub">Financial position as at a date: what the company owns, owes, and the owners' stake. Current-period profit is folded into equity as Current Earnings.</div>
+
+{% if not has_opening %}
+<div class="panel" style="background:var(--amber-bg);border-color:var(--amber)">
+  <div style="font-size:12.5px;color:var(--amber);font-weight:600">
+    ⚠️ No opening balances loaded yet — this sheet only reflects activity recorded in the system.
+    Load opening balances (bank, capital, pre-opening spend) on the
+    <a href="/accounting/coa">Chart of Accounts</a> page for a complete position.
+  </div>
+</div>
+{% endif %}
+
+<div class="panel">
+  <form method="get" action="/reports/balance-sheet">
+    <div class="formrow" style="grid-template-columns:170px auto">
+      <div><label>As at 截至</label><input type="date" name="as_of" value="{{ as_of.isoformat() }}"></div>
+      <div class="f-btn"><button type="submit">{{ icon('eye', 14) }} View</button></div>
+    </div>
+  </form>
+</div>
+
+<div class="cards">
+  <div class="card blue"><div class="label">Total Assets 总资产</div><div class="value">RM {{ bs.total_assets|rm }}</div></div>
+  <div class="card amber"><div class="label">Total Liabilities 总负债</div><div class="value">RM {{ bs.total_liabilities|rm }}</div></div>
+  <div class="card green"><div class="label">Total Equity 总权益</div><div class="value">RM {{ bs.total_equity|rm }}</div></div>
+  <div class="card {% if bs.balanced %}green{% else %}red{% endif %}">
+    <div class="label">A = L + E</div>
+    <div class="value" style="font-size:18px">{{ '✓ Balanced' if bs.balanced else '✗ Off balance' }}</div>
+  </div>
+</div>
+
+<div class="tablewrap" style="max-width:760px">
+<table>
+  <tr class="section-row"><td>ASSETS 资产</td><td class="num"></td></tr>
+  {% for acc, bal in bs.assets %}
+  <tr><td style="padding-left:28px"><a href="/accounting/ledger/{{ acc.id }}">{{ acc.code }} · {{ acc.name }}</a></td>
+      <td class="num">{{ bal|rm }}</td></tr>
+  {% else %}
+  <tr><td style="padding-left:28px;color:var(--muted)">No asset balances</td><td class="num">0.00</td></tr>
+  {% endfor %}
+  <tr class="total-row"><td>Total Assets 总资产</td><td class="num">{{ bs.total_assets|rm }}</td></tr>
+
+  <tr class="section-row"><td>LIABILITIES 负债</td><td class="num"></td></tr>
+  {% for acc, bal in bs.liabilities %}
+  <tr><td style="padding-left:28px"><a href="/accounting/ledger/{{ acc.id }}">{{ acc.code }} · {{ acc.name }}</a></td>
+      <td class="num">{{ bal|rm }}</td></tr>
+  {% else %}
+  <tr><td style="padding-left:28px;color:var(--muted)">No liability balances</td><td class="num">0.00</td></tr>
+  {% endfor %}
+  <tr class="total-row"><td>Total Liabilities 总负债</td><td class="num">{{ bs.total_liabilities|rm }}</td></tr>
+
+  <tr class="section-row"><td>EQUITY 权益</td><td class="num"></td></tr>
+  {% for acc, bal in bs.equity %}
+  <tr><td style="padding-left:28px">{{ acc.code }} · {{ acc.name }}</td><td class="num">{{ bal|rm }}</td></tr>
+  {% endfor %}
+  <tr><td style="padding-left:28px">Current Earnings 本期损益</td><td class="num">{{ bs.earnings|rm }}</td></tr>
+  <tr class="total-row"><td>Total Equity 总权益</td><td class="num">{{ bs.total_equity|rm }}</td></tr>
+
+  <tr class="total-row" style="border-top:3px solid var(--brand-hot)">
+    <td>LIABILITIES + EQUITY 负债+权益</td>
+    <td class="num">{{ (bs.total_liabilities + bs.total_equity)|rm }}</td></tr>
+</table>
+</div>
+{% endblock %}

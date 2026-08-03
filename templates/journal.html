@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block content %}
+<div class="pagehead">
+  <h1>Journal 日记账</h1>
+  <div class="actions">
+    <button class="secondary" onclick="document.getElementById('dlg-mje').showModal()">＋ Manual entry</button>
+    <form method="post" action="/accounting/rebuild" class="inline"
+          onsubmit="return confirm('Rebuild all auto entries from source records? Manual entries are kept.')">
+      <button class="ghost" type="submit">↻ Rebuild ledger</button>
+    </form>
+  </div>
+</div>
+<div class="sub">Every double-entry posting. Auto entries are derived from payments, vouchers, sales, petty cash, payroll and statutory records — they update themselves and can't be edited here (fix the source record instead). Manual entries and opening balances persist.</div>
+
+<div class="filters">
+  <a href="/accounting/journal" class="{% if not src and not month %}on{% endif %}">All</a>
+  {% for s in sources %}
+  <a href="/accounting/journal?src={{ s }}" class="{% if src == s %}on{% endif %}">{{ s }}</a>
+  {% endfor %}
+  {% for m in months %}
+  <a href="/accounting/journal?month={{ m }}" class="{% if month == m %}on{% endif %}">{{ m }}</a>
+  {% endfor %}
+</div>
+
+{% for je in entries %}
+<div class="panel" style="padding:16px 20px;margin-bottom:10px">
+  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+    <b class="mono">{{ je.ref or ('JE#' ~ je.id) }}</b>
+    <span class="badge {{ 'paid' if je.is_manual else 'draft' }}">{{ je.source_type }}{% if je.event and je.event != 'post' %} · {{ je.event }}{% endif %}</span>
+    <span style="color:var(--muted);font-size:12px">{{ je.date.strftime('%d/%m/%y') }} · {{ je.memo[:80] }}</span>
+    {% if je.is_manual %}
+    <form method="post" action="/accounting/journal/{{ je.id }}/delete" class="inline" style="margin-left:auto"
+          onsubmit="return confirm('Delete this manual entry?')">
+      <button class="small danger" type="submit">Delete</button>
+    </form>
+    {% endif %}
+  </div>
+  <div class="tablewrap" style="box-shadow:none;border:none">
+  <table>
+    <tr><th>Account</th><th>Description</th><th class="num">Debit</th><th class="num">Credit</th></tr>
+    {% for l in je.lines %}
+    <tr>
+      <td><span class="mono">{{ l.account.code }}</span> {{ l.account.name }}</td>
+      <td style="color:var(--muted)">{{ l.description }}</td>
+      <td class="num">{{ l.debit|rm if l.debit else '' }}</td>
+      <td class="num">{{ l.credit|rm if l.credit else '' }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div>
+</div>
+{% else %}
+<div class="panel empty">No journal entries match — record activity in the system, or add a manual entry.</div>
+{% endfor %}
+{% if entries|length == 300 %}<div class="sub">Showing latest 300 — filter to narrow.</div>{% endif %}
+
+<dialog id="dlg-mje" style="max-width:720px">
+  <form method="post" action="/accounting/journal/manual">
+    <div class="dlg-head"><b>＋ Manual journal entry</b>
+      <button type="button" class="x" onclick="this.closest('dialog').close()">✕</button></div>
+    <div class="dlg-body">
+      <div class="dlg-grid">
+        <div><label>Date 日期</label><input type="date" name="date" value="{{ today.isoformat() }}" required></div>
+        <div><label>Memo 备注</label><input name="memo" placeholder="e.g. Adjustment — accrued rent" required></div>
+      </div>
+      <div style="margin-top:12px">
+        {% for i in range(1, 7) %}
+        <div class="dlg-grid" style="grid-template-columns:2fr 1fr 1fr 1.4fr;margin-bottom:8px">
+          <select name="acc{{ i }}">
+            <option value="">— account —</option>
+            {% for a in accounts %}<option value="{{ a.id }}">{{ a.code }} · {{ a.name }}</option>{% endfor %}
+          </select>
+          <input name="dr{{ i }}" type="number" step="0.01" min="0" placeholder="Debit">
+          <input name="cr{{ i }}" type="number" step="0.01" min="0" placeholder="Credit">
+          <input name="desc{{ i }}" placeholder="Line description">
+        </div>
+        {% endfor %}
+      </div>
+      <div style="font-size:11px;color:var(--muted)">Debits must equal credits or the entry is rejected.</div>
+    </div>
+    <div class="dlg-foot">
+      <button type="button" class="ghost" onclick="this.closest('dialog').close()">Cancel</button>
+      <button type="submit">{{ icon('save', 14) }} Post entry</button>
+    </div>
+  </form>
+</dialog>
+{% endblock %}

@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block content %}
+<div class="pagehead">
+  <h1>Chart of Accounts 会计科目表</h1>
+  <button class="secondary" onclick="document.getElementById('dlg-newacc').showModal()">＋ New account</button>
+</div>
+<div class="sub">The account structure behind the double-entry ledger. System accounts (seeded) are used by the automatic posting rules and can't be deactivated. Load opening balances below when going live.</div>
+
+<div class="tablewrap" style="max-width:820px">
+  <table>
+    <tr><th>Code</th><th>Account</th><th>Type</th><th>System</th><th>Status</th><th></th></tr>
+    {% for a in accounts %}
+    <tr {% if not a.active %}style="opacity:.45"{% endif %}>
+      <td class="mono"><b>{{ a.code }}</b></td>
+      <td><a href="/accounting/ledger/{{ a.id }}">{{ a.name }}</a></td>
+      <td><span class="badge draft">{{ a.type }}</span></td>
+      <td>{{ '⚙' if a.is_system else '' }}</td>
+      <td>{{ '✓' if a.active else '—' }}</td>
+      <td>
+        {% if not a.is_system %}
+        <form method="post" action="/accounting/coa/{{ a.id }}/toggle" class="inline">
+          <button class="small secondary" type="submit">{{ 'Deactivate' if a.active else 'Activate' }}</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+
+<div class="panel" style="margin-top:22px">
+  <h2>Opening balances 期初余额</h2>
+  <div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">
+    Enter the position as at your go-live date — bank balances, deposits paid, assets already bought,
+    amounts still owed, and capital injected. Any difference is automatically plugged to
+    <b>3900 Opening Balance Equity</b>. Saving replaces the previous opening entry.
+    {% if opening %}<br><b style="color:var(--green)">Opening entry loaded:</b> {{ opening.date.strftime('%d/%m/%Y') }} · {{ opening.lines|length }} lines.{% endif %}
+  </div>
+  <form method="post" action="/accounting/opening">
+    <div class="formrow" style="grid-template-columns:170px auto;margin-bottom:14px">
+      <div><label>As at date 截至</label><input type="date" name="date" value="{{ today.isoformat() }}" required></div>
+      <div></div>
+    </div>
+    <div class="dlg-grid" style="grid-template-columns:1fr 1fr">
+      {% for a in bs_accounts %}
+      <div>
+        <label>{{ a.code }} · {{ a.name }} ({{ a.type }})</label>
+        <input name="amount_{{ a.id }}" type="number" step="0.01" placeholder="0.00">
+      </div>
+      {% endfor %}
+    </div>
+    <div style="font-size:11px;color:var(--muted);margin:10px 0">
+      Positive = the account's natural side (Assets debit; Liabilities/Equity credit).
+      Enter Accumulated Depreciation as a negative number.
+    </div>
+    <button type="submit">{{ icon('save', 14) }} Save opening balances</button>
+  </form>
+</div>
+
+<dialog id="dlg-newacc">
+  <form method="post" action="/accounting/coa/new">
+    <div class="dlg-head"><b>＋ New account</b>
+      <button type="button" class="x" onclick="this.closest('dialog').close()">✕</button></div>
+    <div class="dlg-body">
+      <div class="dlg-grid">
+        <div><label>Code 编号</label><input name="code" required placeholder="e.g. 6120"></div>
+        <div><label>Type 类型</label>
+          <select name="acc_type">
+            {% for t in M.ACCOUNT_TYPES %}<option>{{ t }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="full"><label>Name 名称</label><input name="name" required placeholder="e.g. Licences & Permits"></div>
+      </div>
+    </div>
+    <div class="dlg-foot">
+      <button type="button" class="ghost" onclick="this.closest('dialog').close()">Cancel</button>
+      <button type="submit">Create 创建</button>
+    </div>
+  </form>
+</dialog>
+{% endblock %}

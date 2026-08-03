@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block content %}
+<div class="pagehead"><h1>Trial Balance 试算表</h1></div>
+<div class="sub">Every account's net balance from the double-entry journal — debits must equal credits. Click an account to see its ledger. Auto-derived from payments, sales, petty cash, payroll and statutory records.</div>
+
+<div class="panel">
+  <form method="get" action="/reports/trial-balance">
+    <div class="formrow" style="grid-template-columns:170px auto">
+      <div><label>As of 截至</label><input type="date" name="as_of" value="{{ as_of.isoformat() }}"></div>
+      <div class="f-btn"><button type="submit">{{ icon('eye', 14) }} View</button></div>
+    </div>
+  </form>
+</div>
+
+<div class="cards">
+  <div class="card"><div class="label">Total Debits 借方</div><div class="value">RM {{ tot_dr|rm }}</div></div>
+  <div class="card"><div class="label">Total Credits 贷方</div><div class="value">RM {{ tot_cr|rm }}</div></div>
+  <div class="card {% if (tot_dr - tot_cr)|abs < 0.01 %}green{% else %}red{% endif %}">
+    <div class="label">In Balance 平衡</div>
+    <div class="value" style="font-size:18px">{{ '✓ Balanced' if (tot_dr - tot_cr)|abs < 0.01 else '✗ OUT BY RM %.2f'|format((tot_dr - tot_cr)|abs) }}</div>
+  </div>
+</div>
+
+<div class="tablewrap" style="max-width:860px">
+  <table>
+    <tr><th>Code</th><th>Account</th><th>Type</th><th class="num">Debit</th><th class="num">Credit</th></tr>
+    {% for r in rows %}
+    <tr>
+      <td class="mono"><b>{{ r.account.code }}</b></td>
+      <td><a href="/accounting/ledger/{{ r.account.id }}">{{ r.account.name }}</a></td>
+      <td><span class="badge draft">{{ r.account.type }}</span></td>
+      <td class="num">{{ r.bal_dr|rm if r.bal_dr else '' }}</td>
+      <td class="num">{{ r.bal_cr|rm if r.bal_cr else '' }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="5" class="empty">No journal entries yet — record activity or load opening balances via Chart of Accounts.</td></tr>
+    {% endfor %}
+    {% if rows %}
+    <tr class="total-row"><td></td><td>TOTAL</td><td></td>
+      <td class="num">{{ tot_dr|rm }}</td><td class="num">{{ tot_cr|rm }}</td></tr>
+    {% endif %}
+  </table>
+</div>
+{% endblock %}

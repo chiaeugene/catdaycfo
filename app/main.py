@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from .database import Base, engine, get_db, run_migrations
 from . import models as M
 from .auth import hash_password, verify_password, current_user
-from . import telegram_bot, pdfgen, claude_ai
+from . import telegram_bot, pdfgen, claude_ai, ledger
 from .statutory import calc_statutory
 
 Base.metadata.create_all(engine)
@@ -69,6 +69,12 @@ NAV_GROUPS = [
         ("tax", "/reports/tax", "receipt", "SST / Tax", ("admin", "manager")),
         ("reconciliation", "/reconciliation", "banknote", "Bank Reconciliation", ("admin", "manager")),
         ("einvoice", "/reports/einvoice-readiness", "receipt", "e-Invoice Readiness", ("admin",)),
+    ]),
+    ("Accounting 账务", [
+        ("tb", "/reports/trial-balance", "list", "Trial Balance", ("admin",)),
+        ("bs", "/reports/balance-sheet", "chart", "Balance Sheet", ("admin",)),
+        ("journal", "/accounting/journal", "receipt", "Journal", ("admin",)),
+        ("coa", "/accounting/coa", "settings", "Chart of Accounts", ("admin",)),
     ]),
     ("Setup", [
         ("settings", "/settings", "settings", "Settings", ("admin",)),
@@ -1109,6 +1115,191 @@ def supplier_update_tin(sid: int, request: Request, tin: str = Form(""), brn: st
         s.tin, s.brn = tin.strip(), brn.strip()
         db.commit()
     return RedirectResponse("/reports/einvoice-readiness", status_code=302)
+
+
+# ─────────────────────────── DOUBLE-ENTRY ACCOUNTING ───────────────────────────
+@app.get("/reports/trial-balance", response_class=HTMLResponse)
+def trial_balance_page(request: Request, as_of: str = "", db: Session = Depends(get_db)):
+    d = parse_date(as_of) if as_of else date.today()
+    rows, tot_dr, tot_cr = ledger.trial_balance(db, d)
+    return render(request, db, "trial_balance.html", "tb",
+                  rows=rows, tot_dr=tot_dr, tot_cr=tot_cr, as_of=d)
+
+
+@app.get("/reports/balance-sheet", response_class=HTMLResponse)
+def balance_sheet_page(request: Request, as_of: str = "", db: Session = Depends(get_db)):
+    d = parse_date(as_of) if as_of else date.today()
+    bs = ledger.balance_sheet(db, d)
+    has_opening = db.query(M.JournalEntry).filter(
+        M.JournalEntry.source_type == "Opening").count() > 0
+    return render(request, db, "balance_sheet.html", "bs", bs=bs, as_of=d,
+                  has_opening=has_opening)
+
+
+@app.get("/accounting/journal", response_class=HTMLResponse)
+def journal_page(request: Request, src: str = "", month: str = "",
+                 db: Session = Depends(get_db)):
+    ledger.sync_ledger(db)
+    q = db.query(M.JournalEntry)
+    if src:
+        q = q.filter(M.JournalEntry.source_type == src)
+    if month:
+        q = q.filter(M.JournalEntry.month == month)
+    entries = q.order_by(M.JournalEntry.date.desc(), M.JournalEntry.id.desc()).limit(300).all()
+    months = sorted({m for (m,) in db.query(M.JournalEntry.month).distinct().all() if m})
+    sources = [s for (s,) in db.query(M.JournalEntry.source_type).distinct().all()]
+    accounts = db.query(M.Account).filter(M.Account.active == True).order_by(M.Account.code).all()  # noqa: E712
+    return render(request, db, "journal.html", "journal", entries=entries,
+                  months=months, sources=sources, src=src, month=month, accounts=accounts)
+
+
+@app.post("/accounting/journal/manual")
+async def journal_manual(request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user or user.role != "admin":
+        return RedirectResponse("/", status_code=302)
+    form = await request.form()
+    entry_date = parse_date(form.get("date", "")) or date.today()
+    memo = (form.get("memo") or "Manual journal").strip()
+    lines = []
+    for i in range(1, 7):
+        aid = form.get(f"acc{i}")
+        if not aid:
+            continue
+        try:
+            lines.append((int(aid), float(form.get(f"dr{i}") or 0),
+                          float(form.get(f"cr{i}") or 0), form.get(f"desc{i}") or ""))
+        except ValueError:
+            continue
+    try:
+        n = telegram_bot.next_counter(db, "MJE", "MJE-")
+        ledger.post_manual(db, entry_date, memo, lines, user.display_name, ref=n)
+    except ValueError:
+        pass  # unbalanced/empty — silently ignored; page shows nothing posted
+    return RedirectResponse("/accounting/journal", status_code=302)
+
+
+@app.post("/accounting/journal/{jid}/delete")
+def journal_delete(jid: int, request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user or user.role != "admin":
+        return RedirectResponse("/", status_code=302)
+    je = db.get(M.JournalEntry, jid)
+    if je and je.source_type in ("Manual", "Opening"):   # auto entries are derived — not deletable
+        db.delete(je)
+        db.commit()
+    return RedirectResponse("/accounting/journal", status_code=302)
+
+
+@app.post("/accounting/rebuild")
+def ledger_rebuild(request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user or user.role != "admin":
+        return RedirectResponse("/", status_code=302)
+    ledger.rebuild_ledger(db)
+    return RedirectResponse("/accounting/journal", status_code=302)
+
+
+@app.get("/accounting/ledger/{account_id}", response_class=HTMLResponse)
+def account_ledger(account_id: int, request: Request, db: Session = Depends(get_db)):
+    ledger.sync_ledger(db)
+    acc = db.get(M.Account, account_id)
+    if not acc:
+        return RedirectResponse("/reports/trial-balance", status_code=302)
+    lines = db.query(M.JournalLine).join(M.JournalEntry).filter(
+        M.JournalLine.account_id == account_id).order_by(
+        M.JournalEntry.date, M.JournalEntry.id).all()
+    running = 0.0
+    rows = []
+    for l in lines:
+        running += l.debit - l.credit
+        rows.append({"line": l, "entry": l.entry, "balance": round(running, 2)})
+    return render(request, db, "account_ledger.html", "tb", acc=acc, rows=rows)
+
+
+@app.get("/accounting/coa", response_class=HTMLResponse)
+def coa_page(request: Request, db: Session = Depends(get_db)):
+    ledger.seed_coa(db)
+    accounts = db.query(M.Account).order_by(M.Account.code).all()
+    # balance-sheet accounts for the opening-balance form
+    bs_accounts = [a for a in accounts if a.active and a.type in ("Asset", "Liability", "Equity")
+                   and a.code != "3900"]
+    opening = db.query(M.JournalEntry).filter(M.JournalEntry.source_type == "Opening").first()
+    return render(request, db, "chart_of_accounts.html", "coa",
+                  accounts=accounts, bs_accounts=bs_accounts, opening=opening)
+
+
+@app.post("/accounting/coa/new")
+def coa_new(request: Request, code: str = Form(...), name: str = Form(...),
+            acc_type: str = Form(...), db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user or user.role != "admin":
+        return RedirectResponse("/", status_code=302)
+    code = code.strip()
+    if code and name.strip() and acc_type in M.ACCOUNT_TYPES and \
+            not db.query(M.Account).filter(M.Account.code == code).first():
+        db.add(M.Account(code=code, name=name.strip(), type=acc_type))
+        db.commit()
+    return RedirectResponse("/accounting/coa", status_code=302)
+
+
+@app.post("/accounting/coa/{aid}/toggle")
+def coa_toggle(aid: int, request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user or user.role != "admin":
+        return RedirectResponse("/", status_code=302)
+    acc = db.get(M.Account, aid)
+    if acc and not acc.is_system:
+        acc.active = not acc.active
+        db.commit()
+    return RedirectResponse("/accounting/coa", status_code=302)
+
+
+@app.post("/accounting/opening")
+async def opening_balances(request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user or user.role != "admin":
+        return RedirectResponse("/", status_code=302)
+    form = await request.form()
+    entry_date = parse_date(form.get("date", "")) or date.today()
+    lines = []
+    total_dr = total_cr = 0.0
+    for acc in db.query(M.Account).filter(M.Account.active == True).all():  # noqa: E712
+        raw = form.get(f"amount_{acc.id}")
+        if not raw:
+            continue
+        try:
+            amt = float(raw)
+        except ValueError:
+            continue
+        if abs(amt) < 0.005:
+            continue
+        # Positive amount posts to the account's natural side; negative flips
+        # (e.g. Accumulated Depreciation entered as negative under Assets).
+        if acc.type == "Asset":
+            dr, cr = (amt, 0) if amt > 0 else (0, -amt)
+        else:
+            dr, cr = (0, amt) if amt > 0 else (-amt, 0)
+        lines.append((acc.id, dr, cr, "Opening balance"))
+        total_dr += dr
+        total_cr += cr
+    diff = round(total_dr - total_cr, 2)
+    if abs(diff) > 0.005:   # plug the difference to Opening Balance Equity
+        obe = db.query(M.Account).filter(M.Account.code == "3900").first()
+        if obe:
+            lines.append((obe.id, 0 if diff > 0 else -diff, diff if diff > 0 else 0,
+                          "Opening balance equity (plug)"))
+    if lines:
+        # replace any previous opening entry
+        for je in db.query(M.JournalEntry).filter(M.JournalEntry.source_type == "Opening").all():
+            db.delete(je)
+        db.commit()
+        try:
+            ledger.post_manual(db, entry_date, "Opening balances", lines,
+                               user.display_name, source_type="Opening", ref="OPENING")
+        except ValueError:
+            pass
+    return RedirectResponse("/accounting/coa", status_code=302)
 
 
 # ─────────────────────────── GENERAL LEDGER ───────────────────────────

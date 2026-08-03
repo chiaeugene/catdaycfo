@@ -351,6 +351,114 @@ class StatutoryPaid(Base):
     paid_by: Mapped[str] = mapped_column(String(100), default="")
 
 
+ACCOUNT_TYPES = ["Asset", "Liability", "Equity", "Income", "COGS", "Expense"]
+
+# Seed Chart of Accounts — Malaysian SME style. code, name, type.
+COA_SEED = [
+    ("1010", "Cash on Hand", "Asset"),
+    ("1020", "Bank", "Asset"),
+    ("1030", "Petty Cash", "Asset"),
+    ("1100", "Accounts Receivable", "Asset"),
+    ("1200", "Inventory / Stock", "Asset"),
+    ("1300", "Deposits & Prepayments", "Asset"),
+    ("1600", "Fixed Assets — Renovation", "Asset"),
+    ("1610", "Fixed Assets — Equipment", "Asset"),
+    ("1690", "Accumulated Depreciation", "Asset"),
+    ("2100", "Accounts Payable", "Liability"),
+    ("2210", "EPF Payable", "Liability"),
+    ("2220", "SOCSO Payable", "Liability"),
+    ("2230", "EIS Payable", "Liability"),
+    ("2240", "PCB Payable", "Liability"),
+    ("2250", "Other Payroll Deductions Payable", "Liability"),
+    ("2300", "SST Payable", "Liability"),
+    ("2400", "Deferred Revenue", "Liability"),
+    ("3100", "Owner's Capital", "Equity"),
+    ("3200", "Retained Earnings", "Equity"),
+    ("3900", "Opening Balance Equity", "Equity"),
+    ("4010", "Boarding Revenue", "Income"),
+    ("4020", "Grooming Revenue", "Income"),
+    ("4030", "Cat Sales Revenue", "Income"),
+    ("4040", "Membership Revenue", "Income"),
+    ("4050", "Retail Revenue", "Income"),
+    ("4090", "Other Income", "Income"),
+    ("5010", "Cat Supplies", "COGS"),
+    ("5020", "Grooming Supplies", "COGS"),
+    ("5030", "Vet & Medical", "COGS"),
+    ("6010", "Rental", "Expense"),
+    ("6020", "Utilities", "Expense"),
+    ("6030", "Marketing", "Expense"),
+    ("6040", "Insurance", "Expense"),
+    ("6050", "Software & Subscriptions", "Expense"),
+    ("6060", "Transport", "Expense"),
+    ("6070", "Admin & Office", "Expense"),
+    ("6080", "Repairs & Maintenance", "Expense"),
+    ("6090", "Staff Welfare", "Expense"),
+    ("6100", "Staff Claims", "Expense"),
+    ("6110", "Miscellaneous", "Expense"),
+    ("6200", "Salaries & Wages", "Expense"),
+    ("6210", "Employer Statutory (EPF/SOCSO/EIS)", "Expense"),
+    ("6900", "Depreciation", "Expense"),
+]
+
+# Payment/petty-cash category → account code
+CATEGORY_ACCOUNT = {
+    "Renovation": "1600", "Equipment": "1610",
+    "Cat Supplies": "5010", "Grooming Supplies": "5020", "Vet": "5030",
+    "Rental": "6010", "Utilities": "6020", "Marketing": "6030", "Insurance": "6040",
+    "Software": "6050", "Transport": "6060", "Admin": "6070", "Maintenance": "6080",
+    "Staff Welfare": "6090", "Staff Claim": "6100", "Misc": "6110", "Salary": "6200",
+}
+# Sales stream → income account code
+STREAM_ACCOUNT = {
+    "Boarding": "4010", "Grooming": "4020", "Cat Sales": "4030",
+    "Membership": "4040", "Retail": "4050", "Other": "4090",
+}
+
+
+class Account(Base):
+    """Chart of Accounts."""
+    __tablename__ = "accounts"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str] = mapped_column(String(10), unique=True)
+    name: Mapped[str] = mapped_column(String(120))
+    type: Mapped[str] = mapped_column(String(20))            # Asset/Liability/Equity/Income/COGS/Expense
+    is_system: Mapped[bool] = mapped_column(Boolean, default=False)  # seeded; posting rules depend on it
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class JournalEntry(Base):
+    """One balanced double-entry posting. Auto entries are DERIVED from source
+    records by app/ledger.py (idempotent, rebuildable); manual entries
+    (opening balances, adjustments) persist."""
+    __tablename__ = "journal_entries"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    date: Mapped[date] = mapped_column(Date, default=date.today)
+    ref: Mapped[str] = mapped_column(String(30), default="")     # PAY-0009 / PV-0001 / MJE-0001…
+    memo: Mapped[str] = mapped_column(Text, default="")
+    source_type: Mapped[str] = mapped_column(String(30), default="Manual")  # Payment/Voucher/Sale/PettyCash/Payroll/Statutory/Opening/Manual
+    source_id: Mapped[int] = mapped_column(Integer, default=0)
+    event: Mapped[str] = mapped_column(String(20), default="")   # accrue / pay / post
+    month: Mapped[str] = mapped_column(String(20), default="")
+    created_by: Mapped[str] = mapped_column(String(100), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    lines = relationship("JournalLine", backref="entry", cascade="all, delete-orphan")
+
+    @property
+    def is_manual(self):
+        return self.source_type in ("Manual", "Opening")
+
+
+class JournalLine(Base):
+    __tablename__ = "journal_lines"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    entry_id: Mapped[int] = mapped_column(ForeignKey("journal_entries.id"))
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"))
+    debit: Mapped[float] = mapped_column(Float, default=0.0)
+    credit: Mapped[float] = mapped_column(Float, default=0.0)
+    description: Mapped[str] = mapped_column(String(200), default="")
+    account = relationship("Account")
+
+
 class Setting(Base):
     __tablename__ = "settings"
     key: Mapped[str] = mapped_column(String(60), primary_key=True)

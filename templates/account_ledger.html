@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block content %}
+<div class="pagehead">
+  <h1><span class="mono">{{ acc.code }}</span> {{ acc.name }}</h1>
+  <a class="btn secondary" href="/reports/trial-balance">← Trial Balance</a>
+</div>
+<div class="sub">Account ledger — every posting to this account with a running balance. <span class="badge draft">{{ acc.type }}</span></div>
+
+<div class="tablewrap" style="max-width:920px">
+  <table>
+    <tr><th>Date</th><th>Ref</th><th>Source</th><th>Memo</th><th class="num">Debit</th><th class="num">Credit</th><th class="num">Balance</th></tr>
+    {% for r in rows %}
+    <tr>
+      <td>{{ r.entry.date.strftime('%d/%m/%y') }}</td>
+      <td class="mono">{{ r.entry.ref }}</td>
+      <td><span class="badge {{ 'paid' if r.entry.is_manual else 'draft' }}">{{ r.entry.source_type }}</span></td>
+      <td style="color:var(--muted)">{{ r.entry.memo[:50] }}{% if r.line.description %} · {{ r.line.description[:30] }}{% endif %}</td>
+      <td class="num">{{ r.line.debit|rm if r.line.debit else '' }}</td>
+      <td class="num">{{ r.line.credit|rm if r.line.credit else '' }}</td>
+      <td class="num" style="font-weight:700;{% if r.balance < 0 %}color:var(--red){% endif %}">{{ r.balance|rm }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="7" class="empty">No postings to this account yet.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+{% endblock %}

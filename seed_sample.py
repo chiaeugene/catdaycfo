@@ -31,7 +31,7 @@ Base.metadata.create_all(engine)
 run_migrations()
 db = SessionLocal()
 
-SAMPLE_VERSION = "v9-recon-einvoice"
+SAMPLE_VERSION = "v10-ledger"
 ver_setting = db.get(M.Setting, "SAMPLE_DATA_VERSION")
 
 if ver_setting and ver_setting.value == SAMPLE_VERSION:
@@ -43,7 +43,8 @@ if ver_setting and ver_setting.value == SAMPLE_VERSION:
 if db.query(M.SalesEntry).count() > 0 or db.query(M.Document).count() > 0:
     for model in (M.PayrollItem, M.PayrollRun, M.StatutoryPaid, M.PettyCashEntry,
                   M.PettyCashAccount, M.SalesEntry, M.BoardingLog, M.Voucher, M.Listing,
-                  M.Document, M.Payment, M.Supplier, M.BankStatementLine, M.BankAccount):
+                  M.Document, M.Payment, M.Supplier, M.BankStatementLine, M.BankAccount,
+                  M.JournalLine, M.JournalEntry):
         db.query(model).delete()
     for name in ("DOC", "PAY", "PV", "PL"):
         c = db.get(M.Counter, name)
@@ -362,6 +363,21 @@ db.add(M.BankStatementLine(bank_account_id=bank_acc.id, date=DAYS[3],
 db.add(M.BankStatementLine(bank_account_id=bank_acc.id, date=DAYS[6],
                            description="BANK CHARGES", ref="",
                            amount=-12.0))   # unmatched — genuine bank fee, no book entry yet
+
+# ── Opening balances for the double-entry ledger ─────────────────────────────
+# Matches the Maybank opening balance used in the reconciliation sample: the
+# company starts day 1 with RM50,000 in the bank, funded by owner's capital.
+from app.ledger import seed_coa
+seed_coa(db)
+acc_by_code = {a.code: a for a in db.query(M.Account).all()}
+opening = M.JournalEntry(date=D0, ref="OPENING", memo="Opening balances",
+                         source_type="Opening", event="post",
+                         month=f"{D0:%b %Y}", created_by=ADMIN)
+opening.lines.append(M.JournalLine(account_id=acc_by_code["1020"].id,
+                                   debit=50000.0, credit=0, description="Maybank Current"))
+opening.lines.append(M.JournalLine(account_id=acc_by_code["3100"].id,
+                                   debit=0, credit=50000.0, description="Owner's capital"))
+db.add(opening)
 
 ver = db.get(M.Setting, "SAMPLE_DATA_VERSION")
 if not ver:

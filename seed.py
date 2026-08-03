@@ -76,6 +76,10 @@ for k, v in DEFAULTS.items():
     if not db.get(Setting, k):
         db.add(Setting(key=k, value=v))
 
+# Chart of Accounts for the double-entry ledger (idempotent)
+from app.ledger import seed_coa
+seed_coa(db)
+
 db.commit()
 db.close()
 print("Seed complete.")
