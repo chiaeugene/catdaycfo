@@ -1706,4 +1706,7 @@ async def telegram_webhook(secret: str, request: Request, db: Session = Depends(
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "app": "CATDAY System"}
+    # RENDER_GIT_COMMIT is set by Render at deploy time — lets us verify
+    # from outside exactly which commit is serving.
+    return {"status": "ok", "app": "CATDAY System",
+            "build": os.environ.get("RENDER_GIT_COMMIT", "local")[:10]}
