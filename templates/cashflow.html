@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block content %}
+<div class="pagehead"><h1>Cash Flow Projection 现金流预测</h1></div>
+<div class="sub">Week-by-week look-ahead: cash on hand today, expected takings, and every payment coming due (vouchers awaiting payment, EPF/SOCSO/EIS/PCB deadlines, payroll, recurring bills). Use it to spot the week cash gets tight — before it happens.</div>
+
+<div class="cards">
+  <div class="card blue"><div class="label">Cash today 现有现金</div><div class="value">RM {{ opening_cash|rm }}</div>
+    <div class="hint">{% for acc, bal in cash_split %}{{ acc.name }}: {{ bal|rm }}{% if not loop.last %} · {% endif %}{% endfor %}</div></div>
+  <div class="card green"><div class="label">Expected weekly takings 周收入</div><div class="value">RM {{ weekly_sales|rm }}</div>
+    <div class="hint">{% if settings.get('CF_WEEKLY_SALES') %}manual override{% else %}auto — last 14 days' run-rate{% endif %}</div></div>
+  {% if lowest %}
+  <div class="card {% if lowest.closing < 0 %}red{% elif lowest.closing < 10000 %}amber{% else %}green{% endif %}">
+    <div class="label">Lowest projected balance 最低点</div>
+    <div class="value">RM {{ lowest.closing|rm }}</div>
+    <div class="hint">week of {{ lowest.start.strftime('%d %b') }}{% if lowest.closing < 0 %} — CASH GAP, act early{% endif %}</div></div>
+  {% endif %}
+</div>
+
+<div class="panel">
+  <h2>Projection settings 预测设置</h2>
+  <form method="post" action="/settings/save">
+    <input type="hidden" name="next" value="/reports/cashflow">
+    <div class="formrow" style="grid-template-columns:150px 200px 200px auto">
+      <div><label>Weeks ahead 周数</label><input name="CF_WEEKS" type="number" min="2" max="16" value="{{ n_weeks }}"></div>
+      <div><label>Weekly sales RM (blank = auto)</label>
+        <input name="CF_WEEKLY_SALES" type="number" step="0.01" value="{{ settings.get('CF_WEEKLY_SALES','') }}" placeholder="auto: {{ auto_weekly_sales|rm }}"></div>
+      <div><label>Monthly opex RM (blank = auto)</label>
+        <input name="CF_MONTHLY_OPEX" type="number" step="0.01" value="{{ settings.get('CF_MONTHLY_OPEX','') }}" placeholder="auto: {{ auto_opex|rm }}"></div>
+      <div class="f-btn"><button type="submit">{{ icon('save', 14) }} Apply</button></div>
+    </div>
+  </form>
+  <div style="font-size:11px;color:var(--muted);margin-top:8px">
+    Auto weekly sales = average of the last 14 days of recorded sales × 7.
+    Auto monthly opex = all non-salary payments recorded in {{ last_mo_str }} (projected to recur on the 1st).
+    Approved-but-unpaid vouchers, statutory deadlines (15th) and payroll (month-end, from staff presets when no run is confirmed yet) are always included automatically.
+  </div>
+</div>
+
+<div class="tablewrap" style="max-width:980px">
+  <table>
+    <tr><th>Week</th><th class="num">Cash In 收入</th><th class="num">Cash Out 支出</th>
+        <th class="num">Net 净额</th><th class="num">Closing 期末余额</th></tr>
+    {% for w in weeks %}
+    <tr>
+      <td>
+        <b>{{ w.start.strftime('%d %b') }} – {{ w.end.strftime('%d %b') }}</b>
+        {% if w.due %}
+        <details style="margin-top:4px">
+          <summary style="cursor:pointer;font-size:11.5px;color:var(--brand);font-weight:700">{{ w.due|length }} payment{{ 's' if w.due|length != 1 }} due</summary>
+          <table style="margin:6px 0 4px;font-size:12px">
+            {% for d, lbl, amt in w.due %}
+            <tr><td style="padding:3px 8px;border:none">{{ d.strftime('%d/%m') }}</td>
+                <td style="padding:3px 8px;border:none">{{ lbl }}</td>
+                <td class="num" style="padding:3px 8px;border:none">{{ amt|rm }}</td></tr>
+            {% endfor %}
+          </table>
+        </details>
+        {% endif %}
+      </td>
+      <td class="num" style="color:var(--green)">{{ w.inflow|rm }}</td>
+      <td class="num" style="color:var(--red)">{{ w.outflow|rm }}</td>
+      <td class="num" style="font-weight:700;color:{% if w.net >= 0 %}var(--green){% else %}var(--red){% endif %}">{{ w.net|rm }}</td>
+      <td class="num" style="font-weight:800;{% if w.closing < 0 %}color:var(--red){% endif %}">{{ w.closing|rm }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+
+<div style="font-size:11px;color:var(--muted);margin-top:10px;max-width:860px">
+  This is a projection, not a promise — takings use a run-rate, and recurring opex assumes last month repeats.
+  Known items (vouchers, statutory, payroll) may overlap with the recurring estimate in the month they fall due.
+  Once customer invoicing (AR) is live, expected collections will come from real invoice due dates instead of the run-rate.
+</div>
+{% endblock %}

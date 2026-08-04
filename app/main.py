@@ -67,6 +67,7 @@ NAV_GROUPS = [
         ("apaging", "/reports/ap-aging", "list", "AP Aging", ("admin", "manager")),
         ("statutory", "/reports/statutory", "landmark", "Statutory", ("admin",)),
         ("tax", "/reports/tax", "receipt", "SST / Tax", ("admin", "manager")),
+        ("cashflow", "/reports/cashflow", "chart", "Cash Flow", ("admin",)),
         ("reconciliation", "/reconciliation", "banknote", "Bank Reconciliation", ("admin", "manager")),
         ("einvoice", "/reports/einvoice-readiness", "receipt", "e-Invoice Readiness", ("admin",)),
     ]),
@@ -1302,6 +1303,133 @@ async def opening_balances(request: Request, db: Session = Depends(get_db)):
     return RedirectResponse("/accounting/coa", status_code=302)
 
 
+# ─────────────────────────── CASH FLOW PROJECTION ───────────────────────────
+@app.get("/reports/cashflow", response_class=HTMLResponse)
+def cashflow(request: Request, db: Session = Depends(get_db)):
+    """Weekly cash projection: opening cash → expected collections → upcoming
+    payments → projected closing, per week. Derived from the ledger, unpaid
+    vouchers, statutory due dates, staff presets and a sales run-rate."""
+    from datetime import datetime as _dt, timedelta
+
+    ledger.sync_ledger(db)
+    today = date.today()
+    settings = {s.key: s.value for s in db.query(M.Setting).all()}
+
+    def _setting_float(key):
+        try:
+            return float(settings.get(key, "") or 0) or None
+        except ValueError:
+            return None
+
+    n_weeks = int(_setting_float("CF_WEEKS") or 8)
+    n_weeks = max(2, min(16, n_weeks))
+    horizon_end = today + timedelta(days=7 * n_weeks)
+
+    # Opening cash: ledger balances of cash/bank/petty accounts as of today
+    cash_codes = ("1010", "1020", "1030")
+    opening_cash = 0.0
+    cash_split = []
+    for acc in db.query(M.Account).filter(M.Account.code.in_(cash_codes)).all():
+        bal = 0.0
+        for line in db.query(M.JournalLine).join(M.JournalEntry).filter(
+                M.JournalLine.account_id == acc.id, M.JournalEntry.date <= today).all():
+            bal += line.debit - line.credit
+        opening_cash += bal
+        cash_split.append((acc, round(bal, 2)))
+
+    # Inflow: weekly sales estimate — override or trailing-14-day run-rate
+    since = today - timedelta(days=14)
+    recent_sales = db.query(func.coalesce(func.sum(M.SalesEntry.amount), 0)) \
+        .filter(M.SalesEntry.date >= since, M.SalesEntry.date <= today).scalar() or 0
+    auto_weekly_sales = round(recent_sales / 14 * 7, 2)
+    weekly_sales = _setting_float("CF_WEEKLY_SALES") or auto_weekly_sales
+
+    events = []   # (date, label, amount) — outflows, positive amounts
+
+    # 1) Approved but unpaid vouchers — assume paid within a few days
+    for v in db.query(M.Voucher).filter(M.Voucher.status == "Approved").all():
+        events.append((max(today, v.date + timedelta(days=3)),
+                       f"{v.pv_no} · {v.payee}", v.total))
+
+    # 2) Unpaid statutory from confirmed payroll — due 15th of following month
+    paid_stat = {(s.month, s.kind) for s in db.query(M.StatutoryPaid).all()}
+    stat_months = {}
+    for run in db.query(M.PayrollRun).filter(M.PayrollRun.status == "Confirmed").all():
+        m = stat_months.setdefault(run.month, {"EPF": 0.0, "SOCSO": 0.0, "EIS": 0.0, "PCB": 0.0})
+        for it in run.items:
+            m["EPF"] += it.epf_er + it.epf_ee
+            m["SOCSO"] += it.socso_er + it.socso_ee
+            m["EIS"] += it.eis_er + it.eis_ee
+            m["PCB"] += it.pcb
+    for mo, kinds in stat_months.items():
+        try:
+            base = _dt.strptime(mo, "%b %Y")
+            due = date(base.year + (1 if base.month == 12 else 0), (base.month % 12) + 1, 15)
+        except ValueError:
+            continue
+        for kind, amt in kinds.items():
+            if amt > 0 and (mo, kind) not in paid_stat and due <= horizon_end:
+                events.append((max(today, due), f"{kind} {mo} (statutory)", amt))
+
+    # 3) Projected payroll for months without a confirmed run (from staff presets)
+    staff = db.query(M.Staff).filter(M.Staff.active == True).all()  # noqa: E712
+    preset_net = sum(s.net_pay for s in staff)
+    preset_stat = sum(s.epf_employer + s.epf_employee + s.socso_employer + s.socso_employee
+                      + s.eis_employer + s.eis_employee for s in staff)
+    confirmed_months = {r.month for r in db.query(M.PayrollRun)
+                        .filter(M.PayrollRun.status == "Confirmed").all()}
+    cur = date(today.year, today.month, 1)
+    while cur <= horizon_end:
+        nxt_month = date(cur.year + (1 if cur.month == 12 else 0), (cur.month % 12) + 1, 1)
+        month_end = nxt_month - timedelta(days=1)
+        mo_str = f"{cur:%b %Y}"
+        if mo_str not in confirmed_months and preset_net > 0 and month_end <= horizon_end:
+            events.append((max(today, month_end), f"Payroll {mo_str} (projected net)", preset_net))
+            stat_due = date(nxt_month.year, nxt_month.month, 15)
+            if stat_due <= horizon_end:
+                events.append((stat_due, f"Statutory {mo_str} (projected)", preset_stat))
+        cur = nxt_month
+
+    # 4) Recurring monthly operating spend on the 1st — override or last-month actual
+    last_mo_end = date(today.year, today.month, 1) - timedelta(days=1)
+    last_mo_str = f"{last_mo_end:%b %Y}"
+    auto_opex = db.query(func.coalesce(func.sum(M.Payment.amount), 0)) \
+        .filter(M.Payment.month == last_mo_str, M.Payment.status != "Void",
+                M.Payment.category != "Salary").scalar() or 0
+    monthly_opex = _setting_float("CF_MONTHLY_OPEX")
+    if monthly_opex is None:
+        monthly_opex = round(auto_opex, 2)
+    cur = date(today.year, today.month, 1)
+    while cur <= horizon_end:
+        if cur > today and monthly_opex > 0:
+            events.append((cur, "Recurring monthly opex (projected)", monthly_opex))
+        cur = date(cur.year + (1 if cur.month == 12 else 0), (cur.month % 12) + 1, 1)
+
+    # Bucket into weeks
+    weeks = []
+    running = opening_cash
+    for w in range(n_weeks):
+        w_start = today + timedelta(days=7 * w)
+        w_end = w_start + timedelta(days=6)
+        w_events = [(d, lbl, amt) for d, lbl, amt in events if w_start <= d <= w_end]
+        outflow = sum(a for _, _, a in w_events)
+        inflow = weekly_sales
+        net = inflow - outflow
+        running += net
+        weeks.append({"start": w_start, "end": w_end, "inflow": round(inflow, 2),
+                      "outflow": round(outflow, 2), "net": round(net, 2),
+                      "closing": round(running, 2),
+                      "due": sorted(w_events)})   # not "items" — dict.items() shadows it in Jinja
+    lowest = min(weeks, key=lambda x: x["closing"]) if weeks else None
+
+    return render(request, db, "cashflow.html", "cashflow",
+                  opening_cash=round(opening_cash, 2), cash_split=cash_split,
+                  weekly_sales=round(weekly_sales, 2), auto_weekly_sales=auto_weekly_sales,
+                  monthly_opex=round(monthly_opex, 2), auto_opex=round(auto_opex, 2),
+                  n_weeks=n_weeks, weeks=weeks, lowest=lowest, settings=settings,
+                  last_mo_str=last_mo_str)
+
+
 # ─────────────────────────── GENERAL LEDGER ───────────────────────────
 @app.get("/reports/gl", response_class=HTMLResponse)
 def general_ledger(request: Request, q: str = "", frm: str = "", to: str = "",
@@ -1680,7 +1808,8 @@ async def settings_save(request: Request, db: Session = Depends(get_db)):
     for key in ("COMPANY_NAME", "COMPANY_ADDRESS", "TELEGRAM_WHITELIST", "PETTY_CASH_FLOAT",
                 "PASSCODE", "SST_REGISTERED", "SST_NUMBER", "COMPANY_ROC", "COMPANY_BANK",
                 "COMPANY_BANK_ACCOUNT", "COMPANY_TIN", "COMPANY_MSIC",
-                "PREFIX_DOC", "PREFIX_PAY", "PREFIX_PV", "PREFIX_PL"):
+                "PREFIX_DOC", "PREFIX_PAY", "PREFIX_PV", "PREFIX_PL",
+                "CF_WEEKS", "CF_WEEKLY_SALES", "CF_MONTHLY_OPEX"):
         if key in form:
             s = db.get(M.Setting, key)
             if not s:
@@ -1688,7 +1817,8 @@ async def settings_save(request: Request, db: Session = Depends(get_db)):
                 db.add(s)
             s.value = str(form[key])
     db.commit()
-    return RedirectResponse("/settings", status_code=302)
+    nxt = form.get("next", "/settings")
+    return RedirectResponse(nxt if str(nxt).startswith("/") else "/settings", status_code=302)
 
 
 # ─────────────────────────── TELEGRAM WEBHOOK ───────────────────────────
