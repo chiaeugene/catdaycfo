@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block content %}
+<div class="pagehead">
+  <h1><span class="mono">{{ v.pv_no }}</span> {{ v.payee }}</h1>
+  <div class="actions">
+    {% if v.pdf_path %}<a class="btn secondary" href="/files/{{ v.pdf_path }}" target="_blank">{{ icon('file', 14) }} Voucher PDF</a>{% endif %}
+    <a class="btn secondary" href="/vouchers">← All vouchers</a>
+  </div>
+</div>
+<div class="sub">Payment voucher dated {{ v.date.strftime('%d/%m/%Y') }} — one voucher pays one company.</div>
+
+<div class="cards">
+  <div class="card"><div class="label">Total 总额</div><div class="value">RM {{ v.total|rm }}</div>
+    <div class="hint">{{ v.payments|length }} payment{{ 's' if v.payments|length != 1 }}</div></div>
+  <div class="card"><div class="label">Status 状态</div>
+    <div class="value" style="font-size:17px"><span class="badge {{ v.status|lower }}">{{ v.status }}</span></div></div>
+  <div class="card {% if bank_line %}green{% else %}amber{% endif %}">
+    <div class="label">Bank 银行对账</div>
+    <div class="value" style="font-size:17px">{{ 'Reconciled' if bank_line else 'Not yet matched' }}</div>
+    {% if bank_line %}<div class="hint">{{ bank_line.date.strftime('%d/%m/%y') }} · {{ bank_line.description[:28] }}</div>{% endif %}</div>
+</div>
+
+<div class="panel">
+  <h2>Payments on this voucher 包含的付款</h2>
+  <div class="tablewrap" style="box-shadow:none;border:none">
+  <table>
+    <tr><th>Code</th><th>Date</th><th>Description</th><th>Category</th><th>Invoice</th><th class="num">Amount</th></tr>
+    {% for p in v.payments %}
+    <tr>
+      <td class="mono"><a href="/payments/{{ p.id }}"><b>{{ p.pay_no }}</b></a></td>
+      <td>{{ p.date.strftime('%d/%m/%y') }}</td>
+      <td>{{ p.description[:46] }}</td>
+      <td>{{ p.category or '—' }}</td>
+      <td class="mono">{{ p.invoice_no or '—' }}</td>
+      <td class="num">{{ p.amount|rm }}</td>
+    </tr>
+    {% endfor %}
+    <tr class="total-row"><td colspan="5">Total</td><td class="num">{{ v.total|rm }}</td></tr>
+  </table>
+  </div>
+</div>
+
+<div class="grid2">
+  <div class="panel">
+    <h2>Payee bank details 收款方银行</h2>
+    {% if supplier %}
+    <div class="kv"><span>Supplier</span><b><a href="/suppliers/{{ supplier.id }}">{{ supplier.name }}</a></b></div>
+    <div class="kv"><span>Bank 银行</span><b>{{ supplier.bank_name or '—' }}</b></div>
+    <div class="kv"><span>Account No. 账号</span><b class="mono">{{ supplier.account_no or 'not on file' }}</b></div>
+    <div class="kv"><span>Account holder 户名</span><b>{{ supplier.account_holder or '—' }}</b></div>
+    {% else %}
+    <div style="color:var(--muted);font-size:13px">"{{ v.payee }}" isn't in the supplier directory —
+      <a href="/suppliers">add them</a> so bank details print on the voucher.</div>
+    {% endif %}
+  </div>
+
+  <div class="panel">
+    <h2>Trail 记录</h2>
+    <div class="kv"><span>Created by</span><b>{{ v.created_by or '—' }}</b></div>
+    <div class="kv"><span>Approved by</span><b>{{ v.approved_by or 'not approved yet' }}</b></div>
+    <div class="kv"><span>Listing 付款清单</span>
+      <b>{% if v.listing %}{{ v.listing.pl_no }} · {{ v.listing.status }}{% else %}not on a listing{% endif %}</b></div>
+
+    <h2 style="margin-top:20px">Accounting entry 会计分录</h2>
+    {% for je in journal %}
+      {% for l in je.lines %}
+      <div class="kv"><span><a href="/accounting/ledger/{{ l.account.id }}">{{ l.account.code }} {{ l.account.name }}</a></span>
+        <b>{% if l.debit %}Dr {{ l.debit|rm }}{% else %}Cr {{ l.credit|rm }}{% endif %}</b></div>
+      {% endfor %}
+    {% else %}
+    <div style="color:var(--muted);font-size:13px">Posts to the ledger once marked Paid.</div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

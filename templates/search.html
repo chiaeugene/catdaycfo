@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block content %}
+<div class="pagehead"><h1>Search 搜索{% if q %} — “{{ q }}”{% endif %}</h1></div>
+<div class="sub">Payment codes, voucher codes, supplier names, invoice numbers, descriptions. Type an exact code (e.g. PV-0001) to jump straight to it.</div>
+
+<div class="panel">
+  <form method="get" action="/search">
+    <div class="formrow" style="grid-template-columns:1fr auto">
+      <div><label>Find anything 查找</label>
+        <input name="q" value="{{ q }}" autofocus placeholder="PV-0001 · PAY-0009 · TNB · cat food · invoice no."></div>
+      <div class="f-btn"><button type="submit">{{ icon('eye', 14) }} Search</button></div>
+    </div>
+  </form>
+</div>
+
+{% for name, rows in groups %}
+<h2 style="margin-top:20px">{{ name }} ({{ rows|length }})</h2>
+<div class="tablewrap">
+  <table>
+    <tr><th>Code / Name</th><th>Detail</th><th class="num">Amount</th><th>Status</th><th></th></tr>
+    {% for code, detail, amount, link, status in rows %}
+    <tr>
+      <td class="mono"><a href="{{ link }}"><b>{{ code }}</b></a></td>
+      <td>{{ detail }}</td>
+      <td class="num">{% if amount is not none %}{{ amount|rm }}{% endif %}</td>
+      <td><span class="badge {{ status.replace(' ','')|lower }}">{{ status }}</span></td>
+      <td><a href="{{ link }}" style="font-size:11px">open →</a></td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% else %}
+{% if q %}
+<div class="panel empty">
+  Nothing matches “{{ q }}”.<br>
+  <span style="font-size:12px">Try part of a supplier name, a code like PAY-0009, or an invoice number.</span>
+</div>
+{% endif %}
+{% endfor %}
+{% endblock %}

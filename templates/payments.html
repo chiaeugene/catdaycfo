@@ -52,7 +52,7 @@
              data-supplier="{{ p.supplier|lower }}" onchange="updateBar()">
       {% endif %}
     </td>
-    <td class="mono">{{ p.pay_no }}</td>
+    <td class="mono"><a href="/payments/{{ p.id }}"><b>{{ p.pay_no }}</b></a></td>
     <td>{{ p.date.strftime('%d/%m/%y') }}</td>
     <td>{{ p.supplier }}</td>
     <td class="mono">{{ p.invoice_no }}</td>

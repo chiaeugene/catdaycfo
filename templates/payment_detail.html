@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block content %}
+<div class="pagehead">
+  <h1><span class="mono">{{ p.pay_no }}</span> {{ p.supplier or 'No supplier' }}</h1>
+  <a class="btn secondary" href="/payments">← All payments</a>
+</div>
+<div class="sub">{{ p.description }}</div>
+
+<div class="cards">
+  <div class="card"><div class="label">Amount 金额</div><div class="value">RM {{ p.amount|rm }}</div>
+    {% if p.tax_amount %}<div class="hint">incl. {{ p.tax_type }} of RM {{ p.tax_amount|rm }}</div>{% endif %}</div>
+  <div class="card"><div class="label">Status 状态</div>
+    <div class="value" style="font-size:17px"><span class="badge {{ p.status.replace(' ','')|lower }}">{{ p.status }}</span></div>
+    <div class="hint">{{ p.month }}</div></div>
+  <div class="card"><div class="label">Group 分组</div><div class="value" style="font-size:17px">{{ p.grp or '—' }}</div>
+    <div class="hint">{{ p.category or 'uncategorized' }}</div></div>
+</div>
+
+<div class="grid2">
+  <div class="panel">
+    <h2>Details 详情</h2>
+    <div class="kv"><span>Date 日期</span><b>{{ p.date.strftime('%d/%m/%Y') }}</b></div>
+    <div class="kv"><span>Supplier 供应商</span>
+      <b>{% if supplier %}<a href="/suppliers/{{ supplier.id }}">{{ p.supplier }}</a>{% else %}{{ p.supplier or '—' }}{% endif %}</b></div>
+    <div class="kv"><span>Invoice No. 发票号</span><b class="mono">{{ p.invoice_no or '—' }}</b></div>
+    <div class="kv"><span>Month 月份</span><b>{{ p.month }}</b></div>
+    <div class="kv"><span>Voucher 凭单</span>
+      <b>{% if p.voucher %}<a href="/vouchers/{{ p.voucher.id }}">{{ p.voucher.pv_no }}</a> · {{ p.voucher.status }}{% else %}not on a voucher yet{% endif %}</b></div>
+    {% if p.notes %}<div class="kv"><span>Notes 备注</span><b>{{ p.notes }}</b></div>{% endif %}
+  </div>
+
+  <div class="panel">
+    <h2>Source documents 来源文件</h2>
+    {% for d in p.documents %}
+    <div class="kv">
+      <span>{{ d.doc_no }} · from {{ d.sender }}</span>
+      <b>{% if d.file_path %}<a href="/files/{{ d.file_path }}" target="_blank">{{ icon('eye', 12) }} view</a>{% else %}typed report{% endif %}</b>
+    </div>
+    {% else %}
+    <div style="color:var(--muted);font-size:13px">No document attached — this was entered manually.</div>
+    {% endfor %}
+
+    <h2 style="margin-top:20px">Accounting entry 会计分录</h2>
+    {% for je in journal %}
+      {% for l in je.lines %}
+      <div class="kv"><span><a href="/accounting/ledger/{{ l.account.id }}">{{ l.account.code }} {{ l.account.name }}</a></span>
+        <b>{% if l.debit %}Dr {{ l.debit|rm }}{% else %}Cr {{ l.credit|rm }}{% endif %}</b></div>
+      {% endfor %}
+    {% else %}
+    <div style="color:var(--muted);font-size:13px">No journal entry (voided payments don't post).</div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

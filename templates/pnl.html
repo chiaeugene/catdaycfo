@@ -27,9 +27,11 @@
         <table style="margin:6px 0 4px;font-size:12px">
           {% for p in plist %}
           <tr>
-            <td class="mono" style="padding:3px 8px;border:none">{{ p.pay_no }}</td>
+            <td class="mono" style="padding:3px 8px;border:none">
+              {% if p.id %}<a href="/payments/{{ p.id }}">{{ p.pay_no }}</a>{% else %}{{ p.pay_no }}{% endif %}</td>
             <td style="padding:3px 8px;border:none">{{ p.supplier or '—' }}</td>
-            <td style="padding:3px 8px;border:none">{{ p.description[:50] }}</td>
+            <td style="padding:3px 8px;border:none">
+              {% if p.id %}<a href="/payments/{{ p.id }}">{{ p.description[:50] }}</a>{% else %}{{ p.description[:50] }}{% endif %}</td>
             <td class="num" style="padding:3px 8px;border:none">{{ p.amount|rm }}</td>
           </tr>
           {% endfor %}

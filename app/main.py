@@ -42,36 +42,39 @@ import hashlib as _hashlib
 WEBHOOK_TOKEN = _hashlib.sha256(WEBHOOK_SECRET.encode()).hexdigest()[:40]
 
 # Grouped navigation: (group label, [(key, url, icon, label, roles), ...])
+# Grouped by WHEN you use it, not by accounting taxonomy — the person running
+# this daily is an operator, not a bookkeeper. Everyday work sits at the top;
+# the formal accounting screens collapse away until an accountant needs them.
 NAV_GROUPS = [
     ("", [
         ("dashboard", "/", "home", "Dashboard", ("admin", "manager", "staff")),
     ]),
-    ("Payables 应付", [
-        ("documents", "/documents", "inbox", "Verification", ("admin", "manager")),
-        ("payments", "/payments", "card", "Payments", ("admin", "manager")),
-        ("suppliers", "/suppliers", "landmark", "Suppliers", ("admin", "manager")),
-        ("vouchers", "/vouchers", "receipt", "Vouchers", ("admin", "manager")),
-        ("listings", "/listings", "list", "Listings", ("admin", "manager")),
-        ("pettycash", "/pettycash", "coins", "Petty Cash", ("admin", "manager", "staff")),
-    ]),
-    ("Income 收入", [
+    ("Every day 每天", [
+        ("documents", "/documents", "inbox", "Verify Inbox", ("admin", "manager")),
         ("sales", "/sales", "cart", "Sales", ("admin", "manager", "staff")),
+        ("pettycash", "/pettycash", "coins", "Petty Cash", ("admin", "manager", "staff")),
         ("boarding", "/boarding", "cat", "Boarding", ("admin", "manager", "staff")),
     ]),
-    ("People 人事", [
+    ("Paying suppliers 付款", [
+        ("payments", "/payments", "card", "Payments", ("admin", "manager")),
+        ("vouchers", "/vouchers", "receipt", "Vouchers", ("admin", "manager")),
+        ("listings", "/listings", "list", "Listings", ("admin", "manager")),
+        ("suppliers", "/suppliers", "landmark", "Suppliers", ("admin", "manager")),
+    ]),
+    ("Every month 每月", [
         ("payroll", "/payroll", "banknote", "Payroll", ("admin",)),
+        ("statutory", "/reports/statutory", "landmark", "Statutory Dues", ("admin",)),
+        ("reconciliation", "/reconciliation", "banknote", "Bank Reconciliation", ("admin", "manager")),
+        ("pnl", "/pnl", "chart", "Profit & Loss", ("admin",)),
     ]),
     ("Reports 报告", [
-        ("gl", "/reports/gl", "list", "General Ledger", ("admin", "manager")),
-        ("pnl", "/pnl", "chart", "P&L", ("admin",)),
-        ("apaging", "/reports/ap-aging", "list", "AP Aging", ("admin", "manager")),
-        ("statutory", "/reports/statutory", "landmark", "Statutory", ("admin",)),
-        ("tax", "/reports/tax", "receipt", "SST / Tax", ("admin", "manager")),
         ("cashflow", "/reports/cashflow", "chart", "Cash Flow", ("admin",)),
-        ("reconciliation", "/reconciliation", "banknote", "Bank Reconciliation", ("admin", "manager")),
+        ("apaging", "/reports/ap-aging", "list", "AP Aging", ("admin", "manager")),
+        ("gl", "/reports/gl", "list", "General Ledger", ("admin", "manager")),
+        ("tax", "/reports/tax", "receipt", "SST / Tax", ("admin", "manager")),
         ("einvoice", "/reports/einvoice-readiness", "receipt", "e-Invoice Readiness", ("admin",)),
     ]),
-    ("Accounting 账务", [
+    ("Accounting 会计", [
         ("tb", "/reports/trial-balance", "list", "Trial Balance", ("admin",)),
         ("bs", "/reports/balance-sheet", "chart", "Balance Sheet", ("admin",)),
         ("journal", "/accounting/journal", "receipt", "Journal", ("admin",)),
@@ -81,6 +84,8 @@ NAV_GROUPS = [
         ("settings", "/settings", "settings", "Settings", ("admin",)),
     ]),
 ]
+# Groups that start collapsed — accountant territory, not daily operations.
+COLLAPSED_GROUPS = {"Accounting 会计"}
 # Flat lookup for role checks
 NAV = [item for _, items in NAV_GROUPS for item in items]
 
@@ -102,7 +107,7 @@ def render(request: Request, db: Session, template: str, page: str, **ctx):
         if user.role in ("admin", "manager") else 0
     return templates.TemplateResponse(request, template,
         {"user": user, "nav_groups": nav_groups, "page": page, "M": M, "today": date.today(),
-         "pending_docs": pending_docs, **ctx})
+         "pending_docs": pending_docs, "collapsed_groups": COLLAPSED_GROUPS, **ctx})
 
 
 def month_str(d: date | None = None) -> str:
@@ -111,6 +116,37 @@ def month_str(d: date | None = None) -> str:
 
 def parse_date(s: str) -> date:
     return datetime.strptime(s, "%Y-%m-%d").date() if s else date.today()
+
+
+def month_options(back: int = 12, fwd: int = 1) -> list[str]:
+    """Selectable months around today, newest first. Free-typing a month is the
+    single easiest way to lose a record — a typo like 'July 2026' matches no
+    report filter — so every month input picks from this list."""
+    today = date.today()
+    out = []
+    for i in range(-fwd, back + 1):
+        y, m = today.year, today.month - i
+        while m <= 0:
+            m += 12
+            y -= 1
+        while m > 12:
+            m -= 12
+            y += 1
+        out.append(f"{date(y, m, 1):%b %Y}")
+    return out
+
+
+def normalize_month(raw: str, fallback: date | None = None) -> str:
+    """Accept 'Jul 2026', 'July 2026', '2026-07', '07/2026' → 'Jul 2026'."""
+    raw = (raw or "").strip()
+    if not raw:
+        return month_str(fallback)
+    for fmt in ("%b %Y", "%B %Y", "%Y-%m", "%m/%Y", "%b-%Y", "%B-%Y"):
+        try:
+            return f"{datetime.strptime(raw, fmt):%b %Y}"
+        except ValueError:
+            continue
+    return month_str(fallback)
 
 
 def tax_of(tax_type: str, amount: float) -> float:
@@ -177,14 +213,40 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     mo = month_str()
     petty_bal = (db.query(func.coalesce(func.sum(M.PettyCashEntry.amount_in), 0)).scalar()
                  - db.query(func.coalesce(func.sum(M.PettyCashEntry.amount_out), 0)).scalar())
+    # Spend must match the P&L exactly or the two screens contradict each other:
+    # exclude Void payments, and include petty-cash spend + confirmed payroll.
+    pay_month = db.query(func.coalesce(func.sum(M.Payment.amount), 0)) \
+        .filter(M.Payment.month == mo, M.Payment.status != "Void").scalar()
+    petty_month = db.query(func.coalesce(func.sum(M.PettyCashEntry.amount_out), 0)) \
+        .filter(M.PettyCashEntry.month == mo).scalar()
+    payroll_month = db.query(func.coalesce(func.sum(M.PayrollRun.total_cost), 0)) \
+        .filter(M.PayrollRun.month == mo, M.PayrollRun.status == "Confirmed").scalar()
+
+    overdue_stat = 0
+    paid_stat = {(s.month, s.kind) for s in db.query(M.StatutoryPaid).all()}
+    for run in db.query(M.PayrollRun).filter(M.PayrollRun.status == "Confirmed").all():
+        try:
+            base = datetime.strptime(run.month, "%b %Y")
+            due = date(base.year + (1 if base.month == 12 else 0), (base.month % 12) + 1, 15)
+        except ValueError:
+            continue
+        if due < date.today():
+            overdue_stat += sum(1 for k in ("EPF", "SOCSO", "EIS", "PCB")
+                                if (run.month, k) not in paid_stat)
+
     stats = {
         "docs_pending": db.query(M.Document).filter(M.Document.status == "Pending").count(),
         "pay_open": db.query(M.Payment).filter(M.Payment.status.in_(["Unsorted", "Categorized"])).count(),
         "pv_draft": db.query(M.Voucher).filter(M.Voucher.status == "Draft").count(),
+        "pv_approved": db.query(M.Voucher).filter(M.Voucher.status == "Approved").count(),
+        "uncategorized": db.query(M.Payment).filter(M.Payment.status == "Unsorted").count(),
+        "unmatched_bank": db.query(M.BankStatementLine)
+            .filter(M.BankStatementLine.matched == False).count(),  # noqa: E712
+        "overdue_stat": overdue_stat,
         "sales_month": db.query(func.coalesce(func.sum(M.SalesEntry.amount), 0))
             .filter(M.SalesEntry.month == mo).scalar(),
-        "expenses_month": db.query(func.coalesce(func.sum(M.Payment.amount), 0))
-            .filter(M.Payment.month == mo).scalar(),
+        "expenses_month": pay_month + petty_month + payroll_month,
+        "spend_split": {"payments": pay_month, "petty": petty_month, "payroll": payroll_month},
         "petty_balance": petty_bal,
     }
     recent_docs = db.query(M.Document).order_by(M.Document.id.desc()).limit(8).all()
@@ -211,7 +273,8 @@ def documents(request: Request, view: str = "pending", db: Session = Depends(get
             except Exception:
                 payloads[d.id] = {}
     return render(request, db, "documents.html", "documents",
-                  pending=pending, processed=processed, view=view, payloads=payloads)
+                  pending=pending, processed=processed, view=view, payloads=payloads,
+                  months=month_options())
 
 
 @app.post("/documents/upload")
@@ -262,7 +325,7 @@ async def verify_document(doc_id: int, request: Request, db: Session = Depends(g
 
     doc.section = section
     doc.doc_type = str(f.get("doc_type", doc.doc_type))
-    doc.supplier, doc.amount, doc.month = supplier, amount, month or month_str()
+    doc.supplier, doc.amount, doc.month = supplier, amount, normalize_month(month)
     doc.description, doc.category, doc.invoice_no = description, category, invoice_no
     doc.status, doc.verified_by, doc.verified_at = "Verified", user.display_name, datetime.utcnow()
 
@@ -363,6 +426,7 @@ def new_payment(request: Request, supplier: str = Form(""), description: str = F
                 pdate: str = Form(""), db: Session = Depends(get_db)):
     d = parse_date(pdate)
     pay_no = telegram_bot.next_counter(db, "PAY", "PAY-")
+    grp = grp or M.group_for(category)   # derive rather than ask twice
     db.add(M.Payment(pay_no=pay_no, date=d, supplier=supplier, description=description,
                      category=category, grp=grp, amount=amount, month=month_str(d),
                      invoice_no=invoice_no.strip(), tax_type=tax_type,
@@ -372,13 +436,44 @@ def new_payment(request: Request, supplier: str = Form(""), description: str = F
     return RedirectResponse("/payments", status_code=302)
 
 
+@app.get("/payments/{pid}", response_class=HTMLResponse)
+def payment_detail(pid: int, request: Request, db: Session = Depends(get_db)):
+    """One payment, everything attached to it — so every report can deep-link here."""
+    p = db.get(M.Payment, pid)
+    if not p:
+        return RedirectResponse("/payments", status_code=302)
+    supplier = db.query(M.Supplier).filter(
+        func.lower(M.Supplier.name) == (p.supplier or "").lower()).first()
+    journal = db.query(M.JournalEntry).filter(
+        M.JournalEntry.source_type == "Payment", M.JournalEntry.source_id == p.id).all()
+    return render(request, db, "payment_detail.html", "payments",
+                  p=p, supplier=supplier, journal=journal)
+
+
+@app.get("/vouchers/{vid}", response_class=HTMLResponse)
+def voucher_detail(vid: int, request: Request, db: Session = Depends(get_db)):
+    v = db.get(M.Voucher, vid)
+    if not v:
+        return RedirectResponse("/vouchers", status_code=302)
+    supplier = db.query(M.Supplier).filter(
+        func.lower(M.Supplier.name) == (v.payee or "").lower()).first()
+    journal = db.query(M.JournalEntry).filter(
+        M.JournalEntry.source_type == "Voucher", M.JournalEntry.source_id == v.id).all()
+    bank_line = db.query(M.BankStatementLine).filter(
+        M.BankStatementLine.matched_type == "Voucher",
+        M.BankStatementLine.matched_id == v.id).first()
+    return render(request, db, "voucher_detail.html", "vouchers",
+                  v=v, supplier=supplier, journal=journal, bank_line=bank_line)
+
+
 @app.post("/payments/{pid}/update")
 def update_payment(pid: int, request: Request, supplier: str = Form(""),
                    category: str = Form(""), grp: str = Form(""),
                    amount: float = Form(0), db: Session = Depends(get_db)):
     p = db.get(M.Payment, pid)
     if p and p.status in ("Unsorted", "Categorized"):
-        p.supplier, p.category, p.grp, p.amount = supplier, category, grp, amount
+        p.supplier, p.category, p.amount = supplier, category, amount
+        p.grp = grp or M.group_for(category)
         p.status = "Categorized" if category else "Unsorted"
         db.commit()
     return RedirectResponse("/payments", status_code=302)
@@ -1457,27 +1552,27 @@ def general_ledger(request: Request, q: str = "", frm: str = "", to: str = "",
             if in_range(p.date) and match(p.pay_no, p.supplier, p.description, p.invoice_no, p.category):
                 entries.append({"date": p.date, "code": p.pay_no, "type": "Payment",
                                 "party": p.supplier, "desc": p.description,
-                                "cin": 0, "cout": p.amount, "link": "/payments"})
+                                "cin": 0, "cout": p.amount, "link": f"/payments/{p.id}"})
     if kind in ("", "Sale"):
         for s in db.query(M.SalesEntry).all():
             if in_range(s.date) and match(s.stream, s.description, s.method):
                 entries.append({"date": s.date, "code": s.stream, "type": "Sale",
                                 "party": s.stream, "desc": s.description,
-                                "cin": s.amount, "cout": 0, "link": "/sales",
+                                "cin": s.amount, "cout": 0, "link": f"/sales?month={s.month}",
                                 "match_key": ("Sale", s.id)})
     if kind in ("", "Petty Cash"):
         for e in db.query(M.PettyCashEntry).all():
             if in_range(e.date) and match(e.description, e.category, e.recorded_by):
                 entries.append({"date": e.date, "code": "PC", "type": "Petty Cash",
                                 "party": e.recorded_by, "desc": e.description,
-                                "cin": e.amount_in, "cout": e.amount_out, "link": "/pettycash",
+                                "cin": e.amount_in, "cout": e.amount_out, "link": f"/pettycash?month={e.month}",
                                 "match_key": ("PettyCash", e.id)})
     if kind in ("", "Voucher"):
         for v in db.query(M.Voucher).all():
             if in_range(v.date) and match(v.pv_no, v.payee, v.status):
                 entries.append({"date": v.date, "code": v.pv_no, "type": "Voucher",
                                 "party": v.payee, "desc": f"Voucher · {v.status}",
-                                "cin": 0, "cout": v.total, "link": "/vouchers",
+                                "cin": 0, "cout": v.total, "link": f"/vouchers/{v.id}",
                                 "match_key": ("Voucher", v.id)})
     if kind in ("", "Listing"):
         for l in db.query(M.Listing).all():
@@ -1548,10 +1643,11 @@ def ap_aging(request: Request, supplier: str = "", bucket: str = "", status: str
     totals = {bk: sum(r[bk] for r in rows.values()) for bk in buckets}
     grand = sum(totals.values())
     rows = dict(sorted(rows.items(), key=lambda kv: kv[1]["total"], reverse=True))
+    sup_ids = {s.name.lower(): s.id for s in db.query(M.Supplier).all()}
     return render(request, db, "ap_aging.html", "apaging",
                   rows=rows, buckets=buckets, totals=totals, grand=grand, today=today,
                   supplier_names=supplier_names, f_supplier=supplier, f_bucket=bucket,
-                  f_status=status)
+                  f_status=status, sup_ids=sup_ids)
 
 
 @app.get("/reports/statutory", response_class=HTMLResponse)
@@ -1719,7 +1815,7 @@ def pnl(request: Request, month: str = "", db: Session = Depends(get_db)):
                                                M.PettyCashEntry.amount_out > 0).all():
         cat = e.category or "Uncategorized"
         grp = M.group_for(cat)
-        row = SimpleNamespace(pay_no="PC", supplier=e.recorded_by,
+        row = SimpleNamespace(pay_no="PC", supplier=e.recorded_by, id=None,
                               description=f"Petty cash: {e.description}", amount=e.amount_out)
         target = cogs_raw if grp == "COGS" else capex_raw if grp == "CAPEX" else opex_raw
         target.setdefault(cat, []).append(row)
@@ -1832,6 +1928,58 @@ async def telegram_webhook(secret: str, request: Request, db: Session = Depends(
     except Exception as e:
         print("Telegram error:", e)
     return PlainTextResponse("ok")
+
+
+@app.get("/search", response_class=HTMLResponse)
+def global_search(request: Request, q: str = "", db: Session = Depends(get_db)):
+    """One box for 'where is that thing?' — codes, suppliers, invoice numbers,
+    descriptions. An exact code match jumps straight to the record."""
+    ql = q.strip().lower()
+    if not ql:
+        return render(request, db, "search.html", "dashboard", q=q, groups=[], jumped=False)
+
+    like = f"%{ql}%"
+    payments = db.query(M.Payment).filter(
+        func.lower(M.Payment.pay_no).like(like) | func.lower(M.Payment.supplier).like(like)
+        | func.lower(M.Payment.description).like(like) | func.lower(M.Payment.invoice_no).like(like)
+    ).order_by(M.Payment.date.desc()).limit(25).all()
+    vouchers = db.query(M.Voucher).filter(
+        func.lower(M.Voucher.pv_no).like(like) | func.lower(M.Voucher.payee).like(like)
+    ).order_by(M.Voucher.date.desc()).limit(25).all()
+    suppliers = db.query(M.Supplier).filter(
+        func.lower(M.Supplier.name).like(like) | func.lower(M.Supplier.account_no).like(like)
+    ).limit(25).all()
+    docs = db.query(M.Document).filter(
+        func.lower(M.Document.doc_no).like(like) | func.lower(M.Document.supplier).like(like)
+        | func.lower(M.Document.description).like(like)
+    ).order_by(M.Document.id.desc()).limit(25).all()
+    listings = db.query(M.Listing).filter(func.lower(M.Listing.pl_no).like(like)).limit(25).all()
+
+    # Exact code match → go straight there instead of showing a one-row list
+    for p in payments:
+        if p.pay_no.lower() == ql:
+            return RedirectResponse(f"/payments/{p.id}", status_code=302)
+    for v in vouchers:
+        if v.pv_no.lower() == ql:
+            return RedirectResponse(f"/vouchers/{v.id}", status_code=302)
+    for s in suppliers:
+        if s.name.lower() == ql:
+            return RedirectResponse(f"/suppliers/{s.id}", status_code=302)
+
+    groups = [
+        ("Payments", [(p.pay_no, f"{p.supplier or '—'} · {p.description[:50]}",
+                       p.amount, f"/payments/{p.id}", p.status) for p in payments]),
+        ("Vouchers", [(v.pv_no, v.payee, v.total, f"/vouchers/{v.id}", v.status) for v in vouchers]),
+        ("Suppliers", [(s.name, f"{s.sup_type} · {s.bank_name or 'no bank on file'}",
+                        None, f"/suppliers/{s.id}", "Active" if s.active else "Inactive")
+                       for s in suppliers]),
+        ("Documents", [(d.doc_no, f"{d.supplier or d.sender} · {d.description[:50]}",
+                        d.amount, "/documents", d.status) for d in docs]),
+        ("Listings", [(l.pl_no, f"{len(l.vouchers)} vouchers", l.total, "/listings", l.status)
+                      for l in listings]),
+    ]
+    groups = [(name, rows) for name, rows in groups if rows]
+    return render(request, db, "search.html", "dashboard", q=q, groups=groups, jumped=False)
 
 
 @app.get("/health")

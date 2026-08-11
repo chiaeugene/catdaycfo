@@ -29,7 +29,7 @@
       <input type="checkbox" name="pv_ids" value="{{ v.id }}" data-amt="{{ v.total }}" onchange="updateBar()">
       {% endif %}
     </td>
-    <td class="mono"><b>{{ v.pv_no }}</b></td>
+    <td class="mono"><a href="/vouchers/{{ v.id }}"><b>{{ v.pv_no }}</b></a></td>
     <td>{{ v.date.strftime('%d/%m/%y') }}</td>
     <td>{{ v.payee }}</td>
     <td class="num" style="font-weight:700">{{ v.total|rm }}</td>

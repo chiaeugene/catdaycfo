@@ -9,6 +9,9 @@
       {% if stats.docs_pending %}{{ stats.docs_pending }} document{{ 's' if stats.docs_pending != 1 }} waiting for your verification.
       {% else %}Inbox is clear — everything verified and filed.{% endif %}
     </div>
+    <form action="/search" method="get" class="herosearch">
+      <input name="q" placeholder="Search anything — PV-0001, TNB, cat food…" aria-label="Search">
+    </form>
     <div class="quick">
       <a href="/documents">Verify documents</a>
       <a href="/sales">Record sale</a>
@@ -24,27 +27,46 @@
   </div>
 </div>
 
+{% set todo = [] %}
+{% if stats.docs_pending %}{% set _ = todo.append(('/documents', stats.docs_pending ~ ' document' ~ ('s' if stats.docs_pending != 1 else '') ~ ' waiting to be verified', 'Send them into the books', 'amber')) %}{% endif %}
+{% if stats.uncategorized %}{% set _ = todo.append(('/payments?status=Unsorted', stats.uncategorized ~ ' payment' ~ ('s' if stats.uncategorized != 1 else '') ~ ' with no category', 'Uncategorised spend is invisible in the P&L', 'red')) %}{% endif %}
+{% if stats.overdue_stat %}{% set _ = todo.append(('/reports/statutory', stats.overdue_stat ~ ' statutory payment' ~ ('s' if stats.overdue_stat != 1 else '') ~ ' past the 15th', 'EPF / SOCSO / EIS / PCB overdue — penalties apply', 'red')) %}{% endif %}
+{% if stats.pv_draft %}{% set _ = todo.append(('/vouchers', stats.pv_draft ~ ' voucher' ~ ('s' if stats.pv_draft != 1 else '') ~ ' awaiting approval', 'Nothing gets paid until these are approved', 'blue')) %}{% endif %}
+{% if stats.pv_approved %}{% set _ = todo.append(('/listings', stats.pv_approved ~ ' approved voucher' ~ ('s' if stats.pv_approved != 1 else '') ~ ' ready to pay', 'Batch them into a payment listing', 'blue')) %}{% endif %}
+{% if stats.unmatched_bank %}{% set _ = todo.append(('/reconciliation', stats.unmatched_bank ~ ' bank line' ~ ('s' if stats.unmatched_bank != 1 else '') ~ ' unmatched', 'Money moved that the books don\'t explain yet', 'amber')) %}{% endif %}
+
+<h2>Needs your attention 待处理</h2>
+{% if todo %}
+<div class="panel" style="padding:6px 0">
+  {% for link, title, why, tone in todo %}
+  <a href="{{ link }}" class="todo-row">
+    <span class="todo-dot {{ tone }}"></span>
+    <span class="todo-main"><b>{{ title }}</b><span class="todo-why">{{ why }}</span></span>
+    <span class="todo-go">→</span>
+  </a>
+  {% endfor %}
+</div>
+{% else %}
+<div class="panel" style="display:flex;align-items:center;gap:12px">
+  <span style="font-size:22px">✓</span>
+  <div><b>All clear.</b><div style="color:var(--muted);font-size:12.5px">Nothing waiting — inbox verified, vouchers actioned, bank matched.</div></div>
+</div>
+{% endif %}
+
+<h2 style="margin-top:22px">This month 本月 — {{ month }}</h2>
 <div class="cards">
   <a class="card green" href="/sales"><span class="go">→</span>
-    <div class="label">Sales — {{ month }} 销售</div><div class="value">RM {{ stats.sales_month|rm }}</div>
+    <div class="label">Sales 销售</div><div class="value">RM {{ stats.sales_month|rm }}</div>
     <div class="hint">Record &amp; review takings</div></a>
-  <a class="card red" href="/payments"><span class="go">→</span>
-    <div class="label">Expenses — {{ month }} 支出</div><div class="value">RM {{ stats.expenses_month|rm }}</div>
-    <div class="hint">All verified payments</div></a>
+  <a class="card red" href="/pnl"><span class="go">→</span>
+    <div class="label">Total spend 总支出</div><div class="value">RM {{ stats.expenses_month|rm }}</div>
+    <div class="hint">Suppliers {{ stats.spend_split.payments|rm }} · petty {{ stats.spend_split.petty|rm }} · payroll {{ stats.spend_split.payroll|rm }}</div></a>
   <a class="card" href="/pettycash"><span class="go">→</span>
-    <div class="label">Petty cash 零用金</div><div class="value">RM {{ stats.petty_balance|rm }}</div>
-    <div class="hint">Cash in hand now</div></a>
-</div>
-<div class="cards">
-  <a class="card amber" href="/documents"><span class="go">→</span>
-    <div class="label">Docs to verify 待审核</div><div class="value">{{ stats.docs_pending }}</div>
-    <div class="hint">From Telegram &amp; uploads</div></a>
-  <a class="card blue" href="/payments?status=Categorized"><span class="go">→</span>
-    <div class="label">Open payments 未开凭单</div><div class="value">{{ stats.pay_open }}</div>
-    <div class="hint">Ready for a voucher</div></a>
-  <a class="card" href="/vouchers"><span class="go">→</span>
-    <div class="label">Draft vouchers 凭单草稿</div><div class="value">{{ stats.pv_draft }}</div>
-    <div class="hint">Awaiting approval</div></a>
+    <div class="label">Petty cash in hand 零用金</div><div class="value">RM {{ stats.petty_balance|rm }}</div>
+    <div class="hint">Across all tins</div></a>
+  <a class="card blue" href="/reports/cashflow"><span class="go">→</span>
+    <div class="label">Cash flow 现金流</div><div class="value" style="font-size:17px">Look ahead →</div>
+    <div class="hint">8 weeks of expected in/out</div></a>
 </div>
 
 <div class="grid2">

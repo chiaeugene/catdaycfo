@@ -17,6 +17,7 @@
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
     </button>
     <div class="mb-brand">🐱 CATDAY</div>
+    <a href="/search" class="mb-pill" style="background:rgba(0,0,0,.06);color:var(--ink-2)">🔍</a>
     {% if pending_docs %}<a href="/documents" class="mb-pill">{{ pending_docs }} to verify</a>{% endif %}
   </div>
   <div class="nav-scrim" onclick="document.body.classList.remove('nav-open')"></div>
@@ -26,15 +27,30 @@
       <div class="logo">CATDAY</div>
       <small>Finance · 财务系统</small>
     </div>
+    <form action="/search" method="get" class="navsearch">
+      <input name="q" placeholder="Search 搜索…" aria-label="Search">
+    </form>
     <nav>
       {% for glabel, items in nav_groups %}
-        {% if glabel %}<div class="navlabel">{{ glabel }}</div>{% endif %}
-        {% for key, url, ico, label in items %}
-        <a href="{{ url }}" class="{% if key == page %}active{% endif %}" onclick="document.body.classList.remove('nav-open')">
-          {{ icon(ico) }}<span>{{ label }}</span>
-          {% if key == 'documents' and pending_docs %}<span class="pill">{{ pending_docs }}</span>{% endif %}
-        </a>
-        {% endfor %}
+        {% set collapsed = glabel in collapsed_groups and not items|selectattr('0','equalto',page)|list %}
+        {% if collapsed %}
+        <details class="navgroup">
+          <summary class="navlabel">{{ glabel }}</summary>
+          {% for key, url, ico, label in items %}
+          <a href="{{ url }}" class="{% if key == page %}active{% endif %}" onclick="document.body.classList.remove('nav-open')">
+            {{ icon(ico) }}<span>{{ label }}</span>
+          </a>
+          {% endfor %}
+        </details>
+        {% else %}
+          {% if glabel %}<div class="navlabel">{{ glabel }}</div>{% endif %}
+          {% for key, url, ico, label in items %}
+          <a href="{{ url }}" class="{% if key == page %}active{% endif %}" onclick="document.body.classList.remove('nav-open')">
+            {{ icon(ico) }}<span>{{ label }}</span>
+            {% if key == 'documents' and pending_docs %}<span class="pill">{{ pending_docs }}</span>{% endif %}
+          </a>
+          {% endfor %}
+        {% endif %}
       {% endfor %}
     </nav>
     <div class="userbox">

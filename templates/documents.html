@@ -29,11 +29,24 @@
     <span class="docno">{{ d.doc_no }}</span>
     <span class="badge {{ 'categorized' if is_report else 'verified' }}">{{ d.intake_type }}</span>
     {% if d.file_path %}
-    <a class="btn secondary small" style="padding:3px 12px;font-size:11.5px" href="/files/{{ d.file_path }}" target="_blank">{{ icon('eye', 13) }} View document 查看文件</a>
+    <a class="btn secondary small" style="padding:3px 12px;font-size:11.5px" href="/files/{{ d.file_path }}" target="_blank">{{ icon('eye', 13) }} Open full size 全屏</a>
     {% endif %}
     <span class="meta">from <b>{{ d.sender }}</b> · {{ d.received_at.strftime('%d/%m/%Y %H:%M') }}</span>
     {% if d.ai_classified %}<span class="ai-tag">AI understood</span>{% endif %}
   </div>
+
+  {% if d.file_path %}
+  {# Document sits beside the form — no tab-flipping to read an amount off an invoice #}
+  <div class="vc-split">
+    <div class="vc-doc">
+      {% if d.file_path.lower().endswith('.pdf') %}
+      <embed src="/files/{{ d.file_path }}#toolbar=0" type="application/pdf">
+      {% else %}
+      <a href="/files/{{ d.file_path }}" target="_blank"><img src="/files/{{ d.file_path }}" alt="{{ d.doc_no }}"></a>
+      {% endif %}
+    </div>
+    <div class="vc-form">
+  {% endif %}
 
   {% if d.raw_text %}
   <div style="background:var(--bg);border-radius:8px;padding:9px 12px;margin-bottom:12px;font-size:12.5px;color:var(--ink-2)">
@@ -89,7 +102,10 @@
       <div><label>Supplier / Claimant 供应商/申请人</label><input name="supplier" value="{{ d.supplier }}"></div>
       <div><label>Invoice No. 发票号</label><input name="invoice_no" value="{{ d.invoice_no }}"></div>
       <div><label>Amount (RM) 金额</label><input type="number" step="0.01" name="amount" value="{{ d.amount }}"></div>
-      <div><label>Month 月份</label><input name="month" value="{{ d.month }}" placeholder="Jul 2026"></div>
+      <div><label>Month 月份</label>
+        <select name="month">
+          {% for m in months %}<option {% if d.month == m %}selected{% endif %}>{{ m }}</option>{% endfor %}
+        </select></div>
       <div><label>Category 类别</label>
         <select name="category"><option value=""></option>{% for c in M.CATEGORIES %}<option {% if d.category==c %}selected{% endif %}>{{ c }}</option>{% endfor %}</select></div>
       <div class="full"><label>Description 描述</label><input name="description" value="{{ d.description }}"></div>
@@ -107,6 +123,7 @@
     <input name="reason" placeholder="Reject reason 拒绝原因" style="width:260px" class="slim">
     <button type="submit" class="danger small">{{ icon('x', 12) }} Reject 拒绝</button>
   </form>
+  {% if d.file_path %}</div></div>{% endif %}
 </div>
 {% else %}
 <div class="panel empty">All clear — nothing waiting for verification.<br>没有待审核。</div>
