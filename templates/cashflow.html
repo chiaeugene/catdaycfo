@@ -1,7 +1,8 @@
 {% extends "base.html" %}
 {% from "icons.html" import icon %}
 {% block content %}
-<div class="pagehead"><h1>Cash Flow Projection 现金流预测</h1></div>
+<div class="pagehead"><h1>Cash Flow Projection 现金流预测</h1>
+  <button class="secondary" onclick="window.print()">{{ icon('file', 14) }} Print 打印</button></div>
 <div class="sub">Week-by-week look-ahead: cash on hand today, expected takings, and every payment coming due (vouchers awaiting payment, EPF/SOCSO/EIS/PCB deadlines, payroll, recurring bills). Use it to spot the week cash gets tight — before it happens.</div>
 
 <div class="cards">

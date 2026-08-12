@@ -4,11 +4,15 @@
 :root {
   --ink: #1d1d1f;
   --ink-2: #424245;
-  --muted: #86868b;
+  /* #86868b measured 3.33:1 on --bg — below WCAG AA. This is the lightest grey
+     that clears 4.5:1 on both --bg and --card, and helper text is the product
+     for a non-finance operator. --muted-soft is for decoration only, never text. */
+  --muted: #6e6e73;
+  --muted-soft: #8e8e93;
   --bg: #f5f5f7;
   --card: #ffffff;
-  --line: rgba(0,0,0,.07);
-  --hairline: rgba(0,0,0,.05);
+  --line: rgba(0,0,0,.09);
+  --hairline: rgba(0,0,0,.06);
   --brand: #a6450f;
   --brand-deep: #7f2f01;
   --brand-hot: #d2691e;
@@ -26,6 +30,52 @@
   --ctl-h: 40px;
   --ease: cubic-bezier(.25,.1,.25,1);
 }
+/* Dark mode follows the OS. Every token below was contrast-checked against the
+   dark surfaces (all ≥6.4:1) — dark palettes are desaturated tonal variants,
+   not inverted light values, or the brand terracotta goes muddy and illegible. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #f5f5f7;
+    --ink-2: #c9c9ce;
+    --muted: #9b9ba1;
+    --muted-soft: #7c7c83;
+    --bg: #0e0e11;
+    --card: #17171a;
+    --line: rgba(255,255,255,.11);
+    --hairline: rgba(255,255,255,.07);
+    --brand: #e08a4e;
+    --brand-deep: #f0a875;
+    --brand-hot: #e8964f;
+    --brand-tint: rgba(224,138,78,.15);
+    --gold: #e0a437;
+    --green: #4ec97b; --green-bg: rgba(78,201,123,.15);
+    --red: #ff7a6e;   --red-bg: rgba(255,122,110,.15);
+    --amber: #e0a437; --amber-bg: rgba(224,164,55,.15);
+    --blue: #74a5f0;  --blue-bg: rgba(116,165,240,.15);
+    --glass: rgba(23,23,26,.78);
+    --shadow-sm: 0 1px 2px rgba(0,0,0,.4);
+    --shadow-md: 0 2px 12px rgba(0,0,0,.45), 0 1px 3px rgba(0,0,0,.3);
+    --shadow-lg: 0 18px 50px rgba(0,0,0,.6);
+  }
+  input, select, textarea { background: #1f1f23; border-color: rgba(255,255,255,.16); }
+  input:focus, select:focus, textarea:focus { background: #24242a; }
+  .navsearch input { background: rgba(255,255,255,.07); }
+  .navsearch input:focus { background: #24242a; }
+  button.secondary, .btn.secondary { background: #1f1f23; color: var(--ink); border-color: rgba(255,255,255,.18); }
+  button.secondary:hover { background: #26262c; }
+  button, .btn { background: #2b2b32; }
+  button:hover, .btn:hover { background: #35353d; }
+  button.danger { background: #1f1f23; }
+  dialog { background: var(--card); color: var(--ink); }
+  .hero .quick a { background: rgba(255,255,255,.06); }
+  .hero .quick a:hover { background: var(--ink); color: var(--bg); }
+  .filters a.on { background: var(--brand); color: #fff; border-color: var(--brand); }
+  .section-row td { background: rgba(255,255,255,.04) !important; }
+  tbody tr:hover td { background: rgba(255,255,255,.035); }
+  .todo-row:hover { background: rgba(255,255,255,.04); }
+  .vc-doc img { background: #fff; }   /* scanned invoices are white documents */
+}
+
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html { font-size: 14px; scroll-behavior: smooth; }
 body {
@@ -65,7 +115,7 @@ a { color: var(--brand); }
 .sidebar nav details.navgroup > summary::after { content: "▸"; font-size: 9px; opacity: .55; }
 .sidebar nav details.navgroup[open] > summary::after { content: "▾"; }
 .sidebar nav details.navgroup > summary:hover { color: var(--ink); }
-.sidebar nav .navlabel { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 1.1px; color: var(--muted); padding: 14px 12px 5px; }
+.sidebar nav .navlabel { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 1.1px; color: var(--muted); padding: 14px 12px 5px; }
 .sidebar nav a {
   display: flex; align-items: center; gap: 12px;
   padding: 9px 12px; margin: 1px 0; border-radius: 10px;
@@ -93,8 +143,8 @@ a { color: var(--brand); }
 /* ═══ Typography ═══ */
 .pagehead { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 6px; }
 h1 { font-size: 26px; color: var(--ink); font-weight: 800; letter-spacing: -.6px; }
-.sub { color: var(--muted); font-size: 13px; margin-bottom: 26px; max-width: 720px; line-height: 1.55; }
-h2 { font-size: 11px; color: var(--muted); margin-bottom: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.3px; }
+.sub { color: var(--muted); font-size: 13.5px; margin-bottom: 26px; max-width: 720px; line-height: 1.55; }
+h2 { font-size: 11.5px; color: var(--muted); margin-bottom: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.3px; }
 
 /* ═══ Hero ═══ */
 .hero {
@@ -108,11 +158,11 @@ h2 { font-size: 11px; color: var(--muted); margin-bottom: 13px; font-weight: 700
   display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 26px;
   position: relative; overflow: hidden;
 }
-.hero .greet { font-size: 11px; text-transform: uppercase; letter-spacing: 2px; color: var(--brand); font-weight: 800; }
+.hero .greet { font-size: 11.5px; text-transform: uppercase; letter-spacing: 2px; color: var(--brand); font-weight: 800; }
 .hero h1 { font-size: clamp(26px, 3.2vw, 38px); margin: 8px 0 6px; letter-spacing: -1.2px; font-weight: 800; }
 .hero .heroline { font-size: 14px; color: var(--muted); max-width: 460px; line-height: 1.5; }
 .hero .heronum { text-align: right; }
-.hero .heronum .lbl { font-size: 10.5px; text-transform: uppercase; letter-spacing: 1.6px; color: var(--muted); font-weight: 700; }
+.hero .heronum .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 1.6px; color: var(--muted); font-weight: 700; }
 .hero .heronum .val {
   font-size: clamp(38px, 4.6vw, 58px); font-weight: 900; letter-spacing: -2.5px;
   font-variant-numeric: tabular-nums; line-height: 1.1; margin-top: 2px;
@@ -163,9 +213,9 @@ h2 { font-size: 11px; color: var(--muted); margin-bottom: 13px; font-weight: 700
 a.card { cursor: pointer; }
 a.card:hover { transform: translateY(-3px); box-shadow: var(--shadow-lg); }
 a.card:active { transform: translateY(-1px) scale(.99); }
-.card .label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 1.1px; font-weight: 700; }
+.card .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 1.1px; font-weight: 700; }
 .card .value { font-size: 26px; font-weight: 800; color: var(--ink); margin-top: 5px; font-variant-numeric: tabular-nums; letter-spacing: -.8px; }
-.card .hint { font-size: 11.5px; color: var(--muted); margin-top: 4px; }
+.card .hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
 .card .go { position: absolute; right: 16px; top: 16px; font-size: 13px; color: var(--muted); opacity: 0; transition: opacity .18s, transform .18s; transform: translateX(-4px); }
 a.card:hover .go { opacity: 1; transform: translateX(0); }
 .card.green .value { color: var(--green); }
@@ -176,8 +226,16 @@ a.card:hover .go { opacity: 1; transform: translateX(0); }
 /* ═══ Tables ═══ */
 .tablewrap { background: var(--card); border: 1px solid var(--hairline); border-radius: var(--r-md); box-shadow: var(--shadow-sm); overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; }
-th { background: transparent; color: var(--muted); text-align: left; padding: 13px 14px 9px; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; border-bottom: 1px solid var(--line); white-space: nowrap; font-weight: 700; }
-td { padding: 11px 14px; border-bottom: 1px solid var(--hairline); font-size: 13px; vertical-align: middle; color: var(--ink-2); }
+/* Column headers stay put while scrolling a 500-row ledger — without this you
+   lose track of which column a number belongs to halfway down the page. */
+th {
+  position: sticky; top: 0; z-index: 2;
+  background: var(--card); color: var(--muted); text-align: left; padding: 13px 14px 9px;
+  font-size: 11px; text-transform: uppercase; letter-spacing: 1px;
+  border-bottom: 1px solid var(--line); white-space: nowrap; font-weight: 700;
+  box-shadow: 0 1px 0 var(--line);
+}
+td { padding: 12px 14px; border-bottom: 1px solid var(--hairline); font-size: 13.5px; vertical-align: middle; color: var(--ink-2); }
 td b { color: var(--ink); }
 tr:last-child td { border-bottom: none; }
 tbody tr { transition: background .12s; }
@@ -188,7 +246,7 @@ td.mono { font-family: "SF Mono", "Cascadia Code", Consolas, monospace; font-siz
 .section-row td { background: rgba(0,0,0,.025) !important; font-weight: 700; color: var(--ink); font-size: 10.5px; text-transform: uppercase; letter-spacing: 1px; }
 
 /* ═══ Badges ═══ */
-.badge { display: inline-block; padding: 3.5px 11px; border-radius: 100px; font-size: 10.5px; font-weight: 700; white-space: nowrap; letter-spacing: .1px; }
+.badge { display: inline-block; padding: 4px 11px; border-radius: 100px; font-size: 11px; font-weight: 700; white-space: nowrap; letter-spacing: .1px; }
 .badge.pending, .badge.unsorted { background: var(--amber-bg); color: var(--amber); }
 .badge.draft, .badge.categorized { background: var(--blue-bg); color: var(--blue); }
 .badge.onvoucher, .badge.approved, .badge.submitted, .badge.verified { background: var(--brand-tint); color: var(--brand-deep); }
@@ -197,7 +255,7 @@ td.mono { font-family: "SF Mono", "Cascadia Code", Consolas, monospace; font-siz
 
 /* ═══ Panels & forms ═══ */
 .panel { background: var(--card); border: 1px solid var(--hairline); border-radius: var(--r-md); padding: 22px 24px; margin-bottom: 18px; box-shadow: var(--shadow-sm); }
-label { display: block; font-size: 10px; color: var(--muted); margin-bottom: 5px; font-weight: 700; text-transform: uppercase; letter-spacing: .9px; }
+label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 5px; font-weight: 700; text-transform: uppercase; letter-spacing: .9px; }
 input, select, textarea {
   height: var(--ctl-h); padding: 0 12px; border: 1px solid rgba(0,0,0,.14); border-radius: var(--r-sm);
   font-size: 13.5px; font-family: inherit; background: #fff; color: var(--ink); width: 100%;
@@ -236,7 +294,17 @@ button.danger:hover { background: var(--red-bg); border-color: var(--red); }
 button.small, .btn.small { height: 31px; padding: 0 14px; font-size: 11.5px; border-radius: 8px; }
 button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); box-shadow: none; }
 button.ghost:hover { background: rgba(0,0,0,.04); color: var(--ink); }
-:focus-visible { outline: 2.5px solid var(--brand); outline-offset: 2px; }
+:focus-visible { outline: 2.5px solid var(--brand); outline-offset: 2px; border-radius: 4px; }
+button:disabled, .btn:disabled {
+  opacity: .42; cursor: not-allowed; transform: none !important; box-shadow: none !important;
+}
+button:disabled:hover, .btn:disabled:hover { background: inherit; transform: none; }
+/* Slimmer scrollbars so dense tables don't gain a heavy grey bar */
+* { scrollbar-width: thin; scrollbar-color: rgba(128,128,128,.4) transparent; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(128,128,128,.35); border-radius: 6px; border: 2px solid transparent; background-clip: content-box; }
+::-webkit-scrollbar-thumb:hover { background: rgba(128,128,128,.55); background-clip: content-box; }
 
 /* ═══ Login ═══ */
 .login-wrap {
@@ -379,6 +447,32 @@ details.rowedit summary { cursor: pointer; font-size: 11.5px; color: var(--brand
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
   html { scroll-behavior: auto; }
+}
+
+/* ═══ Print — P&L, Balance Sheet and vouchers get handed to accountants
+   and investors on paper. Without this they print with the sidebar,
+   dark chrome and hidden table rows. ═══ */
+@media print {
+  @page { margin: 14mm; }
+  .sidebar, .mobilebar, .nav-scrim, .selectbar, .filters,
+  .hero .quick, .herosearch, .navsearch { display: none !important; }
+  .layout { display: block; }
+  .main { padding: 0; max-width: none; }
+  .main > * { animation: none !important; }
+  body { background: #fff; color: #000; font-size: 11pt; }
+  .panel, .card, .tablewrap, .hero {
+    box-shadow: none !important; border: 1px solid #ccc !important;
+    background: #fff !important; break-inside: avoid;
+  }
+  .hero { background-image: none !important; }
+  .hero .heronum .val { -webkit-text-fill-color: #000; color: #000; }
+  th { position: static; box-shadow: none; }
+  tr, .verify-card { break-inside: avoid; }
+  thead { display: table-header-group; }   /* repeat headers across pages */
+  a { text-decoration: none; color: #000; }
+  a[href^="/"]::after { content: ""; }     /* don't print internal URLs */
+  details > summary { list-style: none; font-weight: 600; }   /* summary is the category label — keep it */
+  .total-row td { background: #f0f0f0 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
 
 /* ═══ Mobile ═══ */

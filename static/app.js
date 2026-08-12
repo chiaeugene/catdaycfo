@@ -21,4 +21,19 @@
     });
   }
   document.addEventListener("DOMContentLoaded", labelTables);
+
+  // Printing a P&L with collapsed drill-downs loses the transactions behind each
+  // category. Expand everything for the print, then restore the screen state.
+  var reopened = [];
+  window.addEventListener("beforeprint", function () {
+    reopened = [];
+    document.querySelectorAll("details:not([open])").forEach(function (d) {
+      d.open = true;
+      reopened.push(d);
+    });
+  });
+  window.addEventListener("afterprint", function () {
+    reopened.forEach(function (d) { d.open = false; });
+    reopened = [];
+  });
 })();

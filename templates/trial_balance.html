@@ -1,7 +1,8 @@
 {% extends "base.html" %}
 {% from "icons.html" import icon %}
 {% block content %}
-<div class="pagehead"><h1>Trial Balance 试算表</h1></div>
+<div class="pagehead"><h1>Trial Balance 试算表</h1>
+  <button class="secondary" onclick="window.print()">{{ icon('file', 14) }} Print 打印</button></div>
 <div class="sub">Every account's net balance from the double-entry journal — debits must equal credits. Click an account to see its ledger. Auto-derived from payments, sales, petty cash, payroll and statutory records.</div>
 
 <div class="panel">

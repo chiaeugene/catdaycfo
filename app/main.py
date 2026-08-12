@@ -34,6 +34,23 @@ templates.env.filters["rm"] = lambda v: f"{(v or 0):,.2f}"
 templates.env.filters["abs"] = lambda v: abs(v or 0)
 app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
 
+# Cache-buster for /static assets. Browsers hold onto style.css hard, so a CSS
+# change would otherwise not reach users until they force-refresh. Keyed to the
+# deployed commit in production, to file mtime locally.
+def _asset_version() -> str:
+    commit = os.environ.get("RENDER_GIT_COMMIT")
+    if commit:
+        return commit[:10]
+    try:
+        css = os.path.join(BASE_DIR, "static", "style.css")
+        js = os.path.join(BASE_DIR, "static", "app.js")
+        return str(int(max(os.path.getmtime(css), os.path.getmtime(js))))
+    except OSError:
+        return "dev"
+
+
+ASSET_V = _asset_version()
+
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "catdayhook")
 BASE_URL = os.environ.get("BASE_URL", "https://catday-system.onrender.com").rstrip("/")
 # URL-safe token derived from the secret — base64 secrets contain +/= which
@@ -107,7 +124,8 @@ def render(request: Request, db: Session, template: str, page: str, **ctx):
         if user.role in ("admin", "manager") else 0
     return templates.TemplateResponse(request, template,
         {"user": user, "nav_groups": nav_groups, "page": page, "M": M, "today": date.today(),
-         "pending_docs": pending_docs, "collapsed_groups": COLLAPSED_GROUPS, **ctx})
+         "pending_docs": pending_docs, "collapsed_groups": COLLAPSED_GROUPS,
+         "asset_v": ASSET_V, **ctx})
 
 
 def month_str(d: date | None = None) -> str:
@@ -180,7 +198,7 @@ def supplier_map(db: Session, names) -> dict:
 # ─────────────────────────── AUTH (passcode) ───────────────────────────
 def _login_ctx(db: Session, error: str = ""):
     profiles = db.query(M.User).filter(M.User.active == True).order_by(M.User.id).all()  # noqa: E712
-    return {"profiles": profiles, "error": error}
+    return {"profiles": profiles, "error": error, "asset_v": ASSET_V}
 
 
 @app.get("/login", response_class=HTMLResponse)

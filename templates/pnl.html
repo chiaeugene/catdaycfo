@@ -1,6 +1,8 @@
 {% extends "base.html" %}
+{% from "icons.html" import icon %}
 {% block content %}
-<div class="pagehead"><h1>Profit &amp; Loss 损益表 — {{ month }}</h1></div>
+<div class="pagehead"><h1>Profit &amp; Loss 损益表 — {{ month }}</h1>
+  <button class="secondary" onclick="window.print()">{{ icon('file', 14) }} Print 打印</button></div>
 <div class="sub">Live statement from actual sales, verified payments, petty cash and confirmed payroll. Click any line to see the transactions behind it.</div>
 
 <div class="filters">
