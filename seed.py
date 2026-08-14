@@ -1,13 +1,13 @@
-"""One-time seed: admin users + the 9 CATDAY staff with Malaysian statutory presets.
-Safe to re-run (skips existing). Values are editable presets, not tax advice —
-verify against actual EPF/SOCSO/EIS tables.
+"""One-time seed: admin user, base Settings, and the Chart of Accounts.
+Safe to re-run (skips existing). Staff/suppliers/opening balances are real
+business data and live in seed_reconstruction.py, not here.
 """
 from dotenv import load_dotenv
 
 load_dotenv()
 
 from app.database import Base, engine, SessionLocal, run_migrations
-from app.models import User, Staff, Setting
+from app.models import User, Setting
 from app.auth import hash_password
 
 Base.metadata.create_all(engine)
@@ -41,29 +41,6 @@ for model, fields in [
         for f in fields:
             if getattr(row, f) in OLD_NAMES:
                 setattr(row, f, "Jasmine")
-
-# name, position, basic, allowance — EPF/SOCSO/EIS auto-calculated
-from app.statutory import calc_statutory
-
-STAFF = [
-    ("Karen",             "Feline Care Director", 8000, 0),
-    ("Cat Caretaker 1",   "Cat Caretaker",        1700, 0),
-    ("Cat Caretaker 2",   "Cat Caretaker",        1700, 0),
-    ("Chief Concierge",   "Reception",            2634, 0),
-    ("Senior Groomer",    "Senior Groomer",       3040, 0),
-    ("Junior Groomer",    "Junior Groomer",       1700, 0),
-    ("Steward 1",         "Housekeeping",         1600, 0),
-    ("Steward 2",         "Housekeeping",         1600, 0),
-    ("Community Curator", "Community & Media",    3040, 0),
-]
-if db.query(Staff).count() == 0:
-    for name, pos, base, allw in STAFF:
-        st = calc_statutory(base + allw)
-        db.add(Staff(name=name, position=pos, base_salary=base, allowance=allw,
-                     epf_employer=st["epf_er"], epf_employee=st["epf_ee"],
-                     socso_employer=st["socso_er"], socso_employee=st["socso_ee"],
-                     eis_employer=st["eis_er"], eis_employee=st["eis_ee"]))
-    print(f"Seeded {len(STAFF)} staff with auto-calculated statutory.")
 
 DEFAULTS = {
     "COMPANY_NAME": "CATDAY SDN BHD",
