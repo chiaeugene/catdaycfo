@@ -18,6 +18,7 @@
   <div>
     <div class="panel">
       <h2>Users 用户</h2>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Each person's passcode is their login — there's no shared system passcode anymore. <code>viewer</code> role can see everything but can't change anything. See the <a href="/reports/audit-log">Audit Log</a> for every action taken.</div>
       <div class="tablewrap" style="box-shadow:none">
       <table>
         <tr><th>Username</th><th>Name</th><th>Role</th><th>Telegram ID</th><th>Status</th><th></th></tr>
@@ -35,9 +36,9 @@
               </form>
               {% endif %}
               <details class="rowedit">
-                <summary>password</summary>
+                <summary>passcode</summary>
                 <form method="post" action="/settings/users/{{ u.id }}/password" class="inline" style="margin-top:6px">
-                  <input name="password" type="password" placeholder="new password" class="slim" required>
+                  <input name="password" type="password" inputmode="numeric" placeholder="new passcode" class="slim" required>
                   <button class="small" type="submit">Set</button>
                 </form>
               </details>
@@ -52,7 +53,7 @@
       <h2>Add user 添加用户</h2>
       <form class="inline" method="post" action="/settings/users/new">
         <div><label>Username</label><input name="username" required style="width:110px"></div>
-        <div><label>Password</label><input name="password" type="password" required style="width:110px"></div>
+        <div><label>Passcode</label><input name="password" type="password" inputmode="numeric" required style="width:110px"></div>
         <div><label>Display name</label><input name="display_name" required style="width:110px"></div>
         <div><label>Role</label><select name="role">{% for r in M.ROLES %}<option>{{ r }}</option>{% endfor %}</select></div>
         <div><label>Telegram ID</label><input name="telegram_id" style="width:100px"></div>
@@ -82,8 +83,6 @@
       <input name="TELEGRAM_WHITELIST" value="{{ settings.get('TELEGRAM_WHITELIST','*') }}" style="width:100%;margin-bottom:12px">
       <label>Petty cash float target 零用金目标 RM</label>
       <input name="PETTY_CASH_FLOAT" value="{{ settings.get('PETTY_CASH_FLOAT','5000') }}" style="width:100%;margin-bottom:12px">
-      <label>System passcode 系统通行码</label>
-      <input name="PASSCODE" value="{{ settings.get('PASSCODE','125180') }}" style="width:100%;margin-bottom:12px">
       <label>SST registered? 是否注册SST</label>
       <select name="SST_REGISTERED" style="width:100%;margin-bottom:12px">
         <option value="no" {% if settings.get('SST_REGISTERED')!='yes' %}selected{% endif %}>No — track for reference</option>

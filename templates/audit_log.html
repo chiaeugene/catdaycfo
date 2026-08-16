@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block content %}
+<div class="pagehead"><h1>Audit Log 操作记录</h1></div>
+<div class="sub">Every action that changes something in the system — who did it, when, and whether it was actually allowed through. Written automatically; nothing here can be edited or deleted.</div>
+
+<div class="cards">
+  <div class="card"><div class="label">Entries shown 条数</div><div class="value">{{ entries|length }}</div>
+    <div class="hint">Latest 500</div></div>
+  <div class="card {% if blocked_count %}amber{% endif %}"><div class="label">Blocked attempts 被阻止</div><div class="value">{{ blocked_count }}</div>
+    <div class="hint">View-only access tried to change something</div></div>
+</div>
+
+<div class="panel">
+  <form method="get" action="/reports/audit-log">
+    <div class="formrow" style="grid-template-columns:200px 1fr auto auto">
+      <div><label>Person 人员</label>
+        <select name="user_id">
+          <option value="0">All</option>
+          {% for u in users %}<option value="{{ u.id }}" {% if f_user_id==u.id %}selected{% endif %}>{{ u.display_name }}</option>{% endfor %}
+        </select></div>
+      <div><label>Action contains 操作包含</label><input name="action" value="{{ f_action }}" placeholder="e.g. voucher, payment, login"></div>
+      <div class="f-btn"><button type="submit">{{ icon('eye', 14) }} Filter</button></div>
+      <div class="f-btn"><a class="btn secondary" href="/reports/audit-log">Clear</a></div>
+    </div>
+  </form>
+</div>
+
+<div class="tablewrap">
+  <table>
+    <tr><th>When</th><th>Who</th><th>Action</th><th>Path</th><th>Result</th></tr>
+    {% for e in entries %}
+    <tr {% if e.blocked %}style="background:var(--amber-bg)"{% endif %}>
+      <td class="mono">{{ e.timestamp.strftime('%d/%m/%y %H:%M:%S') }}</td>
+      <td><b>{{ e.user_name }}</b></td>
+      <td>{{ e.action }}</td>
+      <td class="mono" style="color:var(--muted)">{{ e.method }} {{ e.path }}</td>
+      <td>
+        {% if e.blocked %}
+        <span class="badge pending">Blocked</span>
+        {% elif e.status_code >= 400 %}
+        <span class="badge void">Error {{ e.status_code }}</span>
+        {% else %}
+        <span class="badge paid">OK</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="5" class="empty">No matching activity.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+{% if entries|length == 500 %}<div class="sub" style="margin-top:10px">Showing latest 500 — narrow the filter to see more specific activity.</div>{% endif %}
+{% endblock %}

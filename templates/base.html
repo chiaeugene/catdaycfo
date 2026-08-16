@@ -60,6 +60,12 @@
     </div>
   </aside>
   <main class="main">
+    {% if user.role == 'viewer' %}
+    <div class="viewer-banner">{{ icon('eye', 13) }} View-only access — you can see everything, nothing here can be changed by you.</div>
+    {% endif %}
+    {% if request.query_params.get('viewonly') %}
+    <div class="viewer-banner" style="background:var(--red-bg);color:var(--red);border-color:rgba(208,54,42,.25)">{{ icon('x', 13) }} That action was blocked — your account is view-only.</div>
+    {% endif %}
     {% block content %}{% endblock %}
   </main>
 </div>

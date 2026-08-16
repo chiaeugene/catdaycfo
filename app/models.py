@@ -4,7 +4,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .database import Base
 
 # ── Constants ────────────────────────────────────────────────────────────────
-ROLES = ["admin", "manager", "staff"]
+# "viewer" is read-only system-wide — enforced centrally in app/audit.py's
+# AccessControlMiddleware, not by individual routes (many older routes never
+# had their own role check, so a per-route approach would miss some).
+ROLES = ["admin", "manager", "staff", "viewer"]
 
 CATEGORIES = [
     "Renovation", "Equipment", "Cat Supplies", "Grooming Supplies", "Utilities",
@@ -87,6 +90,23 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(20), default="staff")
     telegram_id: Mapped[str] = mapped_column(String(30), default="")
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class AuditLog(Base):
+    """Every mutating action, who did it, and whether it was actually allowed
+    through. Written by AccessControlMiddleware — not by individual routes —
+    so nothing can bypass it by forgetting to log."""
+    __tablename__ = "audit_log"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    user_name: Mapped[str] = mapped_column(String(100), default="")   # captured at the time — survives renames
+    method: Mapped[str] = mapped_column(String(10), default="")
+    path: Mapped[str] = mapped_column(String(300), default="")
+    query: Mapped[str] = mapped_column(String(300), default="")
+    action: Mapped[str] = mapped_column(String(200), default="")
+    status_code: Mapped[int] = mapped_column(Integer, default=0)
+    blocked: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class Document(Base):

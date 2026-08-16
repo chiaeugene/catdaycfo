@@ -17,12 +17,18 @@ from .database import Base, engine, get_db, run_migrations
 from . import models as M
 from .auth import hash_password, verify_password, current_user
 from . import telegram_bot, pdfgen, claude_ai, ledger
+from .audit import AccessControlMiddleware
 from .statutory import calc_statutory
 
 Base.metadata.create_all(engine)
 run_migrations()
 
 app = FastAPI(title="CATDAY System")
+# Registration order matters: Starlette makes the LAST-added middleware the
+# OUTERMOST wrapper, so SessionMiddleware must be added after
+# AccessControlMiddleware — otherwise AccessControlMiddleware runs before
+# SessionMiddleware has parsed the session cookie, and request.session raises.
+app.add_middleware(AccessControlMiddleware)
 app.add_middleware(SessionMiddleware, secret_key=os.environ.get("SECRET_KEY", "catday-dev-secret"))
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -62,40 +68,46 @@ WEBHOOK_TOKEN = _hashlib.sha256(WEBHOOK_SECRET.encode()).hexdigest()[:40]
 # Grouped by WHEN you use it, not by accounting taxonomy — the person running
 # this daily is an operator, not a bookkeeper. Everyday work sits at the top;
 # the formal accounting screens collapse away until an accountant needs them.
+# "viewer" (Jasmine's role) is granted read access to every business page —
+# she's the boss, she views everything — but never Setup, which is system
+# config rather than business data. Mutation is blocked centrally for viewer
+# regardless of what's listed here (see AccessControlMiddleware); these role
+# tuples only control page *visibility* in the nav and the render() gate.
 NAV_GROUPS = [
     ("", [
-        ("dashboard", "/", "home", "Dashboard", ("admin", "manager", "staff")),
+        ("dashboard", "/", "home", "Dashboard", ("admin", "manager", "staff", "viewer")),
     ]),
     ("Every day 每天", [
-        ("documents", "/documents", "inbox", "Verify Inbox", ("admin", "manager")),
-        ("sales", "/sales", "cart", "Sales", ("admin", "manager", "staff")),
-        ("pettycash", "/pettycash", "coins", "Petty Cash", ("admin", "manager", "staff")),
-        ("boarding", "/boarding", "cat", "Boarding", ("admin", "manager", "staff")),
+        ("documents", "/documents", "inbox", "Verify Inbox", ("admin", "manager", "viewer")),
+        ("sales", "/sales", "cart", "Sales", ("admin", "manager", "staff", "viewer")),
+        ("pettycash", "/pettycash", "coins", "Petty Cash", ("admin", "manager", "staff", "viewer")),
+        ("boarding", "/boarding", "cat", "Boarding", ("admin", "manager", "staff", "viewer")),
     ]),
     ("Paying suppliers 付款", [
-        ("payments", "/payments", "card", "Payments", ("admin", "manager")),
-        ("vouchers", "/vouchers", "receipt", "Vouchers", ("admin", "manager")),
-        ("listings", "/listings", "list", "Listings", ("admin", "manager")),
-        ("suppliers", "/suppliers", "landmark", "Suppliers", ("admin", "manager")),
+        ("payments", "/payments", "card", "Payments", ("admin", "manager", "viewer")),
+        ("vouchers", "/vouchers", "receipt", "Vouchers", ("admin", "manager", "viewer")),
+        ("listings", "/listings", "list", "Listings", ("admin", "manager", "viewer")),
+        ("suppliers", "/suppliers", "landmark", "Suppliers", ("admin", "manager", "viewer")),
     ]),
     ("Every month 每月", [
-        ("payroll", "/payroll", "banknote", "Payroll", ("admin",)),
-        ("statutory", "/reports/statutory", "landmark", "Statutory Dues", ("admin",)),
-        ("reconciliation", "/reconciliation", "banknote", "Bank Reconciliation", ("admin", "manager")),
-        ("pnl", "/pnl", "chart", "Profit & Loss", ("admin",)),
+        ("payroll", "/payroll", "banknote", "Payroll", ("admin", "viewer")),
+        ("statutory", "/reports/statutory", "landmark", "Statutory Dues", ("admin", "viewer")),
+        ("reconciliation", "/reconciliation", "banknote", "Bank Reconciliation", ("admin", "manager", "viewer")),
+        ("pnl", "/pnl", "chart", "Profit & Loss", ("admin", "viewer")),
     ]),
     ("Reports 报告", [
-        ("cashflow", "/reports/cashflow", "chart", "Cash Flow", ("admin",)),
-        ("apaging", "/reports/ap-aging", "list", "AP Aging", ("admin", "manager")),
-        ("gl", "/reports/gl", "list", "General Ledger", ("admin", "manager")),
-        ("tax", "/reports/tax", "receipt", "SST / Tax", ("admin", "manager")),
-        ("einvoice", "/reports/einvoice-readiness", "receipt", "e-Invoice Readiness", ("admin",)),
+        ("cashflow", "/reports/cashflow", "chart", "Cash Flow", ("admin", "viewer")),
+        ("apaging", "/reports/ap-aging", "list", "AP Aging", ("admin", "manager", "viewer")),
+        ("gl", "/reports/gl", "list", "General Ledger", ("admin", "manager", "viewer")),
+        ("tax", "/reports/tax", "receipt", "SST / Tax", ("admin", "manager", "viewer")),
+        ("einvoice", "/reports/einvoice-readiness", "receipt", "e-Invoice Readiness", ("admin", "viewer")),
+        ("auditlog", "/reports/audit-log", "list", "Audit Log", ("admin", "viewer")),
     ]),
     ("Accounting 会计", [
-        ("tb", "/reports/trial-balance", "list", "Trial Balance", ("admin",)),
-        ("bs", "/reports/balance-sheet", "chart", "Balance Sheet", ("admin",)),
-        ("journal", "/accounting/journal", "receipt", "Journal", ("admin",)),
-        ("coa", "/accounting/coa", "settings", "Chart of Accounts", ("admin",)),
+        ("tb", "/reports/trial-balance", "list", "Trial Balance", ("admin", "viewer")),
+        ("bs", "/reports/balance-sheet", "chart", "Balance Sheet", ("admin", "viewer")),
+        ("journal", "/accounting/journal", "receipt", "Journal", ("admin", "viewer")),
+        ("coa", "/accounting/coa", "settings", "Chart of Accounts", ("admin", "viewer")),
     ]),
     ("Setup", [
         ("settings", "/settings", "settings", "Settings", ("admin",)),
@@ -121,7 +133,7 @@ def render(request: Request, db: Session, template: str, page: str, **ctx):
         if visible:
             nav_groups.append((glabel, visible))
     pending_docs = db.query(M.Document).filter(M.Document.status == "Pending").count() \
-        if user.role in ("admin", "manager") else 0
+        if user.role in ("admin", "manager", "viewer") else 0
     return templates.TemplateResponse(request, template,
         {"user": user, "nav_groups": nav_groups, "page": page, "M": M, "today": date.today(),
          "pending_docs": pending_docs, "collapsed_groups": COLLAPSED_GROUPS,
@@ -196,26 +208,30 @@ def supplier_map(db: Session, names) -> dict:
 
 
 # ─────────────────────────── AUTH (passcode) ───────────────────────────
-def _login_ctx(db: Session, error: str = ""):
-    profiles = db.query(M.User).filter(M.User.active == True).order_by(M.User.id).all()  # noqa: E712
-    return {"profiles": profiles, "error": error, "asset_v": ASSET_V}
+def _login_ctx(error: str = ""):
+    return {"error": error, "asset_v": ASSET_V}
 
 
 @app.get("/login", response_class=HTMLResponse)
-def login_page(request: Request, db: Session = Depends(get_db)):
-    return templates.TemplateResponse(request, "login.html", _login_ctx(db))
+def login_page(request: Request):
+    return templates.TemplateResponse(request, "login.html", _login_ctx())
 
 
 @app.post("/login")
-def login(request: Request, passcode: str = Form(...), user_id: int = Form(...),
-          db: Session = Depends(get_db)):
-    setting = db.get(M.Setting, "PASSCODE")
-    expected = (setting.value if setting else "") or os.environ.get("PASSCODE", "125180")
-    user = db.get(M.User, user_id)
-    if passcode.strip() != expected or not user or not user.active:
+def login(request: Request, passcode: str = Form(...), db: Session = Depends(get_db)):
+    # Each person's passcode identifies them — no profile picker. Whichever
+    # active user's passcode matches is who gets logged in.
+    passcode = passcode.strip()
+    matched = None
+    if passcode:
+        for user in db.query(M.User).filter(M.User.active == True).all():  # noqa: E712
+            if verify_password(passcode, user.password_hash):
+                matched = user
+                break
+    if not matched:
         return templates.TemplateResponse(request, "login.html",
-                                          _login_ctx(db, "Wrong passcode  密码错误"))
-    request.session["uid"] = user.id
+                                          _login_ctx("Wrong passcode  密码错误"))
+    request.session["uid"] = matched.id
     return RedirectResponse("/", status_code=302)
 
 
@@ -1544,6 +1560,21 @@ def cashflow(request: Request, db: Session = Depends(get_db)):
 
 
 # ─────────────────────────── GENERAL LEDGER ───────────────────────────
+@app.get("/reports/audit-log", response_class=HTMLResponse)
+def audit_log(request: Request, user_id: int = 0, action: str = "", db: Session = Depends(get_db)):
+    q = db.query(M.AuditLog)
+    if user_id:
+        q = q.filter(M.AuditLog.user_id == user_id)
+    if action:
+        q = q.filter(M.AuditLog.action.contains(action))
+    entries = q.order_by(M.AuditLog.id.desc()).limit(500).all()
+    users = db.query(M.User).order_by(M.User.display_name).all()
+    blocked_count = db.query(M.AuditLog).filter(M.AuditLog.blocked == True).count()  # noqa: E712
+    return render(request, db, "audit_log.html", "auditlog",
+                  entries=entries, users=users, f_user_id=user_id, f_action=action,
+                  blocked_count=blocked_count)
+
+
 @app.get("/reports/gl", response_class=HTMLResponse)
 def general_ledger(request: Request, q: str = "", frm: str = "", to: str = "",
                    kind: str = "", db: Session = Depends(get_db)):
@@ -1920,7 +1951,7 @@ async def settings_save(request: Request, db: Session = Depends(get_db)):
         return RedirectResponse("/", status_code=302)
     form = await request.form()
     for key in ("COMPANY_NAME", "COMPANY_ADDRESS", "TELEGRAM_WHITELIST", "PETTY_CASH_FLOAT",
-                "PASSCODE", "SST_REGISTERED", "SST_NUMBER", "COMPANY_ROC", "COMPANY_BANK",
+                "SST_REGISTERED", "SST_NUMBER", "COMPANY_ROC", "COMPANY_BANK",
                 "COMPANY_BANK_ACCOUNT", "COMPANY_TIN", "COMPANY_MSIC",
                 "PREFIX_DOC", "PREFIX_PAY", "PREFIX_PV", "PREFIX_PL",
                 "CF_WEEKS", "CF_WEEKLY_SALES", "CF_MONTHLY_OPEX"):

@@ -14,40 +14,38 @@ Base.metadata.create_all(engine)
 run_migrations()
 db = SessionLocal()
 
+# Each person's passcode identifies them at login — no shared system passcode
+# and no profile picker. Re-running this script always converges access back
+# to exactly these 3 accounts: it's the source of truth for who can get in.
+# username, passcode, display_name, role
 USERS = [
-    ("jasmine", "catday2026", "Jasmine", "admin"),
+    ("jasmine", "125180", "Jasmine", "viewer"),     # the boss — sees everything, changes nothing
+    ("eugene", "455223", "Eugene", "admin"),
+    ("wengteng", "290226", "Weng Teng", "admin"),
 ]
-for username, pw, name, role in USERS:
-    if not db.query(User).filter(User.username == username).first():
-        db.add(User(username=username, password_hash=hash_password(pw),
-                    display_name=name, role=role))
-        print(f"User created: {username}  ({role})")
+allowed_usernames = {u for u, *_ in USERS}
+for username, passcode, name, role in USERS:
+    u = db.query(User).filter(User.username == username).first()
+    if u:
+        u.password_hash, u.display_name, u.role, u.active = hash_password(passcode), name, role, True
+        print(f"User updated: {username} ({role})")
+    else:
+        db.add(User(username=username, password_hash=hash_password(passcode),
+                    display_name=name, role=role, active=True))
+        print(f"User created: {username} ({role})")
 
-# Single-identity migration: only Jasmine stays active; normalize any
-# old names in existing records so one name appears system-wide.
+# Only these 3 accounts should ever be able to log in — deactivate anything else.
 db.flush()
 for u in db.query(User).all():
-    u.active = u.username == "jasmine"
-OLD_NAMES = ("Eugene", "Karen", "Jason", "Aina")
-from app.models import Document, Payment, Voucher, Listing, PettyCashEntry, SalesEntry
-for model, fields in [
-    (Document, ("sender", "verified_by")),
-    (Voucher, ("created_by", "approved_by")),
-    (Listing, ("prepared_by",)),
-    (PettyCashEntry, ("recorded_by",)),
-    (SalesEntry, ("recorded_by",)),
-]:
-    for row in db.query(model).all():
-        for f in fields:
-            if getattr(row, f) in OLD_NAMES:
-                setattr(row, f, "Jasmine")
+    if u.username not in allowed_usernames and u.active:
+        u.active = False
+        print(f"User deactivated (not in allowed list): {u.username}")
 
 DEFAULTS = {
     "COMPANY_NAME": "CATDAY SDN BHD",
     "COMPANY_ADDRESS": "Uptown PJ, Petaling Jaya",
     "TELEGRAM_WHITELIST": "*",
     "PETTY_CASH_FLOAT": "5000",
-    "PASSCODE": "125180",
 }
 for k, v in DEFAULTS.items():
     if not db.get(Setting, k):
