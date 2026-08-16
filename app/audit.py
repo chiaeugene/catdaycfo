@@ -66,6 +66,7 @@ ACTION_PATTERNS = [
     (r"^POST /settings/users/\d+/toggle$", "Toggled user active status"),
     (r"^POST /settings/users/\d+/password$", "Changed a passcode"),
     (r"^POST /settings/save$", "Updated settings"),
+    (r"^POST /settings/backups/create$", "Created a backup"),
 ]
 _COMPILED = [(re.compile(p), label) for p, label in ACTION_PATTERNS]
 
@@ -76,6 +77,21 @@ def _friendly_action(method: str, path: str) -> str:
         if pat.match(key):
             return label
     return key
+
+
+def log_action(db, user, action: str, path: str = "", status_code: int = 200) -> None:
+    """Record something the middleware wouldn't catch on its own — chiefly
+    sensitive GETs like downloading a full backup of the books, which is a
+    read but absolutely needs a trace."""
+    try:
+        db.add(M.AuditLog(
+            user_id=user.id if user else None,
+            user_name=user.display_name if user else "Unknown",
+            method="GET", path=path, query="", action=action,
+            status_code=status_code, blocked=False))
+        db.commit()
+    except Exception:
+        db.rollback()
 
 
 class AccessControlMiddleware(BaseHTTPMiddleware):

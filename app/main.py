@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from .database import Base, engine, get_db, run_migrations
 from . import models as M
 from .auth import hash_password, verify_password, current_user
-from . import telegram_bot, pdfgen, claude_ai, ledger
+from . import telegram_bot, pdfgen, claude_ai, ledger, backup, audit
 from .audit import AccessControlMiddleware
 from .statutory import calc_statutory
 
@@ -56,6 +56,29 @@ def _asset_version() -> str:
 
 
 ASSET_V = _asset_version()
+
+
+# Automatic daily snapshot. A background daemon thread rather than cron —
+# Render's Starter plan has no scheduler, and this keeps backups working
+# wherever the app runs. The per-deploy snapshot in seed.py covers restarts,
+# which reset this timer.
+def _start_backup_scheduler(interval_hours: int = 24) -> None:
+    import threading
+
+    def loop():
+        import time
+        while True:
+            time.sleep(interval_hours * 3600)
+            try:
+                backup.make_snapshot("auto-daily")
+            except Exception:
+                pass    # never let a failed backup take the app down
+
+    if backup.sqlite_file():
+        threading.Thread(target=loop, daemon=True, name="backup-scheduler").start()
+
+
+_start_backup_scheduler()
 
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "catdayhook")
 BASE_URL = os.environ.get("BASE_URL", "https://catday-system.onrender.com").rstrip("/")
@@ -112,6 +135,7 @@ NAV_GROUPS = [
     ]),
     ("Setup", [
         ("settings", "/settings", "settings", "Settings", ("admin",)),
+        ("backups", "/settings/backups", "save", "Backups", ("admin",)),
     ]),
 ]
 # Groups that start collapsed — accountant territory, not daily operations.
@@ -2085,6 +2109,58 @@ def pnl(request: Request, month: str = "", frm: str = "", to: str = "",
 
 
 # ─────────────────────────── SETTINGS ───────────────────────────
+# ─────────────────────────── BACKUPS ───────────────────────────
+@app.get("/settings/backups", response_class=HTMLResponse)
+def backups_page(request: Request, db: Session = Depends(get_db)):
+    snaps = backup.list_snapshots()
+    total = sum(s["size"] for s in snaps)
+    return render(request, db, "backups.html", "backups",
+                  snapshots=snaps, total_size=backup._fmt_size(total),
+                  keep=backup.KEEP_SNAPSHOTS, backup_dir=backup.BACKUP_DIR,
+                  db_file=backup.sqlite_file())
+
+
+@app.post("/settings/backups/create")
+def backups_create(request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user or user.role != "admin":
+        return RedirectResponse("/", status_code=302)
+    backup.make_snapshot("manual")
+    return RedirectResponse("/settings/backups", status_code=302)
+
+
+@app.get("/settings/backups/download/{name}")
+def backups_download(name: str, request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user or user.role != "admin":
+        return RedirectResponse("/", status_code=302)
+    path = backup.snapshot_path(name)
+    if not path:
+        raise HTTPException(404)
+    audit.log_action(db, user, f"Downloaded database snapshot ({name})",
+                     f"/settings/backups/download/{name}")
+    return FileResponse(path, filename=name, media_type="application/octet-stream")
+
+
+@app.get("/settings/backups/download-full")
+def backups_download_full(request: Request, db: Session = Depends(get_db)):
+    """Database + every uploaded document, as one zip. This is the copy that
+    should live somewhere other than Render."""
+    user = current_user(request, db)
+    if not user or user.role != "admin":
+        return RedirectResponse("/", status_code=302)
+    import tempfile
+    stamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    fname = f"catday_full_backup_{stamp}.zip"
+    tmp = os.path.join(tempfile.gettempdir(), fname)
+    info = backup.build_full_archive(tmp)
+    audit.log_action(db, user,
+                     f"Downloaded FULL backup ({info['files']} files, "
+                     f"{backup._fmt_size(info['size'])})",
+                     "/settings/backups/download-full")
+    return FileResponse(tmp, filename=fname, media_type="application/zip")
+
+
 @app.get("/settings", response_class=HTMLResponse)
 def settings_page(request: Request, db: Session = Depends(get_db)):
     users = db.query(M.User).order_by(M.User.id).all()

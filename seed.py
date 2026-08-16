@@ -10,6 +10,17 @@ from app.database import Base, engine, SessionLocal, run_migrations
 from app.models import User, Setting
 from app.auth import hash_password
 
+# Snapshot BEFORE any schema change or seeding touches the data. This runs
+# first in the deploy chain, so if a migration or seed script goes wrong there
+# is always a restore point from the moment before it ran.
+try:
+    from app.backup import make_snapshot
+    _snap = make_snapshot("predeploy")
+    if _snap:
+        print(f"Pre-deploy backup: {_snap['name']} ({_snap['size']:,} bytes)")
+except Exception as e:      # never block a deploy on a backup failure
+    print(f"Pre-deploy backup skipped: {e}")
+
 Base.metadata.create_all(engine)
 run_migrations()
 db = SessionLocal()

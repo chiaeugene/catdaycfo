@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block content %}
+<div class="pagehead">
+  <h1>Backups 数据备份</h1>
+  <form method="post" action="/settings/backups/create" class="inline">
+    <button type="submit">{{ icon('save', 14) }} Back up now 立即备份</button>
+  </form>
+</div>
+<div class="sub">Everything — the accounts, ledger, payroll, suppliers and every scanned document — lives in one database on one server. These are the copies that get it back.</div>
+
+<div class="panel" style="background:var(--amber-bg);border-color:var(--amber)">
+  <div style="font-size:12.5px;color:var(--amber);font-weight:600;line-height:1.65">
+    ⚠️ The snapshots below sit on the <b>same disk as the live system</b>. They protect against a bad update
+    or data being deleted by mistake — they do <b>not</b> protect against that disk failing.
+    <br>Download the full backup below and keep it somewhere else (your computer, Google Drive) — do that
+    regularly, and definitely before anything major.
+  </div>
+</div>
+
+<div class="cards">
+  <div class="card {% if snapshots %}green{% else %}red{% endif %}">
+    <div class="label">Snapshots kept 已保存快照</div><div class="value">{{ snapshots|length }}</div>
+    <div class="hint">Newest {{ snapshots[0].when.strftime('%d/%m/%y %H:%M') if snapshots else '— none yet' }}</div></div>
+  <div class="card"><div class="label">Space used 占用空间</div><div class="value" style="font-size:20px">{{ total_size }}</div>
+    <div class="hint">Oldest beyond {{ keep }} are removed automatically</div></div>
+  <a class="card blue" href="/settings/backups/download-full"><span class="go">↓</span>
+    <div class="label">Off-site copy 异地备份</div><div class="value" style="font-size:17px">Download everything</div>
+    <div class="hint">Database + all documents, as one zip</div></a>
+</div>
+
+<div class="panel">
+  <h2>How backups happen 备份方式</h2>
+  <div class="kv"><span>Before every update 每次更新前</span><b>Automatic</b></div>
+  <div class="kv"><span>Once a day while running 每日</span><b>Automatic</b></div>
+  <div class="kv"><span>Any time you press "Back up now"</span><b>Manual</b></div>
+  <div class="kv"><span>Off-site copy 异地副本</span><b style="color:var(--amber)">Manual — you must download it</b></div>
+  <div style="font-size:11px;color:var(--muted);margin-top:10px">
+    Snapshots are taken with SQLite's online backup, so they're safe to take while people are using the system.
+    Stored in <span class="mono">{{ backup_dir }}</span>.
+  </div>
+</div>
+
+<h2 style="margin-top:22px">Available snapshots 可用快照</h2>
+<div class="tablewrap">
+  <table>
+    <tr><th>When 时间</th><th>File 文件</th><th>Reason 原因</th><th class="num">Size</th><th></th></tr>
+    {% for s in snapshots %}
+    <tr>
+      <td>{{ s.when.strftime('%d/%m/%y %H:%M:%S') }}</td>
+      <td class="mono" style="font-size:11.5px">{{ s.name }}</td>
+      <td>
+        {% if 'predeploy' in s.name %}<span class="badge draft">Before update</span>
+        {% elif 'auto-daily' in s.name %}<span class="badge paid">Daily</span>
+        {% elif 'download' in s.name %}<span class="badge onvoucher">For download</span>
+        {% else %}<span class="badge pending">Manual</span>{% endif %}
+      </td>
+      <td class="num">{{ s.size_h }}</td>
+      <td><a href="/settings/backups/download/{{ s.name }}" style="font-size:11px">download ↓</a></td>
+    </tr>
+    {% else %}
+    <tr><td colspan="5" class="empty">No snapshots yet — press "Back up now" to create the first one.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+
+<div class="panel" style="margin-top:20px">
+  <h2>If you ever need to restore 恢复方法</h2>
+  <div style="font-size:12.5px;color:var(--ink-2);line-height:1.7">
+    Every download contains a <b>README.txt</b> with the steps. In short: the database file goes back to
+    the path in <span class="mono">DATABASE_URL</span>, the uploads folder goes back to
+    <span class="mono">UPLOAD_DIR</span>, then restart the app.
+    Ask before doing this on the live system — restoring replaces whatever is currently there.
+  </div>
+</div>
+{% endblock %}
