@@ -95,8 +95,20 @@
         {{ bank }} <span style="font-size:11px;color:var(--muted)">↓ CSV</span></a>
       {% endfor %}
     </div>
+    {% set missing = [] %}
+    {% for v in l.vouchers %}
+      {% set sup = banks.get(v.payee.strip().lower()) %}
+      {% if not sup or not sup.account_no %}{% set _ = missing.append(v.payee) %}{% endif %}
+    {% endfor %}
+    {% if missing %}
+    <div style="background:var(--red-bg);color:var(--red);border-radius:8px;padding:10px 12px;font-size:11.5px;font-weight:600;margin-top:14px">
+      ⛔ {{ missing|length }} payee{{ 's' if missing|length != 1 }} ha{{ 've' if missing|length != 1 else 's' }} no bank account on file — the file will export with blank account fields and the bank will reject those rows:
+      <div style="margin-top:6px;font-weight:500">{{ missing|join(', ') }}</div>
+      <div style="margin-top:6px;font-weight:500">Add their details in <a href="/suppliers" style="color:var(--red);text-decoration:underline">Suppliers</a> first.</div>
+    </div>
+    {% endif %}
     <div style="background:var(--amber-bg);color:var(--amber);border-radius:8px;padding:9px 12px;font-size:11px;font-weight:600;margin-top:14px">
-      ⚠️ Verify the column layout against your bank's own downloaded template before the first live upload — banks revise these formats. Payees without a bank account on file will have blank account fields.
+      ⚠️ Verify the column layout against your bank's own downloaded template before the first live upload — banks revise these formats.
     </div>
   </div>
 </dialog>

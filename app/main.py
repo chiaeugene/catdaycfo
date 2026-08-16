@@ -97,6 +97,7 @@ NAV_GROUPS = [
     ]),
     ("Reports 报告", [
         ("cashflow", "/reports/cashflow", "chart", "Cash Flow", ("admin", "viewer")),
+        ("expansion", "/reports/expansion-budget", "landmark", "Expansion Budget", ("admin", "viewer")),
         ("apaging", "/reports/ap-aging", "list", "AP Aging", ("admin", "manager", "viewer")),
         ("gl", "/reports/gl", "list", "General Ledger", ("admin", "manager", "viewer")),
         ("tax", "/reports/tax", "receipt", "SST / Tax", ("admin", "manager", "viewer")),
@@ -306,9 +307,15 @@ def documents(request: Request, view: str = "pending", db: Session = Depends(get
                 payloads[d.id] = _json.loads(d.payload_json)
             except Exception:
                 payloads[d.id] = {}
+    _ensure_default_pc_account(db)
     return render(request, db, "documents.html", "documents",
                   pending=pending, processed=processed, view=view, payloads=payloads,
-                  months=month_options())
+                  months=month_options(),
+                  supplier_names=[s.name for s in db.query(M.Supplier)
+                                  .filter(M.Supplier.active == True).order_by(M.Supplier.name).all()],  # noqa: E712
+                  pc_accounts=db.query(M.PettyCashAccount)
+                                .filter(M.PettyCashAccount.active == True)  # noqa: E712
+                                .order_by(M.PettyCashAccount.id).all())
 
 
 @app.post("/documents/upload")
@@ -356,6 +363,10 @@ async def verify_document(doc_id: int, request: Request, db: Session = Depends(g
     description = str(f.get("description", "")).strip()
     category = str(f.get("category", "")).strip()
     invoice_no = str(f.get("invoice_no", "")).strip()
+    tax_type = str(f.get("tax_type", "None"))
+    # The invoice date is what the books need — not the day someone got round
+    # to verifying it. Falls back to today only when the form leaves it blank.
+    doc_date = parse_date(str(f.get("ddate", ""))) if f.get("ddate") else date.today()
 
     doc.section = section
     doc.doc_type = str(f.get("doc_type", doc.doc_type))
@@ -371,16 +382,25 @@ async def verify_document(doc_id: int, request: Request, db: Session = Depends(g
             supplier = supplier or doc.sender   # claimant is reimbursed
         else:
             grp = M.group_for(category, section)   # cat-hotel category → P&L group
-        p = M.Payment(pay_no=pay_no, supplier=supplier, description=description,
+        p = M.Payment(pay_no=pay_no, date=doc_date, supplier=supplier, description=description,
                       category=category, grp=grp, amount=amount, month=doc.month,
                       invoice_no=invoice_no,
+                      tax_type=tax_type, tax_amount=tax_of(tax_type, amount),
                       status="Categorized" if category else "Unsorted",
                       notes=f"from {doc.doc_no} ({doc.sender})")
         db.add(p)
         db.flush()
         doc.payment_id = p.id
     elif section == "Petty Cash":
-        db.add(M.PettyCashEntry(date=date.today(), description=description or doc.doc_no,
+        # Route to the chosen tin; fall back to the default account so the
+        # entry can never end up orphaned with no account_id.
+        acc_id = int(f.get("pc_account_id") or 0) or None
+        if not acc_id:
+            _ensure_default_pc_account(db)
+            first = db.query(M.PettyCashAccount).order_by(M.PettyCashAccount.id).first()
+            acc_id = first.id if first else None
+        db.add(M.PettyCashEntry(account_id=acc_id, date=doc_date,
+                                description=description or doc.doc_no,
                                 category=category, amount_out=amount, month=doc.month,
                                 recorded_by=user.display_name, document_id=doc.id))
     elif section == "Sales Report":
@@ -1430,6 +1450,93 @@ async def opening_balances(request: Request, db: Session = Depends(get_db)):
         except ValueError:
             pass
     return RedirectResponse("/accounting/coa", status_code=302)
+
+
+# ─────────────────────────── EXPANSION BUDGET ───────────────────────────
+# Static figures transcribed from the "Expansion Budget" tab of Karen's
+# reconstruction workbook (31 Jul 2026 basis). Kept as data here rather than
+# re-derived, because these are evidence-backed working totals with specific
+# caveats attached — recomputing them from our ledger would silently drop the
+# provisional/unverified distinctions the workbook is careful to preserve.
+EXPANSION_BUDGET = {
+    "as_at": "31 Jul 2026",
+    "capital_reported": 1_500_000.00,
+    "spend_myr": 805_988.37,
+    "spend_china_rm": 113_340.70,
+    "spend_total": 919_329.07,
+    "opex_bank_paid": 150_527.22,
+    "outflow_known": 1_069_856.29,
+    "funding_unmatched": 430_143.71,
+    "claims_candidate": 152_406.84,
+    "spend_detail": [
+        ("TNJ base renovation", 696_129.20, "Supplier acknowledged"),
+        ("TNJ variation works", 80_842.40, "Supplier acknowledged"),
+        ("Project insurance", 519.27, "Confirmed"),
+        ("Ventilation (Flow Elite)", 8_900.00, "Partially paid"),
+        ("Membrane ceiling (Alwayz)", 9_761.75, "Confirmed"),
+        ("China cat-house shipping (Big Tree)", 2_638.95, "Bank paid"),
+        ("Medklinn equipment", 7_196.80, "Bank paid; invoice open"),
+        ("China custom cat accommodation (CNY88,000)", 53_336.80, "Paid evidence"),
+        ("China fresh-air / sterilisation (CNY66,000)", 40_002.60, "Paid evidence"),
+        ("China amusement tunnel (CNY33,000)", 20_001.30, "Paid evidence"),
+    ],
+    "remaining_bills": [
+        ("TNJ base renovation — not yet invoiced", 77_347.80, "Needs confirmation"),
+        ("TNJ variation works", 36_533.70, "Needs confirmation"),
+        ("Flow Elite ventilation", 4_700.00, "Invoice balance"),
+        ("Winston air-conditioning", 6_000.00, "Payment unverified"),
+        ("QQT freight", 5_204.98, "Payment unverified"),
+        ("Big Tree cat-house shipping", 29_498.55, "Payment/entity check"),
+    ],
+    "remaining_total": 159_285.03,
+    "monthly_budget": [
+        ("Rent", 17_000.00, "Signed tenancy"),
+        ("Salaries", 20_800.00, "Operator model"),
+        ("Employer EPF / SOCSO / EIS", 3_000.00, "Review allowance — missing from operator model"),
+        ("Cleaning supplies", 850.00, "Operator model"),
+        ("Grooming supplies", 1_200.00, "Operator model"),
+        ("Utilities", 4_000.00, "Operator model"),
+        ("Food & litter", 4_800.00, "Operator model"),
+        ("Marketing", 5_500.00, "Operator model"),
+        ("Vet visits", 1_680.00, "Operator steady month"),
+        ("Maintenance", 1_000.00, "Operator model"),
+        ("Software, admin, insurance & licences", 1_500.00, "Review allowance"),
+        ("Contingency", 3_000.00, "Review allowance"),
+    ],
+    "monthly_total": 64_330.00,
+    "reserve_3m": 192_990.00,
+    "reserve_6m": 385_980.00,
+    "preopening": [
+        ("Licensing, compliance, fire safety & insurance", 10_000.00),
+        ("Opening consumables", 15_000.00),
+        ("IT, POS, CCTV, booking & access control", 20_000.00),
+        ("Launch marketing, signage & photography", 25_000.00),
+        ("Defects, snagging & contingency", 40_000.00),
+    ],
+    "preopening_total": 110_000.00,
+    "cash_need_base": 462_275.03,
+    "cash_need_max": 543_458.81,
+    "conditional": [
+        ("SS21 tenancy security deposit (refundable)", 51_000.00,
+         "Signed lease; payment proof still required"),
+        ("Grooming equipment (CNY49,800)", 30_183.78,
+         "Supplier chat only — no final invoice or payment proof"),
+    ],
+}
+
+
+@app.get("/reports/expansion-budget", response_class=HTMLResponse)
+def expansion_budget(request: Request, db: Session = Depends(get_db)):
+    b = EXPANSION_BUDGET
+    # Live comparison: what the ledger has actually recorded against the plan.
+    ledger.sync_ledger(db)
+    reno = db.query(M.Account).filter(M.Account.code == "1600").first()
+    recorded = 0.0
+    if reno:
+        for line in db.query(M.JournalLine).filter(M.JournalLine.account_id == reno.id).all():
+            recorded += line.debit - line.credit
+    return render(request, db, "expansion_budget.html", "expansion",
+                  b=b, recorded_in_ledger=round(recorded, 2))
 
 
 # ─────────────────────────── CASH FLOW PROJECTION ───────────────────────────

@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block content %}
+<div class="pagehead"><h1>Expansion Budget 扩充预算</h1>
+  <button class="secondary" onclick="window.print()">{{ icon('file', 14) }} Print 打印</button></div>
+<div class="sub">What the new shop has cost so far, what bills may still come, and how much cash is likely needed from here. Basis: {{ b.as_at }}. China purchases shown in RM with original CNY in brackets.</div>
+
+<div class="panel" style="background:var(--amber-bg);border-color:var(--amber)">
+  <div style="font-size:12.5px;color:var(--amber);font-weight:600;line-height:1.6">
+    ⚠️ Planning view, not statutory accounts. Figures are evidence-backed working totals — several still need bank/payment proof.
+    The Balance Sheet deliberately excludes the China purchases until an actual MYR bank debit is supplied, so
+    <b>this page and the Balance Sheet will not agree, and that is intentional</b>.
+  </div>
+</div>
+
+<h2>1. Where the money went 资金去向</h2>
+<div class="cards">
+  <div class="card blue"><div class="label">Capital reported 申报资金</div><div class="value">RM {{ b.capital_reported|rm }}</div>
+    <div class="hint">Management-stated, not yet reconciled</div></div>
+  <div class="card"><div class="label">Recorded expansion spend 已记录扩充支出</div><div class="value">RM {{ b.spend_total|rm }}</div>
+    <div class="hint">MYR {{ b.spend_myr|rm }} + China {{ b.spend_china_rm|rm }}</div></div>
+  <div class="card"><div class="label">Bank-paid operating costs 营运成本</div><div class="value">RM {{ b.opex_bank_paid|rm }}</div>
+    <div class="hint">Feb–Jul 2026</div></div>
+  <div class="card amber"><div class="label">Funding not yet matched 未配对资金</div><div class="value">RM {{ b.funding_unmatched|rm }}</div>
+    <div class="hint">NOT a bank balance — RM1.5m less the two pools</div></div>
+</div>
+
+<div class="tablewrap" style="max-width:860px">
+  <table>
+    <tr><th>Item 项目</th><th class="num">RM</th><th>Evidence 证据</th></tr>
+    {% for name, amt, ev in b.spend_detail %}
+    <tr><td>{{ name }}</td><td class="num">{{ amt|rm }}</td><td><span class="badge draft">{{ ev }}</span></td></tr>
+    {% endfor %}
+    <tr class="total-row"><td>Total recorded expansion spend</td><td class="num">{{ b.spend_total|rm }}</td><td></td></tr>
+  </table>
+</div>
+<div style="font-size:11.5px;color:var(--muted);margin:8px 0 0 4px">
+  Recorded in this system's ledger against 1600 Fixed Assets — Renovation: <b>RM {{ recorded_in_ledger|rm }}</b>.
+  The difference is the China purchases and other items still held back pending payment evidence.
+</div>
+
+<h2 style="margin-top:26px">2. Bills that may still come 潜在剩余账单</h2>
+<div class="tablewrap" style="max-width:860px">
+  <table>
+    <tr><th>Supplier / item</th><th class="num">RM</th><th>Status</th></tr>
+    {% for name, amt, st in b.remaining_bills %}
+    <tr><td>{{ name }}</td><td class="num">{{ amt|rm }}</td><td><span class="badge pending">{{ st }}</span></td></tr>
+    {% endfor %}
+    <tr class="total-row"><td>Total possible remaining project bills</td><td class="num">{{ b.remaining_total|rm }}</td><td></td></tr>
+  </table>
+</div>
+<div style="font-size:11.5px;color:var(--muted);margin:8px 0 0 4px">Conservative planning figure — confirm with each supplier before paying. Not yet a confirmed liability.</div>
+
+<h2 style="margin-top:26px">3. Monthly running cost 每月营运预算</h2>
+<div class="grid2">
+  <div class="tablewrap">
+    <table>
+      <tr><th>Cost 成本</th><th class="num">RM / month</th><th>Basis</th></tr>
+      {% for name, amt, basis in b.monthly_budget %}
+      <tr><td>{{ name }}</td><td class="num">{{ amt|rm }}</td><td style="font-size:11.5px;color:var(--muted)">{{ basis }}</td></tr>
+      {% endfor %}
+      <tr class="total-row"><td>Total monthly</td><td class="num">{{ b.monthly_total|rm }}</td><td></td></tr>
+    </table>
+  </div>
+  <div>
+    <div class="cards" style="grid-template-columns:1fr">
+      <div class="card"><div class="label">3-month reserve 三个月储备</div><div class="value">RM {{ b.reserve_3m|rm }}</div></div>
+      <div class="card"><div class="label">6-month reserve 六个月储备</div><div class="value">RM {{ b.reserve_6m|rm }}</div></div>
+    </div>
+    <div class="panel">
+      <h2>One-off pre-opening 一次性开业预留</h2>
+      {% for name, amt in b.preopening %}
+      <div class="kv"><span>{{ name }}</span><b>{{ amt|rm }}</b></div>
+      {% endfor %}
+      <div class="kv"><span><b>Total</b></span><b>{{ b.preopening_total|rm }}</b></div>
+    </div>
+  </div>
+</div>
+
+<h2 style="margin-top:26px">4. Cash needed from here 潜在资金需求</h2>
+<div class="tablewrap" style="max-width:860px">
+  <table>
+    <tr><th>Component</th><th class="num">RM</th><th>In base?</th></tr>
+    <tr><td>Possible remaining project bills</td><td class="num">{{ b.remaining_total|rm }}</td><td>Yes</td></tr>
+    <tr><td>One-off pre-opening allowance</td><td class="num">{{ b.preopening_total|rm }}</td><td>Yes</td></tr>
+    <tr><td>3-month operating reserve</td><td class="num">{{ b.reserve_3m|rm }}</td><td>Yes</td></tr>
+    <tr class="total-row" style="border-top:3px solid var(--brand-hot)">
+      <td>BASE POTENTIAL CASH NEED 基准需求</td><td class="num">{{ b.cash_need_base|rm }}</td><td></td></tr>
+    {% for name, amt, note in b.conditional %}
+    <tr><td>{{ name }}<div style="font-size:11px;color:var(--muted)">{{ note }}</div></td>
+        <td class="num">{{ amt|rm }}</td><td><span class="badge pending">Verify first</span></td></tr>
+    {% endfor %}
+    <tr class="total-row"><td>Maximum if both unresolved items require cash</td><td class="num">{{ b.cash_need_max|rm }}</td><td></td></tr>
+  </table>
+</div>
+
+<div style="font-size:11.5px;color:var(--muted);margin-top:14px;max-width:860px">
+  Karen's operating claims candidate of RM {{ b.claims_candidate|rm }} is deliberately excluded from every total above —
+  different period and source, still pending approval and duplicate checks, and it may overlap with company-paid costs.
+  See the <a href="/accounting/journal">Journal</a> for what has actually been posted to the books.
+</div>
+{% endblock %}
