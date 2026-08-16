@@ -20,9 +20,17 @@
 
 <div class="cards">
   <div class="card"><div class="label">Entries 条数</div><div class="value">{{ count }}</div></div>
-  <div class="card green"><div class="label">Money in 收入</div><div class="value">RM {{ total_in|rm }}</div></div>
-  <div class="card red"><div class="label">Money out 支出</div><div class="value">RM {{ total_out|rm }}</div></div>
+  <div class="card green"><div class="label">Money in 收入</div><div class="value">RM {{ total_in|rm }}</div>
+    <div class="hint">Cash movements only</div></div>
+  <div class="card red"><div class="label">Money out 支出</div><div class="value">RM {{ total_out|rm }}</div>
+    <div class="hint">Cash movements only</div></div>
 </div>
+{% if journal_count %}
+<div style="font-size:11.5px;color:var(--muted);margin:-14px 0 18px 4px">
+  Includes {{ journal_count }} journal line{{ 's' if journal_count != 1 }} (opening balances and manual adjustments).
+  Those show debits and credits, not cash, so they're excluded from the two totals above.
+</div>
+{% endif %}
 
 <div class="tablewrap">
   <table>
@@ -35,8 +43,8 @@
       <td><span class="badge {{ 'paid' if e.type=='Sale' else 'draft' if e.type in ['Voucher','Listing'] else 'onvoucher' }}">{{ e.type }}</span></td>
       <td>{{ e.party or '—' }}</td>
       <td>{{ e.desc[:52] }}</td>
-      <td class="num" style="color:var(--green)">{{ e.cin|rm if e.cin else '' }}</td>
-      <td class="num" style="color:var(--red)">{{ e.cout|rm if e.cout else '' }}</td>
+      <td class="num" style="color:var(--green)">{% if e.cin %}{% if e.is_journal %}<span style="color:var(--muted);font-size:10px">Dr </span>{% endif %}{{ e.cin|rm }}{% endif %}</td>
+      <td class="num" style="color:var(--red)">{% if e.cout %}{% if e.is_journal %}<span style="color:var(--muted);font-size:10px">Cr </span>{% endif %}{{ e.cout|rm }}{% endif %}</td>
       <td>
         {% if e.reconciled is none %}
         <span class="badge" style="opacity:.4">N/A</span>

@@ -5,9 +5,26 @@
   <button class="secondary" onclick="window.print()">{{ icon('file', 14) }} Print 打印</button></div>
 <div class="sub">Live statement from actual sales, verified payments, petty cash and confirmed payroll. Click any line to see the transactions behind it.</div>
 
+<div class="panel">
+  <form method="get" action="/pnl">
+    <div class="formrow" style="grid-template-columns:180px 180px auto auto">
+      <div><label>From 从</label>
+        <select name="frm">{% for m in months %}<option {% if f_frm == m %}selected{% endif %}>{{ m }}</option>{% endfor %}</select></div>
+      <div><label>To 到</label>
+        <select name="to">{% for m in months %}<option {% if f_to == m %}selected{% endif %}>{{ m }}</option>{% endfor %}</select></div>
+      <div class="f-btn"><button type="submit">{{ icon('eye', 14) }} View range 查看区间</button></div>
+      <div class="f-btn"><a class="btn secondary" href="/pnl">This month 本月</a></div>
+    </div>
+  </form>
+  <div style="font-size:11px;color:var(--muted);margin-top:8px">
+    Every month since the accounts opened is listed, including months with no activity.
+    {% if range_mode %}Currently showing <b>{{ sel_count }} month{{ 's' if sel_count != 1 }}</b> combined.{% endif %}
+  </div>
+</div>
+
 <div class="filters">
   {% for m in months %}
-  <a href="/pnl?month={{ m }}" class="{% if m == month %}on{% endif %}">{{ m }}</a>
+  <a href="/pnl?month={{ m }}" class="{% if not range_mode and m == month %}on{% endif %}">{{ m }}</a>
   {% endfor %}
 </div>
 

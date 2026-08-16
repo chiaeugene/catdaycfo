@@ -167,6 +167,37 @@ def month_options(back: int = 12, fwd: int = 1) -> list[str]:
     return out
 
 
+def _months_between(start: str, end: str) -> list[str]:
+    """Every month from start to end inclusive, as 'Mon YYYY', oldest first."""
+    try:
+        a = datetime.strptime(start, "%b %Y")
+        b = datetime.strptime(end, "%b %Y")
+    except ValueError:
+        return [end]
+    out, y, m = [], a.year, a.month
+    while (y, m) <= (b.year, b.month):
+        out.append(f"{date(y, m, 1):%b %Y}")
+        m += 1
+        if m > 12:
+            m, y = 1, y + 1
+    return out
+
+
+def _accounts_start_month(db: Session) -> str:
+    """When the accounts begin: the opening-balance entry if one exists,
+    otherwise the earliest month that carries any transaction."""
+    opening = db.query(M.JournalEntry).filter(
+        M.JournalEntry.source_type == "Opening").order_by(M.JournalEntry.date).first()
+    if opening:
+        return f"{opening.date:%b %Y}"
+    candidates = []
+    for model in (M.SalesEntry, M.Payment, M.PettyCashEntry):
+        d = db.query(func.min(model.date)).scalar()
+        if d:
+            candidates.append(d)
+    return f"{min(candidates):%b %Y}" if candidates else month_str()
+
+
 def normalize_month(raw: str, fallback: date | None = None) -> str:
     """Accept 'Jul 2026', 'July 2026', '2026-07', '07/2026' → 'Jul 2026'."""
     raw = (raw or "").strip()
@@ -1749,19 +1780,44 @@ def general_ledger(request: Request, q: str = "", frm: str = "", to: str = "",
                                     "cin": 0, "cout": run.total_cost, "link": f"/payroll/run/{run.id}",
                                     "match_key": ("Payroll", run.id)})
 
+    # Journal entries that aren't derived from an operational record — opening
+    # balances and manual adjustments. Without these the GL silently omits real
+    # postings: right after go-live the books held only the opening entry, so
+    # the GL looked completely empty while the Balance Sheet showed RM895k.
+    if kind in ("", "Journal"):
+        for je in db.query(M.JournalEntry).filter(
+                M.JournalEntry.source_type.in_(("Opening", "Manual"))).all():
+            if not in_range(je.date):
+                continue
+            for line in je.lines:
+                acct = line.account
+                if not match(je.ref, je.memo, line.description, acct.code, acct.name):
+                    continue
+                entries.append({
+                    "date": je.date, "code": je.ref or f"JE-{je.id}", "type": "Journal",
+                    "party": f"{acct.code} {acct.name}",
+                    "desc": line.description or je.memo,
+                    "cin": line.debit, "cout": line.credit, "is_journal": True,
+                    "link": f"/accounting/ledger/{acct.id}"})
+
     matched_keys = {(l.matched_type, l.matched_id) for l in
                     db.query(M.BankStatementLine).filter(M.BankStatementLine.matched == True).all()}  # noqa: E712
     for e in entries:
         key = e.pop("match_key", None)
         e["reconciled"] = (key in matched_keys) if key else None
+        e.setdefault("is_journal", False)
 
     entries.sort(key=lambda e: (e["date"], e["code"]), reverse=True)
-    total_in = sum(e["cin"] for e in entries)
-    total_out = sum(e["cout"] for e in entries)
-    kinds = ["Payment", "Sale", "Petty Cash", "Voucher", "Listing", "Payroll"]
+    # Journal rows are debits/credits, not cash movements — including them in
+    # the "money in / money out" cards would show RM1m of cash that never moved.
+    total_in = sum(e["cin"] for e in entries if not e["is_journal"])
+    total_out = sum(e["cout"] for e in entries if not e["is_journal"])
+    journal_count = sum(1 for e in entries if e["is_journal"])
+    kinds = ["Payment", "Sale", "Petty Cash", "Voucher", "Listing", "Payroll", "Journal"]
     return render(request, db, "general_ledger.html", "gl", entries=entries[:500],
                   q=q, frm=frm, to=to, kind=kind, kinds=kinds,
-                  total_in=total_in, total_out=total_out, count=len(entries))
+                  total_in=total_in, total_out=total_out, count=len(entries),
+                  journal_count=journal_count)
 
 
 # ─────────────────────────── REPORTS ───────────────────────────
@@ -1934,19 +1990,42 @@ def export_pettycash(request: Request, db: Session = Depends(get_db)):
 
 # ─────────────────────────── P&L ───────────────────────────
 @app.get("/pnl", response_class=HTMLResponse)
-def pnl(request: Request, month: str = "", db: Session = Depends(get_db)):
-    mo = month or month_str()
-    months = sorted({m for (m,) in db.query(M.SalesEntry.month).distinct().all() if m}
-                    | {m for (m,) in db.query(M.Payment.month).distinct().all() if m}
-                    | {month_str()})
+def pnl(request: Request, month: str = "", frm: str = "", to: str = "",
+        db: Session = Depends(get_db)):
+    """Monthly P&L, or a date range when frm/to are given.
+
+    The month list runs continuously from the accounts' start date to today —
+    previously it only listed months that already had transactions, so a month
+    with no activity simply couldn't be opened, and there was no way to look at
+    a quarter or a full year at once."""
+    start = _accounts_start_month(db)
+    all_months = _months_between(start, month_str())
+
+    # Date-range mode: frm/to are "Mon YYYY" strings picked from the same list.
+    range_mode = bool(frm and to)
+    if range_mode:
+        try:
+            i, j = all_months.index(frm), all_months.index(to)
+        except ValueError:
+            range_mode = False
+        else:
+            if i > j:
+                i, j = j, i
+            sel_months = all_months[i:j + 1]
+            mo = f"{frm} – {to}"
+    if not range_mode:
+        mo = month or month_str()
+        sel_months = [mo]
+    months = all_months
 
     # Revenue
     revenue = dict(db.query(M.SalesEntry.stream, func.sum(M.SalesEntry.amount))
-                   .filter(M.SalesEntry.month == mo).group_by(M.SalesEntry.stream).all())
+                   .filter(M.SalesEntry.month.in_(sel_months))
+                   .group_by(M.SalesEntry.stream).all())
     total_rev = sum(revenue.values())
 
     # Payments in month, by group
-    pays = db.query(M.Payment).filter(M.Payment.month == mo,
+    pays = db.query(M.Payment).filter(M.Payment.month.in_(sel_months),
                                       M.Payment.status != "Void").all()
     def by_cat(group):
         out = {}
@@ -1967,7 +2046,7 @@ def pnl(request: Request, month: str = "", db: Session = Depends(get_db)):
     # otherwise identical cat-food spend shows in a different P&L bucket
     # depending on whether it was paid by invoice or petty cash.
     from types import SimpleNamespace
-    for e in db.query(M.PettyCashEntry).filter(M.PettyCashEntry.month == mo,
+    for e in db.query(M.PettyCashEntry).filter(M.PettyCashEntry.month.in_(sel_months),
                                                M.PettyCashEntry.amount_out > 0).all():
         cat = e.category or "Uncategorized"
         grp = M.group_for(cat)
@@ -1987,13 +2066,16 @@ def pnl(request: Request, month: str = "", db: Session = Depends(get_db)):
 
     # Payroll: confirmed runs for the month (employer cost)
     payroll_total = db.query(func.coalesce(func.sum(M.PayrollRun.total_cost), 0)) \
-        .filter(M.PayrollRun.month == mo, M.PayrollRun.status == "Confirmed").scalar()
+        .filter(M.PayrollRun.month.in_(sel_months),
+                M.PayrollRun.status == "Confirmed").scalar()
 
     gross_profit = total_rev - total_cogs
     total_operating = total_opex + total_other + payroll_total
     net = gross_profit - total_operating
 
     return render(request, db, "pnl.html", "pnl", month=mo, months=months,
+                  range_mode=range_mode, f_frm=frm, f_to=to,
+                  sel_count=len(sel_months),
                   revenue=revenue, total_rev=total_rev,
                   cogs=cogs, total_cogs=total_cogs, gross_profit=gross_profit,
                   opex=opex, total_opex=total_opex, other=other, total_other=total_other,
