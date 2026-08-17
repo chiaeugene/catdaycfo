@@ -13,10 +13,22 @@
 <div class="panel empty">No bank accounts yet — add one to start reconciling.</div>
 {% else %}
 
+{% if flash_recon %}
+<div class="panel" style="background:var(--green-bg);border-color:rgba(29,127,63,.3)">
+  <div style="font-size:13px;color:var(--green);font-weight:700">✓ {{ flash_recon }}</div>
+</div>
+{% endif %}
+
 <div class="filters">
   {% for a in accounts %}
   <a href="/reconciliation?account={{ a.id }}" class="{% if a.id == acc.id %}on{% endif %}">🏦 {{ a.name }}</a>
   {% endfor %}
+  {% if unmatched_count %}
+  <form method="post" action="/reconciliation/auto-match" class="inline" style="margin-left:auto">
+    <input type="hidden" name="account_id" value="{{ acc.id }}">
+    <button class="small" type="submit">⚡ Auto-match {{ unmatched_count }} unmatched 自动对账</button>
+  </form>
+  {% endif %}
 </div>
 
 <div class="cards">
@@ -72,6 +84,9 @@
       <td>
         {% if l.matched %}
         <span class="badge paid">Matched · {{ l.matched_type }}</span>
+        {% if l.matched_note and l.matched_note.startswith('auto') %}
+        <span class="badge draft" title="{{ l.matched_note }}">⚡ auto</span>
+        {% endif %}
         {% else %}
         <span class="badge pending">Unmatched</span>
         {% endif %}

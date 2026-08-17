@@ -53,6 +53,7 @@ ACTION_PATTERNS = [
     (r"^POST /reconciliation/account/new$", "Added bank account"),
     (r"^POST /reconciliation/import$", "Imported bank statement"),
     (r"^POST /reconciliation/match$", "Matched bank line"),
+    (r"^POST /reconciliation/auto-match$", "Ran bank auto-match"),
     (r"^POST /reconciliation/unmatch/\d+$", "Unmatched bank line"),
     (r"^POST /reconciliation/delete/\d+$", "Deleted bank statement line"),
     (r"^POST /accounting/journal/manual$", "Posted manual journal entry"),

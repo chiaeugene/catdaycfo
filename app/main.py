@@ -1240,6 +1240,58 @@ def payslip_download(rid: int, iid: int, request: Request, db: Session = Depends
 
 
 # ─────────────────────────── BANK RECONCILIATION ───────────────────────────
+def _auto_match_lines(db: Session, account_id: int, only_batch: str = "") -> dict:
+    """Match unmatched statement lines against unmatched book transactions.
+
+    Deliberately conservative — a wrong match silently corrupts the
+    reconciliation, an unmatched line just waits for a human. A line is only
+    auto-matched when the evidence is unambiguous:
+      1. The candidate's code (PV-0001 / PAYROLL-...) or payee name appears in
+         the bank narration AND the amounts agree to the sen, or
+      2. Exactly ONE candidate has the same amount (to the sen, same
+         direction) within ±5 days. Two candidates with the same amount →
+         nobody gets matched; a human decides.
+    Every auto-match is labelled in matched_note and reversible with Undo.
+    """
+    q = db.query(M.BankStatementLine).filter(
+        M.BankStatementLine.bank_account_id == account_id,
+        M.BankStatementLine.matched == False)  # noqa: E712
+    if only_batch:
+        q = q.filter(M.BankStatementLine.import_batch == only_batch)
+    lines = q.all()
+    pool = _unmatched_system_txns(db, account_id)
+    stats = {"matched": 0, "left": 0}
+
+    for line in lines:
+        same_amount = [c for c in pool
+                       if abs(c["amount"] - line.amount) < 0.01
+                       and (c["amount"] > 0) == (line.amount > 0)]
+        chosen, why = None, ""
+        narration = f"{line.description} {line.ref}".lower()
+        # Strongest signal: our reference or the payee's name in the narration
+        for c in same_amount:
+            code = str(c.get("desc", "")).split("·")[0].strip().lower()
+            party = str(c.get("party", "")).strip().lower()
+            if (code and len(code) >= 4 and code in narration) or \
+               (party and len(party) >= 5 and party in narration):
+                chosen, why = c, "reference/payee in narration"
+                break
+        # Otherwise: unique amount within a tight date window
+        if not chosen:
+            close = [c for c in same_amount if abs((c["date"] - line.date).days) <= 5]
+            if len(close) == 1:
+                chosen, why = close[0], "unique amount within 5 days"
+        if chosen:
+            line.matched, line.matched_type, line.matched_id = True, chosen["type"], chosen["id"]
+            line.matched_note = f"auto: {why}"
+            pool.remove(chosen)     # a book transaction can only explain one line
+            stats["matched"] += 1
+        else:
+            stats["left"] += 1
+    db.commit()
+    return stats
+
+
 def _unmatched_system_txns(db: Session, bank_account_id: int):
     """Candidate book-side transactions not yet matched to any statement line."""
     matched = {(l.matched_type, l.matched_id) for l in
@@ -1289,7 +1341,8 @@ def reconciliation(request: Request, account: int = 0, db: Session = Depends(get
                   accounts=accounts, acc=acc, lines=lines, candidates=candidates,
                   reconciled_total=reconciled_total, unreconciled_total=unreconciled_total,
                   unmatched_count=unmatched_count, opening_balance=opening_balance,
-                  balance_per_bank=balance_per_bank, balance_per_books=balance_per_books)
+                  balance_per_bank=balance_per_bank, balance_per_books=balance_per_books,
+                  flash_recon=request.session.pop("flash_recon", None))
 
 
 @app.post("/reconciliation/account/new")
@@ -1355,6 +1408,27 @@ async def reconciliation_import(request: Request, account_id: int = Form(...),
                                    ref=ref, amount=amount, import_batch=batch))
         added += 1
     db.commit()
+    # Try to match the fresh lines immediately — most of a clean statement
+    # should reconcile itself, leaving only genuine mysteries for a human.
+    stats = _auto_match_lines(db, account_id, only_batch=batch)
+    request.session["flash_recon"] = (
+        f"Imported {added} lines · auto-matched {stats['matched']}"
+        + (f" · {stats['left']} need review" if stats["left"] else " · all reconciled ✓"))
+    return RedirectResponse(f"/reconciliation?account={account_id}", status_code=302)
+
+
+@app.post("/reconciliation/auto-match")
+def reconciliation_auto_match(request: Request, account_id: int = Form(...),
+                              db: Session = Depends(get_db)):
+    """Run the matcher over ALL unmatched lines for this account — for lines
+    imported before auto-matching existed, or after new book records land."""
+    user = current_user(request, db)
+    if not user or user.role not in ("admin", "manager"):
+        return RedirectResponse("/", status_code=302)
+    stats = _auto_match_lines(db, account_id)
+    request.session["flash_recon"] = (
+        f"Auto-match: {stats['matched']} matched"
+        + (f" · {stats['left']} still need review" if stats["left"] else " · nothing left ✓"))
     return RedirectResponse(f"/reconciliation?account={account_id}", status_code=302)
 
 
