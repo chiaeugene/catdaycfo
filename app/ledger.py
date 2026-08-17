@@ -118,6 +118,32 @@ def _expected_entries(db: Session):
             "memo": f"Payroll {run.month} ({len(run.items)} staff)", "lines": lines,
         }
 
+    # Bank-in slips: money physically deposited into the bank. The revenue was
+    # already recognised when the sale was recorded — this entry just moves the
+    # cash (Dr Bank, Cr wherever it was sitting). The credit side is chosen at
+    # verification: 1010 Cash on Hand for daily takings, or 1015 Cash & TNG
+    # Clearing when banking in the pre-31-Jul opening balance.
+    import json as _json
+    for d in db.query(M.Document).filter(M.Document.status == "Verified",
+                                         M.Document.section == "Bank-in Slip",
+                                         M.Document.amount > 0).all():
+        credit = "1010"
+        try:
+            credit = _json.loads(d.payload_json or "{}").get("bankin_credit") or "1010"
+        except ValueError:
+            pass
+        if credit not in ("1010", "1015"):
+            credit = "1010"
+        entry_date = d.doc_date or (d.verified_at.date() if d.verified_at
+                                    else d.received_at.date())
+        out[("Document", d.id, "bankin")] = {
+            "date": entry_date,
+            "ref": d.doc_no, "month": d.month,
+            "memo": f"Bank-in · {d.description[:60]}",
+            "lines": [("1020", d.amount, 0, "Deposited to bank"),
+                      (credit, 0, d.amount, "Cash banked in")],
+        }
+
     kind_acct = {"EPF": "2210", "SOCSO": "2220", "EIS": "2230", "PCB": "2240"}
     for sp in db.query(M.StatutoryPaid).all():
         if not sp.amount or sp.kind not in kind_acct:

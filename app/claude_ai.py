@@ -6,7 +6,7 @@ import re
 
 import httpx
 
-from .models import CATEGORIES, DOC_TYPES, DOC_SECTIONS, STREAMS
+from .models import CATEGORIES, DOC_TYPES, DOC_SECTIONS, STREAMS, TAX_TYPES
 
 # Shared Purchase-vs-Expense rule, written for a cat hotel & grooming centre
 PE_RULE = (
@@ -31,29 +31,40 @@ PROMPT = (
     '"supplier": company/shop name (for Staff Claim: the claimant staff name from the caption) or "",\n'
     '"invoice_no": the invoice/receipt/reference number printed on the document, or "",\n'
     '"amount": total amount as a number (no currency symbol) or 0,\n'
+    '"date": the invoice/receipt date printed on the document as "yyyy-mm-dd", or "". '
+    'Malaysian documents often use dd/mm/yyyy — read them that way,\n'
+    f'"tax_type": one of {list(TAX_TYPES)} — look for an SST / service tax / sales tax line '
+    'on the document and pick the matching rate; "None" if no tax line is shown,\n'
     '"month": billing month as "MMM yyyy" (e.g. "Jul 2026") or "",\n'
     '"description": one short line describing what this payment is for,\n'
     f'"category": best guess from {CATEGORIES} (use "Staff Claim" for staff reimbursements) or ""\n'
 )
 
 
-def classify(data: bytes, mime: str, caption: str = "", filename: str = "") -> dict:
+def classify(data: bytes, mime: str, caption: str = "", filename: str = "",
+             supplier_names: list[str] | None = None) -> dict:
     key = os.environ.get("ANTHROPIC_API_KEY", "")
     if key:
         try:
-            return _classify_claude(data, mime, caption, key)
+            return _classify_claude(data, mime, caption, key, supplier_names or [])
         except Exception:
             pass
     return _classify_heuristic(caption, filename, mime)
 
 
-def _classify_claude(data: bytes, mime: str, caption: str, key: str) -> dict:
+def _classify_claude(data: bytes, mime: str, caption: str, key: str,
+                     supplier_names: list[str]) -> dict:
     b64 = base64.b64encode(data).decode()
     if mime == "application/pdf":
         block = {"type": "document", "source": {"type": "base64", "media_type": mime, "data": b64}}
     else:
         block = {"type": "image", "source": {"type": "base64", "media_type": mime, "data": b64}}
     text = PROMPT + (f"\nSender's caption: {caption}" if caption else "")
+    if supplier_names:
+        # Canonical names keep the supplier↔payment↔voucher chain linked — a
+        # voucher only prints bank details when the payee matches the directory.
+        text += ("\nExisting suppliers in our directory: " + "; ".join(supplier_names[:60])
+                 + '\nIf the document is from one of these, return the supplier EXACTLY as written in the directory.')
     resp = httpx.post(
         "https://api.anthropic.com/v1/messages",
         headers={"x-api-key": key, "anthropic-version": "2023-06-01"},
@@ -70,6 +81,9 @@ def _classify_claude(data: bytes, mime: str, caption: str, key: str) -> dict:
     out = json.loads(raw)
     out["ai"] = True
     out["amount"] = float(out.get("amount") or 0)
+    out.setdefault("date", "")
+    if out.get("tax_type") not in TAX_TYPES:
+        out["tax_type"] = "None"
     return out
 
 

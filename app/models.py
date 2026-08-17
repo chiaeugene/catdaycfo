@@ -123,6 +123,7 @@ class Document(Base):
     description: Mapped[str] = mapped_column(Text, default="")
     category: Mapped[str] = mapped_column(String(50), default="")
     invoice_no: Mapped[str] = mapped_column(String(60), default="")
+    doc_date: Mapped[date | None] = mapped_column(Date, nullable=True)   # invoice/receipt date read off the document
     intake_type: Mapped[str] = mapped_column(String(30), default="Document")
     payload_json: Mapped[str] = mapped_column(Text, default="")     # structured data for reports
     raw_text: Mapped[str] = mapped_column(Text, default="")         # original message text

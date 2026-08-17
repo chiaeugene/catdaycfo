@@ -363,9 +363,41 @@ def documents(request: Request, view: str = "pending", db: Session = Depends(get
             except Exception:
                 payloads[d.id] = {}
     _ensure_default_pc_account(db)
+
+    # Duplicate detection: Karen's real claim schedules contained RM4,967.40 of
+    # exact duplicates — catching a resubmitted invoice BEFORE it posts is one
+    # of the highest-value checks a bookkeeper does.
+    dup_warnings: dict[int, list[str]] = {}
+    for d in pending:
+        warns = []
+        sup = (d.supplier or "").strip().lower()
+        inv = (d.invoice_no or "").strip().lower()
+        if sup and inv:
+            for p in db.query(M.Payment).filter(M.Payment.status != "Void").all():
+                if (p.supplier or "").strip().lower() == sup and \
+                   (p.invoice_no or "").strip().lower() == inv:
+                    warns.append(f"{p.pay_no} already has this supplier + invoice number")
+        for other in db.query(M.Document).filter(M.Document.id != d.id,
+                                                 M.Document.status != "Rejected").all():
+            osup = (other.supplier or "").strip().lower()
+            oinv = (other.invoice_no or "").strip().lower()
+            if sup and inv and osup == sup and oinv == inv:
+                warns.append(f"{other.doc_no} ({other.status.lower()}) has the same supplier + invoice number")
+            elif sup and osup == sup and d.amount and other.amount == d.amount \
+                    and other.status == "Pending":
+                warns.append(f"{other.doc_no} (also pending) — same supplier and same amount RM {d.amount:,.2f}")
+        if warns:
+            dup_warnings[d.id] = warns
+
+    # Account maps for the live posting preview on each verify card
+    acct_names = {code: name for code, name, _typ in M.COA_SEED}
+    acct_names.update({"1015": "Cash & TNG Clearing (Unverified)"})
+    flash = request.session.pop("flash", None)
+
     return render(request, db, "documents.html", "documents",
                   pending=pending, processed=processed, view=view, payloads=payloads,
-                  months=month_options(),
+                  months=month_options(), dup_warnings=dup_warnings, flash=flash,
+                  category_account=M.CATEGORY_ACCOUNT, acct_names=acct_names,
                   supplier_names=[s.name for s in db.query(M.Supplier)
                                   .filter(M.Supplier.active == True).order_by(M.Supplier.name).all()],  # noqa: E712
                   pc_accounts=db.query(M.PettyCashAccount)
@@ -427,9 +459,15 @@ async def verify_document(doc_id: int, request: Request, db: Session = Depends(g
     doc.doc_type = str(f.get("doc_type", doc.doc_type))
     doc.supplier, doc.amount, doc.month = supplier, amount, normalize_month(month)
     doc.description, doc.category, doc.invoice_no = description, category, invoice_no
+    doc.doc_date = doc_date
     doc.status, doc.verified_by, doc.verified_at = "Verified", user.display_name, datetime.utcnow()
 
-    # Route to the right module
+    # Route to the right module — and record exactly what happened, so the
+    # verifier sees the full trail: record created, journal posted, reports hit.
+    acct = lambda code: f"{code} {dict((c, n) for c, n, _ in M.COA_SEED).get(code, '')}"  # noqa: E731
+    made: list[str] = []
+    links: list[tuple[str, str]] = []
+
     if section in ("Purchase", "Expense", "Staff Claim"):
         pay_no = telegram_bot.next_counter(db, "PAY", "PAY-")
         if section == "Staff Claim":
@@ -446,6 +484,25 @@ async def verify_document(doc_id: int, request: Request, db: Session = Depends(g
         db.add(p)
         db.flush()
         doc.payment_id = p.id
+        # Unknown supplier → create the directory record now, so the voucher /
+        # AP-aging / bank-details chain links instead of dangling on a string.
+        if section != "Staff Claim" and supplier and not db.query(M.Supplier).filter(
+                func.lower(M.Supplier.name) == supplier.lower()).first():
+            db.add(M.Supplier(name=supplier,
+                              sup_type="Supplier" if section == "Purchase" else "Service Provider",
+                              notes=f"Auto-created from {doc.doc_no} — add bank details "
+                                    f"before putting this supplier on a voucher."))
+            made.append(f"New supplier record: {supplier} (add bank details in Suppliers)")
+        dr = ledger._expense_account_code(category or "", "Purchase" if grp == "CAPEX" else "")
+        made.insert(0, f"{pay_no} · RM {amount:,.2f} · {grp}"
+                       + (f" · incl. {tax_type} RM {p.tax_amount:,.2f}" if p.tax_amount else ""))
+        made.append(f"Journal: Dr {acct(dr)} / Cr {acct('2100')}")
+        links += [(pay_no, f"/payments/{p.id}"),
+                  ("P&L", f"/pnl?month={doc.month}"), ("AP Aging", "/reports/ap-aging"),
+                  ("Trial Balance", "/reports/trial-balance")]
+        if p.tax_amount:
+            links.append(("SST report", "/reports/tax"))
+
     elif section == "Petty Cash":
         # Route to the chosen tin; fall back to the default account so the
         # entry can never end up orphaned with no account_id.
@@ -458,9 +515,16 @@ async def verify_document(doc_id: int, request: Request, db: Session = Depends(g
                                 description=description or doc.doc_no,
                                 category=category, amount_out=amount, month=doc.month,
                                 recorded_by=user.display_name, document_id=doc.id))
+        dr = ledger._expense_account_code(category or "")
+        made.append(f"Petty cash spend · RM {amount:,.2f}")
+        made.append(f"Journal: Dr {acct(dr)} / Cr {acct('1030')}")
+        links += [("Petty Cash", f"/pettycash?month={doc.month}"),
+                  ("P&L", f"/pnl?month={doc.month}")]
+
     elif section == "Sales Report":
         rdate = parse_date(str(f.get("rdate", "")))
         total = 0.0
+        streams_hit = []
         for stream in M.STREAMS:
             val = float(f.get(f"sales_{stream}") or 0)
             if val:
@@ -469,7 +533,12 @@ async def verify_document(doc_id: int, request: Request, db: Session = Depends(g
                                     amount=val, method="Mixed", month=month_str(rdate),
                                     recorded_by=doc.sender))
                 total += val
+                streams_hit.append(stream)
         doc.amount = total
+        made.append(f"Sales · RM {total:,.2f} across {', '.join(streams_hit) or 'no streams'}")
+        made.append(f"Journal: Dr {acct('1020')} / Cr revenue accounts per stream")
+        links += [("Sales", "/sales"), ("P&L", f"/pnl?month={month_str(rdate)}")]
+
     elif section == "Boarding Log":
         db.add(M.BoardingLog(
             date=parse_date(str(f.get("rdate", ""))),
@@ -477,8 +546,43 @@ async def verify_document(doc_id: int, request: Request, db: Session = Depends(g
             checked_out=int(float(f.get("checked_out") or 0)),
             occupancy=int(float(f.get("occupancy") or 0)),
             notes=description, recorded_by=doc.sender))
-    # Bank-in Slip / Payroll / Filing Only → filed, no transaction record
+        made.append("Boarding log entry (operational — no financial posting)")
+        links.append(("Boarding", "/boarding"))
+
+    elif section == "Bank-in Slip":
+        # A real accounting event, not just filing: the deposit moves cash into
+        # the bank. Revenue was already recognised when the sale was recorded.
+        import json as _json
+        credit = str(f.get("bankin_credit") or "1010")
+        if credit not in ("1010", "1015"):
+            credit = "1010"
+        try:
+            payload = _json.loads(doc.payload_json or "{}")
+        except ValueError:
+            payload = {}
+        payload["bankin_credit"] = credit
+        doc.payload_json = _json.dumps(payload)
+        if amount > 0:
+            made.append(f"Bank-in recorded · RM {amount:,.2f}")
+            made.append(f"Journal: Dr {acct('1020')} / Cr {acct(credit)}")
+            links += [("Journal", "/accounting/journal"),
+                      ("Bank Reconciliation", "/reconciliation")]
+        else:
+            made.append("Filed — amount is 0, so no journal entry was posted")
+
+    else:
+        # Payroll document / Filing Only → archive with the file, no posting.
+        made.append("Filed for reference — no financial posting")
+
     db.commit()
+    # Derive the journal immediately so GL/TB/BS are already up to date when
+    # the verifier clicks through — not on the next accounting-page visit.
+    ledger.sync_ledger(db)
+
+    request.session["flash"] = {
+        "doc": doc.doc_no, "section": section,
+        "made": made, "links": links,
+    }
     return RedirectResponse("/documents", status_code=302)
 
 

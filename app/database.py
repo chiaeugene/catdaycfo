@@ -31,6 +31,7 @@ MIGRATIONS = [
     "ALTER TABLE petty_cash ADD COLUMN account_id INTEGER",
     "ALTER TABLE suppliers ADD COLUMN tin VARCHAR(30) DEFAULT ''",
     "ALTER TABLE suppliers ADD COLUMN brn VARCHAR(30) DEFAULT ''",
+    "ALTER TABLE documents ADD COLUMN doc_date DATE",
 ]
 
 

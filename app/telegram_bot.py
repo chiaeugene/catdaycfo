@@ -143,7 +143,10 @@ def handle_update(update: dict, db: Session):
 
     data, _ = tg_get_file(file_id)
     caption = msg.get("caption", "")
-    cls = claude_ai.classify(data, mime, caption, filename)
+    from .models import Supplier
+    known_suppliers = [s.name for s in db.query(Supplier)
+                       .filter(Supplier.active == True).all()]  # noqa: E712
+    cls = claude_ai.classify(data, mime, caption, filename, supplier_names=known_suppliers)
 
     # Save file
     doc_no = next_counter(db, "DOC", "DOC-")
@@ -154,12 +157,20 @@ def handle_update(update: dict, db: Session):
         f.write(data)
 
     month = cls.get("month") or f"{date.today():%b %Y}"
+    doc_date = None
+    if cls.get("date"):
+        try:
+            doc_date = datetime.strptime(cls["date"], "%Y-%m-%d").date()
+        except ValueError:
+            pass
     doc = Document(
         doc_no=doc_no, sender=from_name, section=cls.get("section", "Expense"),
         doc_type=cls.get("doc_type", "Other"),
         supplier=cls.get("supplier", ""), amount=cls.get("amount", 0.0),
         month=month, description=cls.get("description") or caption or filename,
         category=cls.get("category", ""), invoice_no=cls.get("invoice_no", ""),
+        doc_date=doc_date,
+        payload_json=json.dumps({"tax_type": cls.get("tax_type", "None")}),
         file_path=rel_path, mime=mime, ai_classified=cls.get("ai", False),
         status="Pending",
     )
