@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block content %}
+<div class="pagehead">
+  <h1>Receivables 应收账款</h1>
+  <div class="actions">
+    {% if user.role in ['admin','manager'] %}
+    <button onclick="document.getElementById('dlg-newinv').showModal()">＋ New invoice 新发票</button>
+    {% endif %}
+    <a class="btn secondary" href="/reports/ar-aging">{{ icon('list', 14) }} AR Aging</a>
+  </div>
+</div>
+<div class="sub">Customer invoices for boarding packages, memberships and corporate accounts. Each invoice posts Dr Trade Debtors / Cr revenue; each receipt posts Dr Bank (or Cash) / Cr Trade Debtors — the P&L, TB and Balance Sheet update automatically.</div>
+
+{% if flash %}
+<div class="panel" style="background:var(--green-bg);border-color:rgba(29,127,63,.3)">
+  <div style="font-size:13px;color:var(--green);font-weight:700">✓ {{ flash }}</div>
+</div>
+{% endif %}
+
+<div class="cards">
+  <div class="card amber"><div class="label">Outstanding 未收总额</div><div class="value">RM {{ open_total|rm }}</div></div>
+  <div class="card"><div class="label">Invoices shown 发票</div><div class="value">{{ invoices|length }}</div></div>
+</div>
+
+<div class="filters">
+  <a href="/receivables" class="{% if not flt %}on{% endif %}">All</a>
+  {% for s in ['Open','Paid','Void'] %}
+  <a href="/receivables?status={{ s }}" class="{% if flt == s %}on{% endif %}">{{ s }}</a>
+  {% endfor %}
+  <form method="get" action="/receivables" class="inline" style="margin-left:auto">
+    <input name="q" value="{{ q }}" placeholder="Search invoice / customer" class="slim" style="width:220px">
+    <button class="small" type="submit">Search</button>
+  </form>
+</div>
+
+<div class="tablewrap">
+  <table>
+    <tr><th>Invoice</th><th>Date</th><th>Due</th><th>Customer</th><th>Stream</th>
+        <th class="num">Amount</th><th class="num">Received</th><th class="num">Outstanding</th><th>Status</th><th></th></tr>
+    {% for i in invoices %}
+    <tr>
+      <td class="mono"><b>{{ i.inv_no }}</b></td>
+      <td>{{ i.date.strftime('%d/%m/%y') }}</td>
+      <td>{{ i.due_date.strftime('%d/%m/%y') }}</td>
+      <td>{{ i.customer }}</td>
+      <td><span class="badge draft">{{ i.stream }}</span></td>
+      <td class="num">{{ i.amount|rm }}</td>
+      <td class="num">{{ i.received|rm if i.received else '' }}</td>
+      <td class="num" style="font-weight:700{% if i.outstanding > 0.005 and i.status != 'Void' %};color:var(--red){% endif %}">
+        {{ i.outstanding|rm if i.status != 'Void' else '—' }}</td>
+      <td><span class="badge {{ 'paid' if i.status == 'Paid' else ('void' if i.status == 'Void' else 'pending') }}">{{ i.status }}</span></td>
+      <td>
+        {% if user.role in ['admin','manager'] and i.status == 'Open' %}
+        <form method="post" action="/receivables/{{ i.id }}/receipt" class="inline">
+          <input type="date" name="date" value="{{ today_iso }}" class="slim" style="width:130px">
+          <input type="number" step="0.01" name="amount" value="{{ i.outstanding }}" class="slim" style="width:100px">
+          <select name="method" class="slim" style="width:80px"><option>Bank</option><option>Cash</option></select>
+          <button class="small" type="submit">Receive 收款</button>
+        </form>
+        {% if user.role == 'admin' and not i.receipts %}
+        <form method="post" action="/receivables/{{ i.id }}/void" class="inline"
+              onsubmit="return confirm('Void {{ i.inv_no }}? Its journal posting is removed.')">
+          <button class="small danger" type="submit">Void</button>
+        </form>
+        {% endif %}
+        {% endif %}
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="10" class="empty">No customer invoices yet — use ＋ New invoice for boarding packages, memberships, or corporate billing.<br>还没有客户发票。</td></tr>
+    {% endfor %}
+  </table>
+</div>
+
+<dialog id="dlg-newinv">
+  <form method="post" action="/receivables/new">
+    <div class="dlg-head"><b>＋ New customer invoice</b>
+      <button type="button" class="x" onclick="this.closest('dialog').close()">✕</button></div>
+    <div class="dlg-body">
+      <div class="dlg-grid">
+        <div class="full"><label>Customer 客户</label><input name="customer" required placeholder="Customer / company name"></div>
+        <div><label>Revenue stream 收入类别</label>
+          <select name="stream">{% for s in streams %}<option>{{ s }}</option>{% endfor %}</select></div>
+        <div><label>Amount RM 金额</label><input type="number" step="0.01" name="amount" required></div>
+        <div><label>Invoice date 日期</label><input type="date" name="date" value="{{ today_iso }}"></div>
+        <div><label>Due date 到期 <span style="text-transform:none;font-weight:500">(blank = +30 days)</span></label>
+          <input type="date" name="due_date"></div>
+        <div class="full"><label>Notes 备注</label><input name="notes" placeholder="e.g. 3-month boarding package"></div>
+      </div>
+    </div>
+    <div class="dlg-foot">
+      <button type="button" class="ghost" onclick="this.closest('dialog').close()">Cancel</button>
+      <button type="submit">Create &amp; post 创建入账</button>
+    </div>
+  </form>
+</dialog>
+{% endblock %}

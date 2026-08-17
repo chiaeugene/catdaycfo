@@ -21,6 +21,14 @@
   {% for m in months %}
   <a href="/accounting/journal?month={{ m }}" class="{% if month == m %}on{% endif %}">{{ m }}</a>
   {% endfor %}
+  <form method="get" action="/accounting/journal" class="inline" style="margin-left:auto;display:flex;gap:6px;align-items:center">
+    {% if src %}<input type="hidden" name="src" value="{{ src }}">{% endif %}
+    <input type="date" name="frm" value="{{ frm }}" class="slim" title="From date 从">
+    <span style="color:var(--muted)">–</span>
+    <input type="date" name="to" value="{{ to }}" class="slim" title="To date 至">
+    <button class="small" type="submit">Filter</button>
+    <button class="small secondary" type="button" onclick="window.print()">{{ icon('file', 12) }} PDF</button>
+  </form>
 </div>
 
 {% for je in entries %}

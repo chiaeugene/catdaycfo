@@ -373,9 +373,9 @@ acc_by_code = {a.code: a for a in db.query(M.Account).all()}
 opening = M.JournalEntry(date=D0, ref="OPENING", memo="Opening balances",
                          source_type="Opening", event="post",
                          month=f"{D0:%b %Y}", created_by=ADMIN)
-opening.lines.append(M.JournalLine(account_id=acc_by_code["1020"].id,
+opening.lines.append(M.JournalLine(account_id=acc_by_code[M.ACC_BANK].id,
                                    debit=50000.0, credit=0, description="Maybank Current"))
-opening.lines.append(M.JournalLine(account_id=acc_by_code["3100"].id,
+opening.lines.append(M.JournalLine(account_id=acc_by_code[M.ACC_CAPITAL].id,
                                    debit=0, credit=50000.0, description="Owner's capital"))
 db.add(opening)
 

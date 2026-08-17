@@ -372,67 +372,169 @@ class StatutoryPaid(Base):
     paid_by: Mapped[str] = mapped_column(String(100), default="")
 
 
+class ARInvoice(Base):
+    """Customer invoice (receivable). Posts Dr Trade Debtors / Cr revenue on
+    issue; receipts post Dr Bank(or Cash) / Cr Trade Debtors. Aging is
+    computed from the due date (invoice date + 30 days when not given)."""
+    __tablename__ = "ar_invoices"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    inv_no: Mapped[str] = mapped_column(String(30), unique=True)
+    customer: Mapped[str] = mapped_column(String(120))
+    stream: Mapped[str] = mapped_column(String(30), default="Boarding")
+    date: Mapped[date] = mapped_column(Date, default=date.today)
+    # No default: the route always supplies it (invoice date + 30 when blank).
+    # (`date` here is the column above, not the datetime type — careful.)
+    due_date: Mapped[date] = mapped_column(Date)
+    amount: Mapped[float] = mapped_column(Float, default=0.0)
+    month: Mapped[str] = mapped_column(String(20), default="")
+    status: Mapped[str] = mapped_column(String(20), default="Open")   # Open / Paid / Void
+    notes: Mapped[str] = mapped_column(Text, default="")
+    created_by: Mapped[str] = mapped_column(String(100), default="")
+    receipts = relationship("ARReceipt", backref="invoice", cascade="all, delete-orphan")
+
+    @property
+    def received(self):
+        return round(sum(r.amount for r in self.receipts), 2)
+
+    @property
+    def outstanding(self):
+        return round(self.amount - self.received, 2)
+
+
+class ARReceipt(Base):
+    __tablename__ = "ar_receipts"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    invoice_id: Mapped[int] = mapped_column(ForeignKey("ar_invoices.id"))
+    date: Mapped[date] = mapped_column(Date, default=date.today)
+    amount: Mapped[float] = mapped_column(Float, default=0.0)
+    method: Mapped[str] = mapped_column(String(20), default="Bank")   # Bank / Cash
+    notes: Mapped[str] = mapped_column(String(200), default="")
+    recorded_by: Mapped[str] = mapped_column(String(100), default="")
+
+
 ACCOUNT_TYPES = ["Asset", "Liability", "Equity", "Income", "COGS", "Expense"]
 
-# Seed Chart of Accounts — Malaysian SME style. code, name, type.
+# Account-code constants — SQL Account numbering per Weng Teng's template
+# (VLIFE GREEN chart, Aug 2026). Use these, never raw code strings, so the
+# next renumbering is one edit here instead of a hunt through the codebase.
+ACC_CAPITAL = "100-000"        # Share / owner's capital
+ACC_RETAINED = "150-000"       # Retained earning
+ACC_OBE = "190-000"            # Opening balance equity (plug account)
+ACC_RENOVATION = "200-600"     # Renovation (WIP)
+ACC_ACCUM_DEPRN = "200-605"    # Accum. deprn. — renovation
+ACC_EQUIPMENT = "200-700"      # Furniture & equipment
+ACC_PROVISIONAL_FA = "200-800" # Provisional fixed-asset candidates
+ACC_AR = "300-000"             # Trade debtors
+ACC_BANK = "310-000"           # Cash at bank
+ACC_CASH = "320-000"           # Cash in hand
+ACC_TNG_CLEARING = "320-T01"   # Cash & TNG clearing (unverified)
+ACC_PETTY = "325-000"          # Petty cash
+ACC_STOCK = "330-000"          # Stock
+ACC_DEPOSITS = "340-000"       # Deposit & prepayment
+ACC_AP = "400-000"             # Trade creditors
+ACC_ACCR_SALARY = "410-A01"    # Accrual — salary
+ACC_EPF = "410-A02"            # Accrual — EPF
+ACC_SOCSO_EIS = "410-A03"      # Accrual — SOCSO & EIS (template combines them)
+ACC_PCB = "410-A04"            # Accrual — PCB
+ACC_OTHER_DED = "410-A05"      # Accrual — other payroll deductions
+ACC_SST = "420-000"            # SST payable
+ACC_DEFERRED = "430-000"       # Deferred revenue
+ACC_DIRECTOR = "440-000"       # Amount owing to director
+ACC_FUNDING_SUSP = "490-000"   # Unclassified funding suspense
+ACC_OFFBANK_SUSP = "495-000"   # Off-bank CAPEX funding suspense
+ACC_OTHER_INCOME = "530-000"
+ACC_MISC = "900-S03"           # Sundry / miscellaneous expenses
+ACC_SALARIES = "900-S10"
+ACC_EMPLOYER_STAT = "900-S20"
+ACC_TAXATION = "950-000"
+
+# Seed Chart of Accounts. code, name, type.
 COA_SEED = [
-    ("1010", "Cash on Hand", "Asset"),
-    ("1020", "Bank", "Asset"),
-    ("1030", "Petty Cash", "Asset"),
-    ("1100", "Accounts Receivable", "Asset"),
-    ("1200", "Inventory / Stock", "Asset"),
-    ("1300", "Deposits & Prepayments", "Asset"),
-    ("1600", "Fixed Assets — Renovation", "Asset"),
-    ("1610", "Fixed Assets — Equipment", "Asset"),
-    ("1690", "Accumulated Depreciation", "Asset"),
-    ("2100", "Accounts Payable", "Liability"),
-    ("2210", "EPF Payable", "Liability"),
-    ("2220", "SOCSO Payable", "Liability"),
-    ("2230", "EIS Payable", "Liability"),
-    ("2240", "PCB Payable", "Liability"),
-    ("2250", "Other Payroll Deductions Payable", "Liability"),
-    ("2300", "SST Payable", "Liability"),
-    ("2400", "Deferred Revenue", "Liability"),
-    ("3100", "Owner's Capital", "Equity"),
-    ("3200", "Retained Earnings", "Equity"),
-    ("3900", "Opening Balance Equity", "Equity"),
-    ("4010", "Boarding Revenue", "Income"),
-    ("4020", "Grooming Revenue", "Income"),
-    ("4030", "Cat Sales Revenue", "Income"),
-    ("4040", "Membership Revenue", "Income"),
-    ("4050", "Retail Revenue", "Income"),
-    ("4090", "Other Income", "Income"),
-    ("5010", "Cat Supplies", "COGS"),
-    ("5020", "Grooming Supplies", "COGS"),
-    ("5030", "Vet & Medical", "COGS"),
-    ("6010", "Rental", "Expense"),
-    ("6020", "Utilities", "Expense"),
-    ("6030", "Marketing", "Expense"),
-    ("6040", "Insurance", "Expense"),
-    ("6050", "Software & Subscriptions", "Expense"),
-    ("6060", "Transport", "Expense"),
-    ("6070", "Admin & Office", "Expense"),
-    ("6080", "Repairs & Maintenance", "Expense"),
-    ("6090", "Staff Welfare", "Expense"),
-    ("6100", "Staff Claims", "Expense"),
-    ("6110", "Miscellaneous", "Expense"),
-    ("6200", "Salaries & Wages", "Expense"),
-    ("6210", "Employer Statutory (EPF/SOCSO/EIS)", "Expense"),
-    ("6900", "Depreciation", "Expense"),
+    (ACC_CAPITAL, "Share Capital", "Equity"),
+    (ACC_RETAINED, "Retained Earning", "Equity"),
+    (ACC_OBE, "Opening Balance Equity", "Equity"),
+    (ACC_RENOVATION, "Renovation", "Asset"),
+    (ACC_ACCUM_DEPRN, "Accum. Deprn. — Renovation", "Asset"),
+    (ACC_EQUIPMENT, "Furniture & Equipment", "Asset"),
+    (ACC_PROVISIONAL_FA, "Fixed Assets — Provisional Candidates", "Asset"),
+    (ACC_AR, "Trade Debtors", "Asset"),
+    (ACC_BANK, "Cash at Bank", "Asset"),
+    (ACC_CASH, "Cash in Hand", "Asset"),
+    (ACC_TNG_CLEARING, "Cash & TNG Clearing (Unverified)", "Asset"),
+    (ACC_PETTY, "Petty Cash", "Asset"),
+    (ACC_STOCK, "Stock", "Asset"),
+    (ACC_DEPOSITS, "Deposit & Prepayment", "Asset"),
+    (ACC_AP, "Trade Creditors", "Liability"),
+    (ACC_ACCR_SALARY, "Accrual — Salary", "Liability"),
+    (ACC_EPF, "EPF Payable", "Liability"),
+    (ACC_SOCSO_EIS, "SOCSO & EIS Payable", "Liability"),
+    (ACC_PCB, "PCB Payable", "Liability"),
+    (ACC_OTHER_DED, "Other Payroll Deductions Payable", "Liability"),
+    (ACC_SST, "SST Payable", "Liability"),
+    (ACC_DEFERRED, "Deferred Revenue", "Liability"),
+    (ACC_DIRECTOR, "Amount Owing to Director", "Liability"),
+    (ACC_FUNDING_SUSP, "Unclassified Funding Suspense", "Liability"),
+    (ACC_OFFBANK_SUSP, "Off-Bank CAPEX Funding Suspense", "Liability"),
+    ("500-001", "Boarding Revenue", "Income"),
+    ("500-002", "Grooming Revenue", "Income"),
+    ("500-003", "Cat Sales Revenue", "Income"),
+    ("500-004", "Membership Revenue", "Income"),
+    ("500-005", "Retail Revenue", "Income"),
+    (ACC_OTHER_INCOME, "Other Income", "Income"),
+    ("610-P01", "Purchases — Cat Supplies", "COGS"),
+    ("610-P02", "Purchases — Grooming Supplies", "COGS"),
+    ("610-P03", "Purchases — Vet & Medical", "COGS"),
+    ("900-A04", "Admin & Office", "Expense"),
+    ("900-D04", "Depreciation", "Expense"),
+    ("900-I03", "Insurance", "Expense"),
+    ("900-M03", "Marketing", "Expense"),
+    ("900-R01", "Rental", "Expense"),
+    ("900-S02", "Software & Subscriptions", "Expense"),
+    (ACC_MISC, "Sundry Expenses", "Expense"),
+    ("900-S05", "Staff Welfare", "Expense"),
+    ("900-S08", "Staff Claims", "Expense"),
+    (ACC_SALARIES, "Salaries & Wages", "Expense"),
+    (ACC_EMPLOYER_STAT, "Employer Statutory (EPF/SOCSO/EIS)", "Expense"),
+    ("900-T04", "Transport & Travelling", "Expense"),
+    ("900-U03", "Repairs & Maintenance", "Expense"),
+    ("900-U07", "Utilities (Water & Electricity)", "Expense"),
+    (ACC_TAXATION, "Taxation", "Expense"),
 ]
+
+# One-time migration: old 4-digit code → SQL Account code. Existing account
+# rows are renamed IN PLACE (same row id) so every journal line survives.
+# 2230 EIS Payable is handled separately — merged into 410-A03 SOCSO & EIS.
+COA_RECODE = {
+    "1010": ACC_CASH, "1015": ACC_TNG_CLEARING, "1020": ACC_BANK,
+    "1030": ACC_PETTY, "1100": ACC_AR, "1200": ACC_STOCK, "1300": ACC_DEPOSITS,
+    "1600": ACC_RENOVATION, "1610": ACC_EQUIPMENT, "1620": ACC_PROVISIONAL_FA,
+    "1690": ACC_ACCUM_DEPRN,
+    "2100": ACC_AP, "2210": ACC_EPF, "2220": ACC_SOCSO_EIS, "2240": ACC_PCB,
+    "2250": ACC_OTHER_DED, "2300": ACC_SST, "2400": ACC_DEFERRED,
+    "2900": ACC_FUNDING_SUSP, "2910": ACC_OFFBANK_SUSP,
+    "3100": ACC_CAPITAL, "3200": ACC_RETAINED, "3900": ACC_OBE,
+    "4010": "500-001", "4020": "500-002", "4030": "500-003",
+    "4040": "500-004", "4050": "500-005", "4090": ACC_OTHER_INCOME,
+    "5010": "610-P01", "5020": "610-P02", "5030": "610-P03",
+    "6010": "900-R01", "6020": "900-U07", "6030": "900-M03", "6040": "900-I03",
+    "6050": "900-S02", "6060": "900-T04", "6070": "900-A04", "6080": "900-U03",
+    "6090": "900-S05", "6100": "900-S08", "6110": ACC_MISC,
+    "6200": ACC_SALARIES, "6210": ACC_EMPLOYER_STAT, "6900": "900-D04",
+}
 
 # Payment/petty-cash category → account code
 CATEGORY_ACCOUNT = {
-    "Renovation": "1600", "Equipment": "1610",
-    "Cat Supplies": "5010", "Grooming Supplies": "5020", "Vet": "5030",
-    "Rental": "6010", "Utilities": "6020", "Marketing": "6030", "Insurance": "6040",
-    "Software": "6050", "Transport": "6060", "Admin": "6070", "Maintenance": "6080",
-    "Staff Welfare": "6090", "Staff Claim": "6100", "Misc": "6110", "Salary": "6200",
+    "Renovation": ACC_RENOVATION, "Equipment": ACC_EQUIPMENT,
+    "Cat Supplies": "610-P01", "Grooming Supplies": "610-P02", "Vet": "610-P03",
+    "Rental": "900-R01", "Utilities": "900-U07", "Marketing": "900-M03",
+    "Insurance": "900-I03", "Software": "900-S02", "Transport": "900-T04",
+    "Admin": "900-A04", "Maintenance": "900-U03", "Staff Welfare": "900-S05",
+    "Staff Claim": "900-S08", "Misc": ACC_MISC, "Salary": ACC_SALARIES,
 }
 # Sales stream → income account code
 STREAM_ACCOUNT = {
-    "Boarding": "4010", "Grooming": "4020", "Cat Sales": "4030",
-    "Membership": "4040", "Retail": "4050", "Other": "4090",
+    "Boarding": "500-001", "Grooming": "500-002", "Cat Sales": "500-003",
+    "Membership": "500-004", "Retail": "500-005", "Other": ACC_OTHER_INCOME,
 }
 
 

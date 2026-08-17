@@ -146,8 +146,8 @@
         </select></div>
       <div><label>Bank-in: money came from 存入来源 <span style="text-transform:none;font-weight:500">(only if section = Bank-in Slip)</span></label>
         <select name="bankin_credit" class="js-bankin">
-          <option value="1010">Cash on hand — daily takings 门店现金</option>
-          <option value="1015">Cash &amp; TNG clearing — pre-31 Jul opening 期初结转</option>
+          <option value="{{ M.ACC_CASH }}">Cash in hand — daily takings 门店现金</option>
+          <option value="{{ M.ACC_TNG_CLEARING }}">Cash &amp; TNG clearing — pre-31 Jul opening 期初结转</option>
         </select></div>
       <div class="full"><label>Description 描述</label><input name="description" value="{{ d.description }}"></div>
     </div>
@@ -211,30 +211,35 @@
 const CAT_ACCT = {{ category_account | tojson }};
 const CAT_GROUP = {{ M.CATEGORY_GROUP | tojson }};
 const ACCT = {{ acct_names | tojson }};
+// Account-code constants injected from app/models.py — keep in sync by never
+// hardcoding code strings here.
+const AC = {cash: {{ M.ACC_CASH | tojson }}, bank: {{ M.ACC_BANK | tojson }},
+            petty: {{ M.ACC_PETTY | tojson }}, ap: {{ M.ACC_AP | tojson }},
+            equip: {{ M.ACC_EQUIPMENT | tojson }}, misc: {{ M.ACC_MISC | tojson }}};
 const a = c => c + " " + (ACCT[c] || "");
 
 function previewFor(card) {
   const sec = card.querySelector(".js-section")?.value;
   const cat = card.querySelector(".js-category")?.value || "";
   const tax = card.querySelector(".js-tax")?.value || "None";
-  const bankin = card.querySelector(".js-bankin")?.value || "1010";
+  const bankin = card.querySelector(".js-bankin")?.value || AC.cash;
   if (!sec) return null;
 
   if (sec === "Purchase" || sec === "Expense" || sec === "Staff Claim") {
     const useCat = sec === "Staff Claim" ? "Staff Claim" : cat;
     const grp = CAT_GROUP[useCat] || (sec === "Purchase" ? "CAPEX" : "OPEX");
-    const dr = CAT_ACCT[useCat] || (grp === "CAPEX" ? "1610" : "6110");
-    let s = `→ Payment record · Journal: <b>Dr ${a(dr)} / Cr ${a("2100")}</b> · P&L (${grp}) · AP Aging · Trial Balance`;
+    const dr = CAT_ACCT[useCat] || (grp === "CAPEX" ? AC.equip : AC.misc);
+    let s = `→ Payment record · Journal: <b>Dr ${a(dr)} / Cr ${a(AC.ap)}</b> · P&L (${grp}) · AP Aging · Trial Balance`;
     if (tax !== "None") s += ` · SST report (${tax})`;
     if (!useCat) s += ` — <span style="color:var(--amber)">pick a Category or it posts to Miscellaneous</span>`;
     return s;
   }
   if (sec === "Petty Cash") {
-    const dr = CAT_ACCT[cat] || "6110";
-    return `→ Petty cash book · Journal: <b>Dr ${a(dr)} / Cr ${a("1030")}</b> · P&L`;
+    const dr = CAT_ACCT[cat] || AC.misc;
+    return `→ Petty cash book · Journal: <b>Dr ${a(dr)} / Cr ${a(AC.petty)}</b> · P&L`;
   }
   if (sec === "Bank-in Slip")
-    return `→ Journal only: <b>Dr ${a("1020")} / Cr ${a(bankin)}</b> · Bank Reconciliation (no P&L impact — revenue was recognised at sale)`;
+    return `→ Journal only: <b>Dr ${a(AC.bank)} / Cr ${a(bankin)}</b> · Bank Reconciliation (no P&L impact — revenue was recognised at sale)`;
   if (sec === "Sales Report") return `→ Sales entries per stream · revenue accounts · P&L`;
   if (sec === "Boarding Log") return `→ Boarding log (operational — no financial posting)`;
   return `→ Filed for reference — no financial posting`;

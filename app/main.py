@@ -1,5 +1,5 @@
 import os
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from dotenv import load_dotenv
 
@@ -116,13 +116,17 @@ NAV_GROUPS = [
         ("payroll", "/payroll", "banknote", "Payroll", ("admin", "viewer")),
         ("statutory", "/reports/statutory", "landmark", "Statutory Dues", ("admin", "viewer")),
         ("reconciliation", "/reconciliation", "banknote", "Bank Reconciliation", ("admin", "manager", "viewer")),
+        ("receivables", "/receivables", "receipt", "Receivables 应收", ("admin", "manager", "viewer")),
         ("pnl", "/pnl", "chart", "Profit & Loss", ("admin", "viewer")),
     ]),
     ("Reports 报告", [
         ("cashflow", "/reports/cashflow", "chart", "Cash Flow", ("admin", "viewer")),
         ("expansion", "/reports/expansion-budget", "landmark", "Expansion Budget", ("admin", "viewer")),
         ("apaging", "/reports/ap-aging", "list", "AP Aging", ("admin", "manager", "viewer")),
+        ("araging", "/reports/ar-aging", "list", "AR Aging", ("admin", "manager", "viewer")),
         ("gl", "/reports/gl", "list", "General Ledger", ("admin", "manager", "viewer")),
+        ("salesledger", "/reports/sales-ledger", "cart", "Sales Ledger", ("admin", "manager", "viewer")),
+        ("purchledger", "/reports/purchase-ledger", "card", "Purchase Ledger", ("admin", "manager", "viewer")),
         ("tax", "/reports/tax", "receipt", "SST / Tax", ("admin", "manager", "viewer")),
         ("einvoice", "/reports/einvoice-readiness", "receipt", "e-Invoice Readiness", ("admin", "viewer")),
         ("auditlog", "/reports/audit-log", "list", "Audit Log", ("admin", "viewer")),
@@ -391,7 +395,6 @@ def documents(request: Request, view: str = "pending", db: Session = Depends(get
 
     # Account maps for the live posting preview on each verify card
     acct_names = {code: name for code, name, _typ in M.COA_SEED}
-    acct_names.update({"1015": "Cash & TNG Clearing (Unverified)"})
     flash = request.session.pop("flash", None)
 
     return render(request, db, "documents.html", "documents",
@@ -496,7 +499,7 @@ async def verify_document(doc_id: int, request: Request, db: Session = Depends(g
         dr = ledger._expense_account_code(category or "", "Purchase" if grp == "CAPEX" else "")
         made.insert(0, f"{pay_no} · RM {amount:,.2f} · {grp}"
                        + (f" · incl. {tax_type} RM {p.tax_amount:,.2f}" if p.tax_amount else ""))
-        made.append(f"Journal: Dr {acct(dr)} / Cr {acct('2100')}")
+        made.append(f"Journal: Dr {acct(dr)} / Cr {acct(M.ACC_AP)}")
         links += [(pay_no, f"/payments/{p.id}"),
                   ("P&L", f"/pnl?month={doc.month}"), ("AP Aging", "/reports/ap-aging"),
                   ("Trial Balance", "/reports/trial-balance")]
@@ -517,7 +520,7 @@ async def verify_document(doc_id: int, request: Request, db: Session = Depends(g
                                 recorded_by=user.display_name, document_id=doc.id))
         dr = ledger._expense_account_code(category or "")
         made.append(f"Petty cash spend · RM {amount:,.2f}")
-        made.append(f"Journal: Dr {acct(dr)} / Cr {acct('1030')}")
+        made.append(f"Journal: Dr {acct(dr)} / Cr {acct(M.ACC_PETTY)}")
         links += [("Petty Cash", f"/pettycash?month={doc.month}"),
                   ("P&L", f"/pnl?month={doc.month}")]
 
@@ -536,7 +539,7 @@ async def verify_document(doc_id: int, request: Request, db: Session = Depends(g
                 streams_hit.append(stream)
         doc.amount = total
         made.append(f"Sales · RM {total:,.2f} across {', '.join(streams_hit) or 'no streams'}")
-        made.append(f"Journal: Dr {acct('1020')} / Cr revenue accounts per stream")
+        made.append(f"Journal: Dr {acct(M.ACC_BANK)} / Cr revenue accounts per stream")
         links += [("Sales", "/sales"), ("P&L", f"/pnl?month={month_str(rdate)}")]
 
     elif section == "Boarding Log":
@@ -553,9 +556,10 @@ async def verify_document(doc_id: int, request: Request, db: Session = Depends(g
         # A real accounting event, not just filing: the deposit moves cash into
         # the bank. Revenue was already recognised when the sale was recorded.
         import json as _json
-        credit = str(f.get("bankin_credit") or "1010")
-        if credit not in ("1010", "1015"):
-            credit = "1010"
+        credit = str(f.get("bankin_credit") or M.ACC_CASH)
+        credit = M.COA_RECODE.get(credit, credit)
+        if credit not in (M.ACC_CASH, M.ACC_TNG_CLEARING):
+            credit = M.ACC_CASH
         try:
             payload = _json.loads(doc.payload_json or "{}")
         except ValueError:
@@ -564,7 +568,7 @@ async def verify_document(doc_id: int, request: Request, db: Session = Depends(g
         doc.payload_json = _json.dumps(payload)
         if amount > 0:
             made.append(f"Bank-in recorded · RM {amount:,.2f}")
-            made.append(f"Journal: Dr {acct('1020')} / Cr {acct(credit)}")
+            made.append(f"Journal: Dr {acct(M.ACC_BANK)} / Cr {acct(credit)}")
             links += [("Journal", "/accounting/journal"),
                       ("Bank Reconciliation", "/reconciliation")]
         else:
@@ -863,7 +867,7 @@ async def create_listing(request: Request, db: Session = Depends(get_db)):
                                      M.Voucher.status.in_(["Draft", "Approved"])).all()
     if not pvs:
         return RedirectResponse("/vouchers", status_code=302)
-    pl_no = telegram_bot.next_counter(db, "PL", "PL-")
+    pl_no = telegram_bot.next_monthly_counter(db, "PL", "PL-")
     total = sum(v.total for v in pvs)
     banks = supplier_map(db, [v.payee for v in pvs])
     def bank_line(payee):
@@ -1502,38 +1506,64 @@ def supplier_update_tin(sid: int, request: Request, tin: str = Form(""), brn: st
 
 # ─────────────────────────── DOUBLE-ENTRY ACCOUNTING ───────────────────────────
 @app.get("/reports/trial-balance", response_class=HTMLResponse)
-def trial_balance_page(request: Request, as_of: str = "", db: Session = Depends(get_db)):
+def trial_balance_page(request: Request, as_of: str = "", frm: str = "",
+                       db: Session = Depends(get_db)):
+    """As-of TB by default; give a From date to get the period view with
+    opening balance, period movement, and closing balance columns."""
     d = parse_date(as_of) if as_of else date.today()
+    d_from = parse_date(frm) if frm else None
+    if d_from and d_from <= d:
+        range_rows, range_tot = ledger.trial_balance_range(db, d_from, d)
+        return render(request, db, "trial_balance.html", "tb",
+                      rows=[], tot_dr=range_tot["close_dr"], tot_cr=range_tot["close_cr"],
+                      as_of=d, frm=d_from, range_rows=range_rows, range_tot=range_tot)
     rows, tot_dr, tot_cr = ledger.trial_balance(db, d)
     return render(request, db, "trial_balance.html", "tb",
-                  rows=rows, tot_dr=tot_dr, tot_cr=tot_cr, as_of=d)
+                  rows=rows, tot_dr=tot_dr, tot_cr=tot_cr, as_of=d,
+                  frm=None, range_rows=None, range_tot=None)
 
 
 @app.get("/reports/balance-sheet", response_class=HTMLResponse)
-def balance_sheet_page(request: Request, as_of: str = "", db: Session = Depends(get_db)):
+def balance_sheet_page(request: Request, as_of: str = "", vs: str = "",
+                       db: Session = Depends(get_db)):
+    """As-at position, with an optional comparison date (e.g. month-end vs
+    opening) shown side by side."""
     d = parse_date(as_of) if as_of else date.today()
     bs = ledger.balance_sheet(db, d)
+    d_vs = parse_date(vs) if vs else None
+    bs_vs = ledger.balance_sheet(db, d_vs) if d_vs else None
+    vs_bal = None
+    if bs_vs:
+        vs_bal = {acc.id: bal for acc, bal in
+                  bs_vs["assets"] + bs_vs["liabilities"] + bs_vs["equity"]}
     has_opening = db.query(M.JournalEntry).filter(
         M.JournalEntry.source_type == "Opening").count() > 0
     return render(request, db, "balance_sheet.html", "bs", bs=bs, as_of=d,
+                  vs_date=d_vs, bs_vs=bs_vs, vs_bal=vs_bal,
                   has_opening=has_opening)
 
 
 @app.get("/accounting/journal", response_class=HTMLResponse)
 def journal_page(request: Request, src: str = "", month: str = "",
-                 db: Session = Depends(get_db)):
+                 frm: str = "", to: str = "", db: Session = Depends(get_db)):
     ledger.sync_ledger(db)
     q = db.query(M.JournalEntry)
     if src:
         q = q.filter(M.JournalEntry.source_type == src)
     if month:
         q = q.filter(M.JournalEntry.month == month)
+    d_from, d_to = parse_date(frm) if frm else None, parse_date(to) if to else None
+    if d_from:
+        q = q.filter(M.JournalEntry.date >= d_from)
+    if d_to:
+        q = q.filter(M.JournalEntry.date <= d_to)
     entries = q.order_by(M.JournalEntry.date.desc(), M.JournalEntry.id.desc()).limit(300).all()
     months = sorted({m for (m,) in db.query(M.JournalEntry.month).distinct().all() if m})
     sources = [s for (s,) in db.query(M.JournalEntry.source_type).distinct().all()]
     accounts = db.query(M.Account).filter(M.Account.active == True).order_by(M.Account.code).all()  # noqa: E712
     return render(request, db, "journal.html", "journal", entries=entries,
-                  months=months, sources=sources, src=src, month=month, accounts=accounts)
+                  months=months, sources=sources, src=src, month=month,
+                  frm=frm, to=to, accounts=accounts)
 
 
 @app.post("/accounting/journal/manual")
@@ -1584,20 +1614,31 @@ def ledger_rebuild(request: Request, db: Session = Depends(get_db)):
 
 
 @app.get("/accounting/ledger/{account_id}", response_class=HTMLResponse)
-def account_ledger(account_id: int, request: Request, db: Session = Depends(get_db)):
+def account_ledger(account_id: int, request: Request, frm: str = "", to: str = "",
+                   db: Session = Depends(get_db)):
     ledger.sync_ledger(db)
     acc = db.get(M.Account, account_id)
     if not acc:
         return RedirectResponse("/reports/trial-balance", status_code=302)
+    d_from, d_to = parse_date(frm) if frm else None, parse_date(to) if to else None
     lines = db.query(M.JournalLine).join(M.JournalEntry).filter(
         M.JournalLine.account_id == account_id).order_by(
         M.JournalEntry.date, M.JournalEntry.id).all()
+    # Running balance always starts from the true beginning; a From filter
+    # shows the balance brought forward instead of silently restarting at 0.
     running = 0.0
+    bf = 0.0
     rows = []
     for l in lines:
         running += l.debit - l.credit
+        if d_from and l.entry.date < d_from:
+            bf = running
+            continue
+        if d_to and l.entry.date > d_to:
+            continue
         rows.append({"line": l, "entry": l.entry, "balance": round(running, 2)})
-    return render(request, db, "account_ledger.html", "tb", acc=acc, rows=rows)
+    return render(request, db, "account_ledger.html", "tb", acc=acc, rows=rows,
+                  frm=frm, to=to, bf=round(bf, 2) if d_from else None)
 
 
 @app.get("/accounting/coa", response_class=HTMLResponse)
@@ -1606,7 +1647,7 @@ def coa_page(request: Request, db: Session = Depends(get_db)):
     accounts = db.query(M.Account).order_by(M.Account.code).all()
     # balance-sheet accounts for the opening-balance form
     bs_accounts = [a for a in accounts if a.active and a.type in ("Asset", "Liability", "Equity")
-                   and a.code != "3900"]
+                   and a.code != M.ACC_OBE]
     opening = db.query(M.JournalEntry).filter(M.JournalEntry.source_type == "Opening").first()
     return render(request, db, "chart_of_accounts.html", "coa",
                   accounts=accounts, bs_accounts=bs_accounts, opening=opening)
@@ -1668,7 +1709,7 @@ async def opening_balances(request: Request, db: Session = Depends(get_db)):
         total_cr += cr
     diff = round(total_dr - total_cr, 2)
     if abs(diff) > 0.005:   # plug the difference to Opening Balance Equity
-        obe = db.query(M.Account).filter(M.Account.code == "3900").first()
+        obe = db.query(M.Account).filter(M.Account.code == M.ACC_OBE).first()
         if obe:
             lines.append((obe.id, 0 if diff > 0 else -diff, diff if diff > 0 else 0,
                           "Opening balance equity (plug)"))
@@ -1697,9 +1738,9 @@ EXPANSION_BUDGET = {
     "spend_myr": 805_988.37,
     "spend_china_rm": 113_340.70,
     "spend_total": 919_329.07,
-    "opex_bank_paid": 150_527.22,
-    "outflow_known": 1_069_856.29,
-    "funding_unmatched": 430_143.71,
+    "opex_bank_paid": 150_007.95,   # v3: excludes RM519.27 project insurance, now CAPEX
+    "outflow_known": 1_069_337.02,
+    "funding_unmatched": 430_662.98,
     "claims_candidate": 152_406.84,
     "spend_detail": [
         ("TNJ base renovation", 696_129.20, "Supplier acknowledged"),
@@ -1733,12 +1774,12 @@ EXPANSION_BUDGET = {
         ("Marketing", 5_500.00, "Operator model"),
         ("Vet visits", 1_680.00, "Operator steady month"),
         ("Maintenance", 1_000.00, "Operator model"),
-        ("Software, admin, insurance & licences", 1_500.00, "Review allowance"),
-        ("Contingency", 3_000.00, "Review allowance"),
+        ("Systems, administration & general allowance", 5_500.00,
+         "Confirmed monthly management fee — incl. RM2,500 software administration"),
     ],
-    "monthly_total": 64_330.00,
-    "reserve_3m": 192_990.00,
-    "reserve_6m": 385_980.00,
+    "monthly_total": 65_330.00,
+    "reserve_3m": 195_990.00,
+    "reserve_6m": 391_980.00,
     "preopening": [
         ("Licensing, compliance, fire safety & insurance", 10_000.00),
         ("Opening consumables", 15_000.00),
@@ -1747,8 +1788,8 @@ EXPANSION_BUDGET = {
         ("Defects, snagging & contingency", 40_000.00),
     ],
     "preopening_total": 110_000.00,
-    "cash_need_base": 462_275.03,
-    "cash_need_max": 543_458.81,
+    "cash_need_base": 465_275.03,
+    "cash_need_max": 546_458.81,
     "conditional": [
         ("SS21 tenancy security deposit (refundable)", 51_000.00,
          "Signed lease; payment proof still required"),
@@ -1763,7 +1804,7 @@ def expansion_budget(request: Request, db: Session = Depends(get_db)):
     b = EXPANSION_BUDGET
     # Live comparison: what the ledger has actually recorded against the plan.
     ledger.sync_ledger(db)
-    reno = db.query(M.Account).filter(M.Account.code == "1600").first()
+    reno = db.query(M.Account).filter(M.Account.code == M.ACC_RENOVATION).first()
     recorded = 0.0
     if reno:
         for line in db.query(M.JournalLine).filter(M.JournalLine.account_id == reno.id).all():
@@ -1795,7 +1836,7 @@ def cashflow(request: Request, db: Session = Depends(get_db)):
     horizon_end = today + timedelta(days=7 * n_weeks)
 
     # Opening cash: ledger balances of cash/bank/petty accounts as of today
-    cash_codes = ("1010", "1020", "1030")
+    cash_codes = (M.ACC_CASH, M.ACC_BANK, M.ACC_PETTY, M.ACC_TNG_CLEARING)
     opening_cash = 0.0
     cash_split = []
     for acc in db.query(M.Account).filter(M.Account.code.in_(cash_codes)).all():
@@ -2020,6 +2061,223 @@ def general_ledger(request: Request, q: str = "", frm: str = "", to: str = "",
                   q=q, frm=frm, to=to, kind=kind, kinds=kinds,
                   total_in=total_in, total_out=total_out, count=len(entries),
                   journal_count=journal_count)
+
+
+# ─────────────────────────── RECEIVABLES + AR AGING ───────────────────────────
+AR_BUCKETS = ["Current", "1–30 days", "31–60 days", "61–90 days", "90+ days"]
+
+
+def _ar_bucket(inv, today):
+    days = (today - inv.due_date).days
+    if days <= 0:
+        return 0
+    if days <= 30:
+        return 1
+    if days <= 60:
+        return 2
+    if days <= 90:
+        return 3
+    return 4
+
+
+def _ar_aging_rows(db):
+    """Outstanding invoices bucketed by days overdue, grouped per customer."""
+    today = date.today()
+    open_invs = [i for i in db.query(M.ARInvoice).filter(M.ARInvoice.status != "Void").all()
+                 if i.outstanding > 0.005]
+    per_customer = {}
+    for inv in open_invs:
+        row = per_customer.setdefault(inv.customer, [0.0] * 5)
+        row[_ar_bucket(inv, today)] += inv.outstanding
+    rows = [{"customer": c, "buckets": [round(b, 2) for b in v], "total": round(sum(v), 2)}
+            for c, v in sorted(per_customer.items())]
+    totals = [round(sum(r["buckets"][i] for r in rows), 2) for i in range(5)]
+    return rows, totals, round(sum(t for t in totals), 2), open_invs
+
+
+@app.get("/receivables", response_class=HTMLResponse)
+def receivables(request: Request, q: str = "", status: str = "",
+                db: Session = Depends(get_db)):
+    ledger.sync_ledger(db)
+    query = db.query(M.ARInvoice).order_by(M.ARInvoice.date.desc(), M.ARInvoice.id.desc())
+    if status:
+        query = query.filter(M.ARInvoice.status == status)
+    if q:
+        like = f"%{q.strip()}%"
+        query = query.filter((M.ARInvoice.inv_no.ilike(like)) | (M.ARInvoice.customer.ilike(like)))
+    invoices = query.limit(300).all()
+    open_total = sum(i.outstanding for i in db.query(M.ARInvoice)
+                     .filter(M.ARInvoice.status != "Void").all() if i.outstanding > 0.005)
+    return render(request, db, "receivables.html", "receivables",
+                  invoices=invoices, q=q, flt=status, streams=M.STREAMS,
+                  open_total=round(open_total, 2), today_iso=date.today().isoformat(),
+                  flash=request.session.pop("flash_ar", None))
+
+
+@app.post("/receivables/new")
+async def receivables_new(request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user or user.role not in ("admin", "manager"):
+        return RedirectResponse("/", status_code=302)
+    f = await request.form()
+    customer = str(f.get("customer", "")).strip()
+    amount = float(f.get("amount") or 0)
+    if not customer or amount <= 0:
+        return RedirectResponse("/receivables", status_code=303)
+    inv_date = parse_date(str(f.get("date", ""))) or date.today()
+    due = parse_date(str(f.get("due_date", ""))) if f.get("due_date") else None
+    inv_no = telegram_bot.next_monthly_counter(db, "ARINV", "INV-", inv_date)
+    db.add(M.ARInvoice(inv_no=inv_no, customer=customer,
+                       stream=str(f.get("stream") or "Boarding"),
+                       date=inv_date, due_date=due or (inv_date + timedelta(days=30)),
+                       amount=amount, month=f"{inv_date:%b %Y}",
+                       notes=str(f.get("notes", "")).strip(),
+                       created_by=user.display_name))
+    db.commit()
+    ledger.sync_ledger(db)
+    request.session["flash_ar"] = f"{inv_no} · {customer} · RM {amount:,.2f} posted (Dr Trade Debtors / Cr {f.get('stream') or 'Boarding'} revenue)"
+    return RedirectResponse("/receivables", status_code=303)
+
+
+@app.post("/receivables/{inv_id}/receipt")
+async def receivables_receipt(inv_id: int, request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user or user.role not in ("admin", "manager"):
+        return RedirectResponse("/", status_code=302)
+    inv = db.get(M.ARInvoice, inv_id)
+    f = await request.form()
+    amount = float(f.get("amount") or 0)
+    if inv and inv.status != "Void" and amount > 0:
+        db.add(M.ARReceipt(invoice_id=inv.id,
+                           date=parse_date(str(f.get("date", ""))) or date.today(),
+                           amount=amount, method=str(f.get("method") or "Bank"),
+                           recorded_by=user.display_name))
+        db.flush()
+        if inv.outstanding <= 0.005:
+            inv.status = "Paid"
+        db.commit()
+        ledger.sync_ledger(db)
+        request.session["flash_ar"] = f"Receipt RM {amount:,.2f} against {inv.inv_no} recorded"
+    return RedirectResponse("/receivables", status_code=303)
+
+
+@app.post("/receivables/{inv_id}/void")
+def receivables_void(inv_id: int, request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user or user.role != "admin":
+        return RedirectResponse("/", status_code=302)
+    inv = db.get(M.ARInvoice, inv_id)
+    if inv and not inv.receipts:
+        inv.status = "Void"
+        db.commit()
+        ledger.sync_ledger(db)   # removes the derived posting
+    return RedirectResponse("/receivables", status_code=303)
+
+
+@app.get("/reports/ar-aging", response_class=HTMLResponse)
+def ar_aging(request: Request, db: Session = Depends(get_db)):
+    ledger.sync_ledger(db)
+    rows, totals, grand, open_invs = _ar_aging_rows(db)
+    today = date.today()
+    inv_rows = sorted(({"inv": i, "days": max(0, (today - i.due_date).days),
+                        "bucket": AR_BUCKETS[_ar_bucket(i, today)]} for i in open_invs),
+                      key=lambda r: -r["days"])
+    return render(request, db, "ar_aging.html", "araging",
+                  rows=rows, totals=totals, grand=grand, buckets=AR_BUCKETS,
+                  inv_rows=inv_rows)
+
+
+# ─────────────────────────── SALES / PURCHASE LEDGERS ───────────────────────────
+@app.get("/reports/sales-ledger", response_class=HTMLResponse)
+def sales_ledger(request: Request, frm: str = "", to: str = "",
+                 db: Session = Depends(get_db)):
+    """Sales day book: every cash sale and credit invoice in the period, with
+    per-stream totals — Weng Teng's 'sales ledger'."""
+    d_from, d_to = parse_date(frm) if frm else None, parse_date(to) if to else None
+
+    def in_range(d):
+        return (not d_from or d >= d_from) and (not d_to or d <= d_to)
+
+    rows = []
+    for s in db.query(M.SalesEntry).all():
+        if in_range(s.date):
+            rows.append({"date": s.date, "ref": "Sale", "kind": "Cash sale",
+                         "party": s.recorded_by or "-", "stream": s.stream,
+                         "desc": s.description, "amount": s.amount})
+    for i in db.query(M.ARInvoice).filter(M.ARInvoice.status != "Void").all():
+        if in_range(i.date):
+            rows.append({"date": i.date, "ref": i.inv_no, "kind": "Credit invoice",
+                         "party": i.customer, "stream": i.stream,
+                         "desc": i.notes or "Customer invoice", "amount": i.amount})
+    rows.sort(key=lambda r: (r["date"], r["ref"]))
+    stream_totals = {}
+    for r in rows:
+        stream_totals[r["stream"]] = round(stream_totals.get(r["stream"], 0) + r["amount"], 2)
+    return render(request, db, "sales_ledger.html", "salesledger",
+                  rows=rows, frm=frm, to=to, stream_totals=stream_totals,
+                  grand=round(sum(r["amount"] for r in rows), 2))
+
+
+@app.get("/reports/purchase-ledger", response_class=HTMLResponse)
+def purchase_ledger(request: Request, frm: str = "", to: str = "", supplier: str = "",
+                    db: Session = Depends(get_db)):
+    """Purchase ledger: supplier-by-supplier account of everything bought,
+    what's been paid, and what's still owing."""
+    d_from, d_to = parse_date(frm) if frm else None, parse_date(to) if to else None
+    q = db.query(M.Payment).filter(M.Payment.status != "Void")
+    if d_from:
+        q = q.filter(M.Payment.date >= d_from)
+    if d_to:
+        q = q.filter(M.Payment.date <= d_to)
+    if supplier:
+        q = q.filter(M.Payment.supplier == supplier)
+    pays = q.order_by(M.Payment.supplier, M.Payment.date, M.Payment.id).all()
+    groups = {}
+    for p in pays:
+        g = groups.setdefault(p.supplier or "(no supplier)", {"rows": [], "total": 0.0, "unpaid": 0.0})
+        g["rows"].append(p)
+        g["total"] = round(g["total"] + p.amount, 2)
+        if p.status != "Paid":
+            g["unpaid"] = round(g["unpaid"] + p.amount, 2)
+    suppliers = [s for (s,) in db.query(M.Payment.supplier).distinct()
+                 .order_by(M.Payment.supplier).all() if s]
+    return render(request, db, "purchase_ledger.html", "purchledger",
+                  groups=groups, frm=frm, to=to, supplier=supplier, suppliers=suppliers,
+                  grand=round(sum(g["total"] for g in groups.values()), 2),
+                  grand_unpaid=round(sum(g["unpaid"] for g in groups.values()), 2))
+
+
+# ─────────────────────────── BANK RECONCILIATION REPORT ───────────────────────────
+@app.get("/reconciliation/report", response_class=HTMLResponse)
+def reconciliation_report(request: Request, account: int = 0, frm: str = "", to: str = "",
+                          db: Session = Depends(get_db)):
+    """Printable reconciliation statement for one bank account and period:
+    balance proof, matched lines with what they matched to, unmatched lines."""
+    accounts = db.query(M.BankAccount).filter(M.BankAccount.active == True).order_by(M.BankAccount.id).all()  # noqa: E712
+    acc = db.get(M.BankAccount, account) if account else (accounts[0] if accounts else None)
+    d_from, d_to = parse_date(frm) if frm else None, parse_date(to) if to else None
+    lines = []
+    if acc:
+        q = db.query(M.BankStatementLine).filter(M.BankStatementLine.bank_account_id == acc.id)
+        if d_from:
+            q = q.filter(M.BankStatementLine.date >= d_from)
+        if d_to:
+            q = q.filter(M.BankStatementLine.date <= d_to)
+        lines = q.order_by(M.BankStatementLine.date, M.BankStatementLine.id).all()
+    matched = [l for l in lines if l.matched]
+    unmatched = [l for l in lines if not l.matched]
+    reconciled_total = round(sum(l.amount for l in matched), 2)
+    unreconciled_total = round(sum(l.amount for l in unmatched), 2)
+    opening_balance = acc.opening_balance if acc else 0.0
+    book_candidates = _unmatched_system_txns(db, acc.id) if acc else []
+    return render(request, db, "reconciliation_report.html", "reconciliation",
+                  accounts=accounts, acc=acc, frm=frm, to=to,
+                  matched=matched, unmatched=unmatched,
+                  reconciled_total=reconciled_total, unreconciled_total=unreconciled_total,
+                  opening_balance=opening_balance,
+                  balance_per_books=round(opening_balance + reconciled_total, 2),
+                  balance_per_bank=round(opening_balance + reconciled_total + unreconciled_total, 2),
+                  book_candidates=book_candidates)
 
 
 # ─────────────────────────── REPORTS ───────────────────────────

@@ -3,13 +3,30 @@
 {% block content %}
 <div class="pagehead">
   <h1><span class="mono">{{ acc.code }}</span> {{ acc.name }}</h1>
-  <a class="btn secondary" href="/reports/trial-balance">← Trial Balance</a>
+  <div class="actions">
+    <button class="secondary" onclick="window.print()">{{ icon('file', 14) }} PDF / Print 打印</button>
+    <a class="btn secondary" href="/reports/trial-balance">← Trial Balance</a>
+  </div>
 </div>
 <div class="sub">Account ledger — every posting to this account with a running balance. <span class="badge draft">{{ acc.type }}</span></div>
+
+<div class="panel">
+  <form method="get">
+    <div class="formrow" style="grid-template-columns:170px 170px auto">
+      <div><label>From 从</label><input type="date" name="frm" value="{{ frm }}"></div>
+      <div><label>To 至</label><input type="date" name="to" value="{{ to }}"></div>
+      <div class="f-btn"><button type="submit">{{ icon('eye', 14) }} View</button></div>
+    </div>
+  </form>
+</div>
 
 <div class="tablewrap" style="max-width:920px">
   <table>
     <tr><th>Date</th><th>Ref</th><th>Source</th><th>Memo</th><th class="num">Debit</th><th class="num">Credit</th><th class="num">Balance</th></tr>
+    {% if bf is not none %}
+    <tr><td colspan="6" style="font-weight:600">Balance brought forward 承前余额</td>
+        <td class="num" style="font-weight:700">{{ bf|rm }}</td></tr>
+    {% endif %}
     {% for r in rows %}
     <tr>
       <td>{{ r.entry.date.strftime('%d/%m/%y') }}</td>

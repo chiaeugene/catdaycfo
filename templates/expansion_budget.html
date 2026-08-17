@@ -35,7 +35,7 @@
   </table>
 </div>
 <div style="font-size:11.5px;color:var(--muted);margin:8px 0 0 4px">
-  Recorded in this system's ledger against 1600 Fixed Assets — Renovation: <b>RM {{ recorded_in_ledger|rm }}</b>.
+  Recorded in this system's ledger against {{ M.ACC_RENOVATION }} Renovation: <b>RM {{ recorded_in_ledger|rm }}</b>.
   The difference is the China purchases and other items still held back pending payment evidence.
 </div>
 
@@ -95,8 +95,9 @@
 </div>
 
 <div style="font-size:11.5px;color:var(--muted);margin-top:14px;max-width:860px">
-  Karen's operating claims candidate of RM {{ b.claims_candidate|rm }} is deliberately excluded from every total above —
-  different period and source, still pending approval and duplicate checks, and it may overlap with company-paid costs.
-  See the <a href="/accounting/journal">Journal</a> for what has actually been posted to the books.
+  Karen's unreconciled claims pool of RM {{ b.claims_candidate|rm }} is a <b>memorandum only</b> — not counted as spending,
+  expense, or liability anywhere above. Each claim must first be matched item-by-item against CIMB direct payments, payroll,
+  rent and other accounts (and the NG SOCK HWA identity question resolved) before any figure moves into the books.
+  See the <a href="/accounting/journal">Journal</a> for what has actually been posted.
 </div>
 {% endblock %}

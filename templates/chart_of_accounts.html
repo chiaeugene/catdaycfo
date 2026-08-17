@@ -34,7 +34,7 @@
   <div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">
     Enter the position as at your go-live date — bank balances, deposits paid, assets already bought,
     amounts still owed, and capital injected. Any difference is automatically plugged to
-    <b>3900 Opening Balance Equity</b>. Saving replaces the previous opening entry.
+    <b>{{ M.ACC_OBE }} Opening Balance Equity</b>. Saving replaces the previous opening entry.
     {% if opening %}<br><b style="color:var(--green)">Opening entry loaded:</b> {{ opening.date.strftime('%d/%m/%Y') }} · {{ opening.lines|length }} lines.{% endif %}
   </div>
   <form method="post" action="/accounting/opening">

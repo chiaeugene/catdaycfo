@@ -80,6 +80,26 @@ def next_counter(db: Session, name: str, prefix: str) -> str:
     return f"{prefix}{n:04d}"
 
 
+def next_monthly_counter(db: Session, name: str, prefix: str, d=None) -> str:
+    """Reference number that restarts each month: PL-2608-001, PL-2608-002, …
+    then PL-2609-001. Requested by Weng Teng for payment listings — the month
+    is readable straight off the reference."""
+    from datetime import date as _date
+    from .models import Counter, Setting
+    ps = db.get(Setting, f"PREFIX_{name}")
+    if ps and ps.value.strip():
+        prefix = ps.value.strip()
+    yymm = f"{(d or _date.today()):%y%m}"
+    c = db.get(Counter, f"{name}{yymm}")
+    if not c:
+        c = Counter(name=f"{name}{yymm}", value=1)
+        db.add(c)
+    n = c.value
+    c.value = n + 1
+    db.flush()
+    return f"{prefix}{yymm}-{n:03d}"
+
+
 def handle_update(update: dict, db: Session):
     msg = update.get("message") or update.get("edited_message")
     if not msg:

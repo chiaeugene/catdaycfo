@@ -47,8 +47,44 @@ run_migrations()
 db = SessionLocal()
 
 RECON_VERSION = "v1-31jul2026"
+
+
+def apply_adjustments(db):
+    """Incremental corrections that must land on databases where the main
+    reconstruction load already ran. Each is guarded by its own Setting flag,
+    posted as a Manual journal entry (survives ledger rebuilds), and follows
+    a documented change in Karen's workbook — never a reinterpretation.
+
+    ADJ-V3-INSURANCE (workbook v3, 18 Aug 2026): Karen reclassified the
+    RM519.27 construction insurance from operating expense to expansion CAPEX
+    (P&L loss −110,606.41 → −110,087.14). Her Balance Sheet Opening tab shows
+    a −519.27 balance check flagged NEEDS ACTION because she updated the loss
+    but not the asset side; the asset side is the missing half, so we post
+    Dr Renovation / Cr Opening Balance Equity 519.27, which lands our books
+    exactly on her corrected loss figure.
+    """
+    if not db.get(M.Setting, "RECON_ADJ_V3_INSURANCE"):
+        opening = db.query(M.JournalEntry).filter(
+            M.JournalEntry.source_type == "Opening").first()
+        if opening:   # only meaningful once the opening position exists
+            accs = {a.code: a for a in db.query(M.Account).all()}
+            ledger.post_manual(
+                db, date(2026, 7, 31),
+                "Capitalise construction insurance RM519.27 (Great Eastern) into "
+                "Renovation per reconstruction workbook v3 — reclassed out of "
+                "opex, opening loss becomes -110,087.14.",
+                [(accs[M.ACC_RENOVATION].id, 519.27, 0, "Construction all-risk insurance — capitalised"),
+                 (accs[M.ACC_OBE].id, 0, 519.27, "Reduce accumulated provisional loss")],
+                "Reconstruction v3 update", ref="ADJ-V3-INSURANCE")
+            db.add(M.Setting(key="RECON_ADJ_V3_INSURANCE", value="done"))
+            db.commit()
+            print("Posted ADJ-V3-INSURANCE (+519.27 Renovation / OBE).")
+
+
 ver_setting = db.get(M.Setting, "RECONSTRUCTION_DATA_VERSION")
 if ver_setting and ver_setting.value == RECON_VERSION:
+    ledger.seed_coa(db)   # applies the SQL-Account renumbering on live DBs
+    apply_adjustments(db)
     print("Reconstruction data already loaded (current version) - skipping.")
     db.close()
     raise SystemExit(0)
@@ -66,20 +102,9 @@ for name in ("DOC", "PAY", "PV", "PL", "MJE"):
 db.commit()
 print("Wiped sample/demo data.")
 
-# ── Chart of Accounts: 4 new accounts the reconstruction needs ──────────────
+# ── Chart of Accounts (SQL-Account numbering; already includes the clearing
+# and suspense accounts the reconstruction needs) ────────────────────────────
 ledger.seed_coa(db)
-NEW_ACCOUNTS = [
-    ("1015", "Cash & TNG Clearing (Unverified)", "Asset"),
-    ("1620", "Fixed Assets — Provisional Candidates", "Asset"),
-    ("2900", "Unclassified Funding Suspense", "Liability"),
-    ("2910", "Off-Bank CAPEX Funding Suspense", "Liability"),
-]
-existing = {a.code for a in db.query(M.Account).all()}
-for code, name, typ in NEW_ACCOUNTS:
-    if code not in existing:
-        db.add(M.Account(code=code, name=name, type=typ))
-db.commit()
-print(f"Chart of Accounts: added {sum(1 for c,_,_ in NEW_ACCOUNTS if c not in existing)} new accounts.")
 
 # ── Real suppliers identified in the reconstruction ──────────────────────────
 # Bank details are not in the source evidence except where noted — left blank
@@ -147,12 +172,12 @@ OPENING_DATE = date(2026, 7, 31)
 # difference plugs to 3900 Opening Balance Equity, same mechanism as the
 # /accounting/coa opening-balance form.
 LINES = [
-    ("1020", 55941.09, "CIMB bank — 31 Jul closing balance (confirmed)"),
-    ("1015", 33855.00, "Cash + TNG sales, inferred balance — no 31 Jul cash count (Q04/Q05)"),
-    ("1620", 9835.75, "Medklinn + Big Tree freight — provisional asset candidates"),
-    ("1600", 795633.35, "MYR renovation/equipment work in progress — TNJ, Flow, Alwayz; excludes insurance, Big Tree, all CNY assets"),
-    ("2900", -220000.00, "RM220,000 CDM deposits — source unconfirmed, do not treat as capital until proven (Q01)"),
-    ("2910", -785871.60, "CAPEX payments acknowledged by TNJ/Flow but not in supplied CIMB statements — payer unresolved (CQ-03/CQ-04)"),
+    (M.ACC_BANK, 55941.09, "CIMB bank — 31 Jul closing balance (confirmed)"),
+    (M.ACC_TNG_CLEARING, 33855.00, "Cash + TNG sales, inferred balance — no 31 Jul cash count (Q04/Q05)"),
+    (M.ACC_PROVISIONAL_FA, 9835.75, "Medklinn + Big Tree freight — provisional asset candidates"),
+    (M.ACC_RENOVATION, 795633.35, "MYR renovation/equipment work in progress — TNJ, Flow, Alwayz; excludes insurance, Big Tree, all CNY assets"),
+    (M.ACC_FUNDING_SUSP, -220000.00, "RM220,000 CDM deposits — source unconfirmed, do not treat as capital until proven (Q01)"),
+    (M.ACC_OFFBANK_SUSP, -785871.60, "CAPEX payments acknowledged by TNJ/Flow but not in supplied CIMB statements — payer unresolved (CQ-03/CQ-04)"),
 ]
 total_dr = sum(a for _, a, _ in LINES if a > 0)
 total_cr = sum(-a for _, a, _ in LINES if a < 0)
@@ -166,7 +191,7 @@ for code, amt, desc in LINES:
     else:
         lines.append((aid, 0, -amt, desc))
 if abs(plug) > 0.005:
-    obe = accs["3900"]
+    obe = accs[M.ACC_OBE]
     if plug > 0:
         lines.append((obe.id, 0, plug, "Opening balance equity (plug)"))
     else:
@@ -193,5 +218,6 @@ if not ver:
     db.add(ver)
 ver.value = RECON_VERSION
 db.commit()
+apply_adjustments(db)
 db.close()
 print("Reconstruction load complete.")

@@ -3,9 +3,14 @@
 {% block content %}
 <div class="pagehead">
   <h1>Bank Reconciliation 银行对账</h1>
-  {% if user.role in ['admin','manager'] %}
-  <button class="secondary" onclick="document.getElementById('dlg-newacc').showModal()">＋ New bank account</button>
-  {% endif %}
+  <div class="actions">
+    {% if accounts %}
+    <a class="btn secondary" href="/reconciliation/report{% if acc %}?account={{ acc.id }}{% endif %}">{{ icon('file', 14) }} Report / PDF 报告</a>
+    {% endif %}
+    {% if user.role in ['admin','manager'] %}
+    <button class="secondary" onclick="document.getElementById('dlg-newacc').showModal()">＋ New bank account</button>
+    {% endif %}
+  </div>
 </div>
 <div class="sub">Import your bank statement, then match each line against a paid voucher, sale, or petty cash top-up. Unmatched lines need investigation.</div>
 

@@ -1,8 +1,13 @@
 {% extends "base.html" %}
 {% from "icons.html" import icon %}
 {% block content %}
-<div class="pagehead"><h1>General Ledger 总账</h1></div>
-<div class="sub">Every money movement in one place — search by code (PV-0001, PAY-0003…), date, name or description.</div>
+<div class="pagehead"><h1>General Ledger 总账</h1>
+  <button class="secondary" onclick="window.print()">{{ icon('file', 14) }} PDF / Print 打印</button>
+</div>
+<div class="sub">Every money movement in one place — search by code (PV-0001, PAY-0003…), date, name or description.
+  Specialised views: <a href="/reports/sales-ledger">Sales Ledger 销售</a> ·
+  <a href="/reports/purchase-ledger">Purchase Ledger 采购</a> ·
+  per-account ledgers via the <a href="/reports/trial-balance">Trial Balance</a>.</div>
 
 <div class="panel">
   <form method="get" action="/reports/gl">

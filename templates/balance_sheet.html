@@ -17,8 +17,10 @@
 
 <div class="panel">
   <form method="get" action="/reports/balance-sheet">
-    <div class="formrow" style="grid-template-columns:170px auto">
+    <div class="formrow" style="grid-template-columns:170px 170px auto">
       <div><label>As at 截至</label><input type="date" name="as_of" value="{{ as_of.isoformat() }}"></div>
+      <div><label>Compare with 对比 <span style="text-transform:none;font-weight:500">(optional)</span></label>
+        <input type="date" name="vs" value="{{ vs_date.isoformat() if vs_date else '' }}"></div>
       <div class="f-btn"><button type="submit">{{ icon('eye', 14) }} View</button></div>
     </div>
   </form>
@@ -34,36 +36,55 @@
   </div>
 </div>
 
-<div class="tablewrap" style="max-width:760px">
+<div class="tablewrap" style="max-width:{{ '920px' if bs_vs else '760px' }}">
 <table>
-  <tr class="section-row"><td>ASSETS 资产</td><td class="num"></td></tr>
+  {% if bs_vs %}
+  <tr><th></th><th class="num">{{ as_of.strftime('%d/%m/%Y') }}</th>
+      <th class="num">{{ vs_date.strftime('%d/%m/%Y') }}</th><th class="num">Change 变动</th></tr>
+  {% endif %}
+  <tr class="section-row"><td>ASSETS 资产</td><td class="num"></td>{% if bs_vs %}<td class="num"></td><td class="num"></td>{% endif %}</tr>
   {% for acc, bal in bs.assets %}
   <tr><td style="padding-left:28px"><a href="/accounting/ledger/{{ acc.id }}">{{ acc.code }} · {{ acc.name }}</a></td>
-      <td class="num">{{ bal|rm }}</td></tr>
+      <td class="num">{{ bal|rm }}</td>
+      {% if bs_vs %}<td class="num">{{ vs_bal.get(acc.id, 0)|rm }}</td>
+      <td class="num">{{ (bal - vs_bal.get(acc.id, 0))|rm }}</td>{% endif %}</tr>
   {% else %}
-  <tr><td style="padding-left:28px;color:var(--muted)">No asset balances</td><td class="num">0.00</td></tr>
+  <tr><td style="padding-left:28px;color:var(--muted)">No asset balances</td><td class="num">0.00</td>{% if bs_vs %}<td class="num"></td><td class="num"></td>{% endif %}</tr>
   {% endfor %}
-  <tr class="total-row"><td>Total Assets 总资产</td><td class="num">{{ bs.total_assets|rm }}</td></tr>
+  <tr class="total-row"><td>Total Assets 总资产</td><td class="num">{{ bs.total_assets|rm }}</td>
+      {% if bs_vs %}<td class="num">{{ bs_vs.total_assets|rm }}</td>
+      <td class="num">{{ (bs.total_assets - bs_vs.total_assets)|rm }}</td>{% endif %}</tr>
 
-  <tr class="section-row"><td>LIABILITIES 负债</td><td class="num"></td></tr>
+  <tr class="section-row"><td>LIABILITIES 负债</td><td class="num"></td>{% if bs_vs %}<td class="num"></td><td class="num"></td>{% endif %}</tr>
   {% for acc, bal in bs.liabilities %}
   <tr><td style="padding-left:28px"><a href="/accounting/ledger/{{ acc.id }}">{{ acc.code }} · {{ acc.name }}</a></td>
-      <td class="num">{{ bal|rm }}</td></tr>
+      <td class="num">{{ bal|rm }}</td>
+      {% if bs_vs %}<td class="num">{{ vs_bal.get(acc.id, 0)|rm }}</td>
+      <td class="num">{{ (bal - vs_bal.get(acc.id, 0))|rm }}</td>{% endif %}</tr>
   {% else %}
-  <tr><td style="padding-left:28px;color:var(--muted)">No liability balances</td><td class="num">0.00</td></tr>
+  <tr><td style="padding-left:28px;color:var(--muted)">No liability balances</td><td class="num">0.00</td>{% if bs_vs %}<td class="num"></td><td class="num"></td>{% endif %}</tr>
   {% endfor %}
-  <tr class="total-row"><td>Total Liabilities 总负债</td><td class="num">{{ bs.total_liabilities|rm }}</td></tr>
+  <tr class="total-row"><td>Total Liabilities 总负债</td><td class="num">{{ bs.total_liabilities|rm }}</td>
+      {% if bs_vs %}<td class="num">{{ bs_vs.total_liabilities|rm }}</td>
+      <td class="num">{{ (bs.total_liabilities - bs_vs.total_liabilities)|rm }}</td>{% endif %}</tr>
 
-  <tr class="section-row"><td>EQUITY 权益</td><td class="num"></td></tr>
+  <tr class="section-row"><td>EQUITY 权益</td><td class="num"></td>{% if bs_vs %}<td class="num"></td><td class="num"></td>{% endif %}</tr>
   {% for acc, bal in bs.equity %}
-  <tr><td style="padding-left:28px">{{ acc.code }} · {{ acc.name }}</td><td class="num">{{ bal|rm }}</td></tr>
+  <tr><td style="padding-left:28px">{{ acc.code }} · {{ acc.name }}</td><td class="num">{{ bal|rm }}</td>
+      {% if bs_vs %}<td class="num">{{ vs_bal.get(acc.id, 0)|rm }}</td>
+      <td class="num">{{ (bal - vs_bal.get(acc.id, 0))|rm }}</td>{% endif %}</tr>
   {% endfor %}
-  <tr><td style="padding-left:28px">Current Earnings 本期损益</td><td class="num">{{ bs.earnings|rm }}</td></tr>
-  <tr class="total-row"><td>Total Equity 总权益</td><td class="num">{{ bs.total_equity|rm }}</td></tr>
+  <tr><td style="padding-left:28px">Current Earnings 本期损益</td><td class="num">{{ bs.earnings|rm }}</td>
+      {% if bs_vs %}<td class="num">{{ bs_vs.earnings|rm }}</td>
+      <td class="num">{{ (bs.earnings - bs_vs.earnings)|rm }}</td>{% endif %}</tr>
+  <tr class="total-row"><td>Total Equity 总权益</td><td class="num">{{ bs.total_equity|rm }}</td>
+      {% if bs_vs %}<td class="num">{{ bs_vs.total_equity|rm }}</td>
+      <td class="num">{{ (bs.total_equity - bs_vs.total_equity)|rm }}</td>{% endif %}</tr>
 
   <tr class="total-row" style="border-top:3px solid var(--brand-hot)">
     <td>LIABILITIES + EQUITY 负债+权益</td>
-    <td class="num">{{ (bs.total_liabilities + bs.total_equity)|rm }}</td></tr>
+    <td class="num">{{ (bs.total_liabilities + bs.total_equity)|rm }}</td>
+    {% if bs_vs %}<td class="num">{{ (bs_vs.total_liabilities + bs_vs.total_equity)|rm }}</td><td class="num"></td>{% endif %}</tr>
 </table>
 </div>
 {% endblock %}

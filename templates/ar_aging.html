@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block content %}
+<div class="pagehead">
+  <h1>AR Aging 应收账龄</h1>
+  <div class="actions">
+    <button class="secondary" onclick="window.print()">{{ icon('file', 14) }} PDF / Print 打印</button>
+    <a class="btn secondary" href="/receivables">← Receivables</a>
+  </div>
+</div>
+<div class="sub">Who owes the company money and for how long — aged from each invoice's due date. The mirror of <a href="/reports/ap-aging">AP Aging</a> (what the company owes suppliers).</div>
+
+<div class="cards">
+  <div class="card amber"><div class="label">Total outstanding 未收总额</div><div class="value">RM {{ grand|rm }}</div></div>
+  <div class="card red"><div class="label">Overdue 90+ days 逾期90天以上</div><div class="value">RM {{ totals[4]|rm }}</div></div>
+</div>
+
+<h2>By customer 按客户</h2>
+<div class="tablewrap">
+  <table>
+    <tr><th>Customer 客户</th>{% for b in buckets %}<th class="num">{{ b }}</th>{% endfor %}<th class="num">Total</th></tr>
+    {% for r in rows %}
+    <tr>
+      <td><b>{{ r.customer }}</b></td>
+      {% for v in r.buckets %}<td class="num">{{ v|rm if v else '' }}</td>{% endfor %}
+      <td class="num" style="font-weight:700">{{ r.total|rm }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="7" class="empty">Nothing outstanding — every customer invoice is either paid or none have been raised yet.
+      Raise invoices under <a href="/receivables">Receivables</a>.</td></tr>
+    {% endfor %}
+    {% if rows %}
+    <tr class="total-row"><td>TOTAL</td>
+      {% for t in totals %}<td class="num">{{ t|rm if t else '' }}</td>{% endfor %}
+      <td class="num">{{ grand|rm }}</td></tr>
+    {% endif %}
+  </table>
+</div>
+
+{% if inv_rows %}
+<h2 style="margin-top:26px">By invoice 按发票</h2>
+<div class="tablewrap">
+  <table>
+    <tr><th>Invoice</th><th>Customer</th><th>Date</th><th>Due</th><th class="num">Days overdue</th>
+        <th>Bucket</th><th class="num">Outstanding</th></tr>
+    {% for r in inv_rows %}
+    <tr>
+      <td class="mono"><b>{{ r.inv.inv_no }}</b></td>
+      <td>{{ r.inv.customer }}</td>
+      <td>{{ r.inv.date.strftime('%d/%m/%y') }}</td>
+      <td>{{ r.inv.due_date.strftime('%d/%m/%y') }}</td>
+      <td class="num" {% if r.days > 30 %}style="color:var(--red);font-weight:700"{% endif %}>{{ r.days if r.days else '—' }}</td>
+      <td><span class="badge {{ 'pending' if r.days else 'draft' }}">{{ r.bucket }}</span></td>
+      <td class="num" style="font-weight:700">{{ r.inv.outstanding|rm }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+{% endblock %}

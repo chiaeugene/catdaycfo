@@ -20,11 +20,40 @@ from . import models as M
 
 
 def seed_coa(db: Session):
-    """Idempotently create the seed Chart of Accounts."""
-    existing = {a.code for a in db.query(M.Account).all()}
+    """Idempotently create the seed Chart of Accounts, first migrating any
+    old 4-digit codes to the SQL Account numbering (Weng Teng's template,
+    Aug 2026). Accounts are renamed in place — same row id — so existing
+    journal lines, and therefore every report, carry over untouched."""
+    by_code = {a.code: a for a in db.query(M.Account).all()}
+    changed = 0
+
+    # 2230 EIS Payable merges into SOCSO & EIS (the template combines them):
+    # move its journal lines across, then drop the account.
+    old_eis = by_code.pop("2230", None)
+    if old_eis is not None:
+        target = by_code.get("2220") or by_code.get(M.ACC_SOCSO_EIS)
+        if target is not None:
+            db.query(M.JournalLine).filter(
+                M.JournalLine.account_id == old_eis.id).update(
+                {"account_id": target.id}, synchronize_session=False)
+            db.delete(old_eis)
+            changed += 1
+
+    seed_names = {code: (name, typ) for code, name, typ in M.COA_SEED}
+    for old, new in M.COA_RECODE.items():
+        acc = by_code.get(old)
+        if acc is not None and new not in by_code:
+            acc.code = new
+            if new in seed_names:
+                acc.name, acc.type = seed_names[new]
+            by_code[new] = by_code.pop(old)
+            changed += 1
+    if changed:
+        db.commit()
+
     added = 0
     for code, name, typ in M.COA_SEED:
-        if code not in existing:
+        if code not in by_code:
             db.add(M.Account(code=code, name=name, type=typ, is_system=True))
             added += 1
     if added:
@@ -40,7 +69,7 @@ def _expense_account_code(category: str, section: str = "") -> str:
     if category in M.CATEGORY_ACCOUNT:
         return M.CATEGORY_ACCOUNT[category]
     # Uncategorized: physical purchase → equipment, else misc
-    return "1610" if section == "Purchase" else "6110"
+    return M.ACC_EQUIPMENT if section == "Purchase" else M.ACC_MISC
 
 
 def _expected_entries(db: Session):
@@ -57,7 +86,7 @@ def _expected_entries(db: Session):
             "date": p.date, "ref": p.pay_no, "month": p.month,
             "memo": f"{p.supplier or 'Supplier'} · {p.description[:60]}",
             "lines": [(code, p.amount, 0, p.category or "Uncategorized"),
-                      ("2100", 0, p.amount, p.supplier or "")],
+                      (M.ACC_AP, 0, p.amount, p.supplier or "")],
         }
 
     for v in db.query(M.Voucher).filter(M.Voucher.status == "Paid").all():
@@ -66,19 +95,19 @@ def _expected_entries(db: Session):
         out[("Voucher", v.id, "pay")] = {
             "date": v.date, "ref": v.pv_no, "month": f"{v.date:%b %Y}",
             "memo": f"Payment to {v.payee}",
-            "lines": [("2100", v.total, 0, v.payee),
-                      ("1020", 0, v.total, f"Bank payment {v.pv_no}")],
+            "lines": [(M.ACC_AP, v.total, 0, v.payee),
+                      (M.ACC_BANK, 0, v.total, f"Bank payment {v.pv_no}")],
         }
 
     for s in db.query(M.SalesEntry).all():
         if not s.amount:
             continue
-        cash_code = "1010" if s.method == "Cash" else "1020"
+        cash_code = M.ACC_CASH if s.method == "Cash" else M.ACC_BANK
         tax = s.tax_amount or 0
         lines = [(cash_code, s.amount, 0, s.method)]
-        lines.append((M.STREAM_ACCOUNT.get(s.stream, "4090"), 0, s.amount - tax, s.stream))
+        lines.append((M.STREAM_ACCOUNT.get(s.stream, M.ACC_OTHER_INCOME), 0, s.amount - tax, s.stream))
         if tax:
-            lines.append(("2300", 0, tax, s.tax_type))
+            lines.append((M.ACC_SST, 0, tax, s.tax_type))
         out[("Sale", s.id, "post")] = {
             "date": s.date, "ref": s.stream, "month": s.month,
             "memo": f"Sale · {s.description[:60]}", "lines": lines,
@@ -87,10 +116,10 @@ def _expected_entries(db: Session):
     for e in db.query(M.PettyCashEntry).all():
         lines = []
         if e.amount_in:
-            lines += [("1030", e.amount_in, 0, "Top-up"), ("1020", 0, e.amount_in, "Top-up from bank")]
+            lines += [(M.ACC_PETTY, e.amount_in, 0, "Top-up"), (M.ACC_BANK, 0, e.amount_in, "Top-up from bank")]
         if e.amount_out:
             lines += [(_expense_account_code(e.category or ""), e.amount_out, 0, e.category or "Petty spend"),
-                      ("1030", 0, e.amount_out, "Petty cash")]
+                      (M.ACC_PETTY, 0, e.amount_out, "Petty cash")]
         if not lines:
             continue
         out[("PettyCash", e.id, "post")] = {
@@ -107,12 +136,15 @@ def _expected_entries(db: Session):
         pcb = sum(i.pcb for i in run.items)
         other = sum(i.deductions for i in run.items)
         net = sum(i.net for i in run.items)
-        lines = [("6200", gross, 0, "Gross salaries"), ("6210", er, 0, "Employer EPF/SOCSO/EIS")]
-        for code, amt, d in [("2210", epf, "EPF"), ("2220", socso, "SOCSO"), ("2230", eis, "EIS"),
-                             ("2240", pcb, "PCB"), ("2250", other, "Other deductions")]:
+        lines = [(M.ACC_SALARIES, gross, 0, "Gross salaries"),
+                 (M.ACC_EMPLOYER_STAT, er, 0, "Employer EPF/SOCSO/EIS")]
+        # SOCSO and EIS share one payable account per the template's chart.
+        for code, amt, d in [(M.ACC_EPF, epf, "EPF"), (M.ACC_SOCSO_EIS, socso, "SOCSO"),
+                             (M.ACC_SOCSO_EIS, eis, "EIS"), (M.ACC_PCB, pcb, "PCB"),
+                             (M.ACC_OTHER_DED, other, "Other deductions")]:
             if amt:
                 lines.append((code, 0, amt, d))
-        lines.append(("1020", 0, net, "Net pay to staff"))
+        lines.append((M.ACC_BANK, 0, net, "Net pay to staff"))
         out[("Payroll", run.id, "post")] = {
             "date": run.run_date, "ref": f"PAYROLL-{run.month}", "month": run.month,
             "memo": f"Payroll {run.month} ({len(run.items)} staff)", "lines": lines,
@@ -127,24 +159,48 @@ def _expected_entries(db: Session):
     for d in db.query(M.Document).filter(M.Document.status == "Verified",
                                          M.Document.section == "Bank-in Slip",
                                          M.Document.amount > 0).all():
-        credit = "1010"
+        credit = M.ACC_CASH
         try:
-            credit = _json.loads(d.payload_json or "{}").get("bankin_credit") or "1010"
+            credit = _json.loads(d.payload_json or "{}").get("bankin_credit") or M.ACC_CASH
         except ValueError:
             pass
-        if credit not in ("1010", "1015"):
-            credit = "1010"
+        # Old documents verified before the renumbering stored 4-digit codes.
+        credit = M.COA_RECODE.get(credit, credit)
+        if credit not in (M.ACC_CASH, M.ACC_TNG_CLEARING):
+            credit = M.ACC_CASH
         entry_date = d.doc_date or (d.verified_at.date() if d.verified_at
                                     else d.received_at.date())
         out[("Document", d.id, "bankin")] = {
             "date": entry_date,
             "ref": d.doc_no, "month": d.month,
             "memo": f"Bank-in · {d.description[:60]}",
-            "lines": [("1020", d.amount, 0, "Deposited to bank"),
+            "lines": [(M.ACC_BANK, d.amount, 0, "Deposited to bank"),
                       (credit, 0, d.amount, "Cash banked in")],
         }
 
-    kind_acct = {"EPF": "2210", "SOCSO": "2220", "EIS": "2230", "PCB": "2240"}
+    # Receivables: invoice recognises revenue on credit; receipt collects it.
+    for inv in db.query(M.ARInvoice).filter(M.ARInvoice.status != "Void").all():
+        if not inv.amount:
+            continue
+        out[("ARInvoice", inv.id, "invoice")] = {
+            "date": inv.date, "ref": inv.inv_no, "month": inv.month or f"{inv.date:%b %Y}",
+            "memo": f"Invoice {inv.inv_no} · {inv.customer}",
+            "lines": [(M.ACC_AR, inv.amount, 0, inv.customer),
+                      (M.STREAM_ACCOUNT.get(inv.stream, M.ACC_OTHER_INCOME), 0, inv.amount, inv.stream)],
+        }
+        for r in inv.receipts:
+            if not r.amount:
+                continue
+            cash_code = M.ACC_CASH if r.method == "Cash" else M.ACC_BANK
+            out[("ARReceipt", r.id, "receive")] = {
+                "date": r.date, "ref": inv.inv_no, "month": f"{r.date:%b %Y}",
+                "memo": f"Receipt for {inv.inv_no} · {inv.customer}",
+                "lines": [(cash_code, r.amount, 0, r.method),
+                          (M.ACC_AR, 0, r.amount, inv.customer)],
+            }
+
+    kind_acct = {"EPF": M.ACC_EPF, "SOCSO": M.ACC_SOCSO_EIS, "EIS": M.ACC_SOCSO_EIS,
+                 "PCB": M.ACC_PCB}
     for sp in db.query(M.StatutoryPaid).all():
         if not sp.amount or sp.kind not in kind_acct:
             continue
@@ -152,7 +208,7 @@ def _expected_entries(db: Session):
             "date": sp.paid_date, "ref": f"{sp.kind}-{sp.month}", "month": sp.month,
             "memo": f"{sp.kind} remittance for {sp.month}",
             "lines": [(kind_acct[sp.kind], sp.amount, 0, sp.kind),
-                      ("1020", 0, sp.amount, f"Paid to authority")],
+                      (M.ACC_BANK, 0, sp.amount, f"Paid to authority")],
         }
     return out
 
@@ -242,6 +298,39 @@ def trial_balance(db: Session, as_of: date):
         tot_dr += bal if bal > 0 else 0
         tot_cr += -bal if bal < 0 else 0
     return rows, round(tot_dr, 2), round(tot_cr, 2)
+
+
+def trial_balance_range(db: Session, d_from: date, d_to: date):
+    """Period trial balance: opening balance (before d_from), period movement,
+    closing balance per account. Returns (rows, totals dict)."""
+    sync_ledger(db)
+    rows = []
+    tot = {"open_dr": 0.0, "open_cr": 0.0, "dr": 0.0, "cr": 0.0,
+           "close_dr": 0.0, "close_cr": 0.0}
+    for acc in db.query(M.Account).filter(M.Account.active == True).order_by(M.Account.code).all():  # noqa: E712
+        opening = pdr = pcr = 0.0
+        for line in db.query(M.JournalLine).join(M.JournalEntry).filter(
+                M.JournalLine.account_id == acc.id, M.JournalEntry.date <= d_to).all():
+            if line.entry.date < d_from:
+                opening += line.debit - line.credit
+            else:
+                pdr += line.debit
+                pcr += line.credit
+        closing = opening + pdr - pcr
+        if abs(opening) < 0.005 and abs(pdr) < 0.005 and abs(pcr) < 0.005:
+            continue
+        row = {"account": acc,
+               "open_dr": round(opening, 2) if opening > 0 else 0,
+               "open_cr": round(-opening, 2) if opening < 0 else 0,
+               "dr": round(pdr, 2), "cr": round(pcr, 2),
+               "close_dr": round(closing, 2) if closing > 0 else 0,
+               "close_cr": round(-closing, 2) if closing < 0 else 0}
+        rows.append(row)
+        for k in tot:
+            tot[k] += row[k]
+    for k in tot:
+        tot[k] = round(tot[k], 2)
+    return rows, tot
 
 
 def balance_sheet(db: Session, as_of: date):

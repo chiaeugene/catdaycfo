@@ -7,7 +7,9 @@
 
 <div class="panel">
   <form method="get" action="/reports/trial-balance">
-    <div class="formrow" style="grid-template-columns:170px auto">
+    <div class="formrow" style="grid-template-columns:170px 170px auto">
+      <div><label>From 从 <span style="text-transform:none;font-weight:500">(optional — adds opening / movement / closing)</span></label>
+        <input type="date" name="frm" value="{{ frm.isoformat() if frm else '' }}"></div>
       <div><label>As of 截至</label><input type="date" name="as_of" value="{{ as_of.isoformat() }}"></div>
       <div class="f-btn"><button type="submit">{{ icon('eye', 14) }} View</button></div>
     </div>
@@ -23,6 +25,37 @@
   </div>
 </div>
 
+{% if range_rows is not none %}
+<div class="sub" style="margin-top:4px">Period {{ frm.strftime('%d/%m/%Y') }} – {{ as_of.strftime('%d/%m/%Y') }} · opening balances are everything posted before the From date.</div>
+<div class="tablewrap">
+  <table>
+    <tr><th>Code</th><th>Account</th>
+        <th class="num">Opening Dr</th><th class="num">Opening Cr</th>
+        <th class="num">Period Dr</th><th class="num">Period Cr</th>
+        <th class="num">Closing Dr</th><th class="num">Closing Cr</th></tr>
+    {% for r in range_rows %}
+    <tr>
+      <td class="mono"><b>{{ r.account.code }}</b></td>
+      <td><a href="/accounting/ledger/{{ r.account.id }}">{{ r.account.name }}</a></td>
+      <td class="num">{{ r.open_dr|rm if r.open_dr else '' }}</td>
+      <td class="num">{{ r.open_cr|rm if r.open_cr else '' }}</td>
+      <td class="num">{{ r.dr|rm if r.dr else '' }}</td>
+      <td class="num">{{ r.cr|rm if r.cr else '' }}</td>
+      <td class="num">{{ r.close_dr|rm if r.close_dr else '' }}</td>
+      <td class="num">{{ r.close_cr|rm if r.close_cr else '' }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="8" class="empty">No journal entries in this period.</td></tr>
+    {% endfor %}
+    {% if range_rows %}
+    <tr class="total-row"><td></td><td>TOTAL</td>
+      <td class="num">{{ range_tot.open_dr|rm }}</td><td class="num">{{ range_tot.open_cr|rm }}</td>
+      <td class="num">{{ range_tot.dr|rm }}</td><td class="num">{{ range_tot.cr|rm }}</td>
+      <td class="num">{{ range_tot.close_dr|rm }}</td><td class="num">{{ range_tot.close_cr|rm }}</td></tr>
+    {% endif %}
+  </table>
+</div>
+{% else %}
 <div class="tablewrap" style="max-width:860px">
   <table>
     <tr><th>Code</th><th>Account</th><th>Type</th><th class="num">Debit</th><th class="num">Credit</th></tr>
@@ -43,4 +76,5 @@
     {% endif %}
   </table>
 </div>
+{% endif %}
 {% endblock %}
