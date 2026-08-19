@@ -1,0 +1,242 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block content %}
+<div class="pagehead">
+  <h1>Stock &amp; Usage 库存耗用</h1>
+  <div class="actions">
+    {% if user.role in ['admin','manager'] %}
+    <button onclick="document.getElementById('dlg-stockin').showModal()">{{ icon('upload', 14) }} Stock in / adjust 入库</button>
+    <button class="secondary" onclick="document.getElementById('dlg-newitem').showModal()">＋ New item 新品项</button>
+    {% endif %}
+  </div>
+</div>
+<div class="sub">Links what you buy to what each service uses up: define a recipe ("1 grooming uses 5% of a shampoo bottle"), record the number of services with each day's sales, and stock depletes itself — with cost per service, margin, and reorder warnings.</div>
+
+{% if flash %}
+<div class="panel" style="background:var(--green-bg);border-color:rgba(29,127,63,.3)">
+  <div style="font-size:13px;color:var(--green);font-weight:700">✓ {{ flash }}</div>
+</div>
+{% endif %}
+
+{% if not rows %}
+<div class="panel">
+  <h2>Getting started 开始使用</h2>
+  <div style="font-size:13px;line-height:1.9;color:var(--muted)">
+    1. <b style="color:var(--ink,inherit)">＋ New item</b> — add each consumable or tool (shampoo bottle, comb, gloves) with its cost per unit and current quantity.<br>
+    2. <b style="color:var(--ink,inherit)">Add recipes below</b> — how much of each item one service uses (5% of a bottle = enter 5 with "% of unit").<br>
+    3. <b style="color:var(--ink,inherit)">Record services count with sales</b> — the Sales form and the daily-report verify card now have a "services 次数" field.<br>
+    That's it — this page then shows stock on hand, cost per grooming, margin per service, and when to reorder.
+  </div>
+</div>
+{% else %}
+
+<div class="cards">
+  <div class="card blue"><div class="label">Stock value on hand 库存价值</div><div class="value">RM {{ total_value|rm }}</div></div>
+  <div class="card {% if low_count %}red{% else %}green{% endif %}">
+    <div class="label">Low stock items 需补货</div>
+    <div class="value">{{ low_count }}{% if low_count %} ⚠{% endif %}</div></div>
+  <div class="card"><div class="label">Usage cost this month 本月耗用</div><div class="value">RM {{ trend[-1].cost|rm }}</div>
+    <div class="hint">{{ trend[-1].sessions }} services recorded</div></div>
+</div>
+
+<h2>Items 品项</h2>
+<div class="tablewrap">
+  <table>
+    <tr><th>Item</th><th>Category</th><th>Unit</th><th class="num">Unit cost</th>
+        <th class="num">Bought</th><th class="num">Used</th><th class="num">On hand</th>
+        <th style="min-width:120px">Remaining 剩余</th><th class="num">Value</th><th>Status</th>
+        {% if user.role in ['admin','manager'] %}<th></th>{% endif %}</tr>
+    {% for r in rows %}
+    <tr {% if not r.item.active %}style="opacity:.5"{% endif %}>
+      <td><b>{{ r.item.name }}</b>{% if r.item.notes %}<div style="font-size:11px;color:var(--muted)">{{ r.item.notes[:40] }}</div>{% endif %}</td>
+      <td><span class="badge draft">{{ r.item.category }}</span></td>
+      <td>{{ r.item.unit }}</td>
+      <td class="num">{{ r.item.unit_cost|rm }}</td>
+      <td class="num">{{ r.bought|rm }}</td>
+      <td class="num">{{ r.used|rm }}</td>
+      <td class="num" style="font-weight:700">{{ r.on_hand|rm }}</td>
+      <td title="{{ r.on_hand|rm }} of {{ r.bought|rm }} {{ r.item.unit }} remaining">
+        {% set pct = [[(r.on_hand / r.bought * 100) if r.bought > 0 else 0, 0]|max, 100]|min %}
+        <div style="background:var(--line);border-radius:4px;height:10px;overflow:hidden">
+          <div style="width:{{ pct|round(0) }}%;height:100%;border-radius:4px;background:{% if r.low %}var(--red){% else %}var(--brand-hot){% endif %}"></div>
+        </div>
+        <div style="font-size:10.5px;color:var(--muted);margin-top:2px">{{ pct|round(0)|int }}% left</div>
+      </td>
+      <td class="num">{{ r.value|rm }}</td>
+      <td>{% if r.low %}<span class="badge void">⚠ Reorder 补货</span>
+          {% elif r.item.reorder_level %}<span class="badge paid">OK</span>
+          {% else %}<span class="badge draft">—</span>{% endif %}</td>
+      {% if user.role in ['admin','manager'] %}
+      <td>
+        <form method="post" action="/stock/item/{{ r.item.id }}/update" class="inline">
+          <input type="number" step="0.01" name="unit_cost" value="{{ r.item.unit_cost }}" class="slim" style="width:75px" title="Unit cost RM">
+          <input type="number" step="0.1" name="reorder_level" value="{{ r.item.reorder_level }}" class="slim" style="width:60px" title="Reorder level">
+          <button class="small secondary" type="submit">Save</button>
+        </form>
+      </td>
+      {% endif %}
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+
+<h2 style="margin-top:26px">Cost per service 每次服务成本</h2>
+{% if not streams %}
+<div class="panel empty">No recipes yet — add one below to start linking stock to services.</div>
+{% else %}
+<div class="grid2">
+  {% for stname, st in streams.items() %}
+  <div class="panel">
+    <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+      <h2 style="margin:0">{{ stname }}</h2>
+      <span style="color:var(--muted);font-size:12px">{{ st.sessions|int }} services recorded</span>
+    </div>
+    <div class="tablewrap" style="box-shadow:none;border:none">
+      <table>
+        <tr><th>Item</th><th class="num">Per service</th><th class="num">Cost / service</th>
+            <th style="min-width:90px"></th><th class="num">Services left</th>{% if user.role in ['admin','manager'] %}<th></th>{% endif %}</tr>
+        {% for l in st.lines %}
+        <tr>
+          <td>{{ l.item.name }}</td>
+          <td class="num" title="{{ l.recipe.qty_per_service }} {{ l.item.unit }}">{{ (l.recipe.qty_per_service * 100)|round(2) }}% of {{ l.item.unit }}</td>
+          <td class="num">RM {{ l.cost|rm }}</td>
+          <td title="Share of the total cost per service">
+            <div style="background:var(--line);border-radius:4px;height:8px;overflow:hidden">
+              <div style="width:{{ ((l.cost / st.cost * 100) if st.cost else 0)|round(0) }}%;height:100%;border-radius:4px;background:var(--brand-hot)"></div>
+            </div>
+          </td>
+          <td class="num" {% if l.services_left is not none and l.services_left < 20 %}style="color:var(--red);font-weight:700"{% endif %}>
+            {{ l.services_left|int if l.services_left is not none else '—' }}</td>
+          {% if user.role in ['admin','manager'] %}
+          <td><form method="post" action="/stock/recipe/{{ l.recipe.id }}/delete" class="inline"
+                onsubmit="return confirm('Remove this recipe line?')"><button class="small danger" type="submit">✕</button></form></td>
+          {% endif %}
+        </tr>
+        {% endfor %}
+        <tr class="total-row"><td>Consumables cost per {{ stname|lower }}</td><td></td>
+          <td class="num">RM {{ st.cost|rm }}</td><td colspan="{{ 3 if user.role in ['admin','manager'] else 2 }}"></td></tr>
+      </table>
+    </div>
+    {% if st.rev_per_service is not none %}
+    <div class="kv"><span>Average revenue per service 平均收入</span><b>RM {{ st.rev_per_service|rm }}</b></div>
+    <div class="kv"><span>Margin after consumables 扣耗用后毛利</span>
+      <b style="color:{% if st.margin >= 0 %}var(--green){% else %}var(--red){% endif %}">
+        {{ 'RM ' + st.margin|rm if st.margin >= 0 else '−RM ' + (0 - st.margin)|rm }} {{ '✓' if st.margin >= 0 else '✗ loss' }}</b></div>
+    {% else %}
+    <div style="font-size:11.5px;color:var(--muted)">Record the services count with sales to see revenue and margin per service.</div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<h2 style="margin-top:26px">Usage cost — last 6 months 近6个月耗用</h2>
+<div class="panel">
+  {% if trend | sum(attribute='cost') > 0 %}
+  <div style="display:flex;align-items:flex-end;gap:2px;height:150px;max-width:560px">
+    {% for t in trend %}
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%"
+         title="{{ t.month }}: RM {{ t.cost|rm }} · {{ t.sessions }} services">
+      <div style="font-size:10.5px;color:var(--muted);margin-bottom:3px">{{ t.cost|rm if t.cost else '' }}</div>
+      <div style="width:70%;max-width:56px;height:{{ ((t.cost / max_cost * 100) if max_cost else 0)|round(0) }}%;min-height:{{ '2' if t.cost else '0' }}px;background:var(--brand-hot);border-radius:4px 4px 0 0"></div>
+    </div>
+    {% endfor %}
+  </div>
+  <div style="display:flex;gap:2px;max-width:560px;border-top:1px solid var(--line);margin-top:4px;padding-top:4px">
+    {% for t in trend %}<div style="flex:1;text-align:center;font-size:11px;color:var(--muted)">{{ t.label }}</div>{% endfor %}
+  </div>
+  {% else %}
+  <div class="empty" style="padding:14px">No usage recorded yet — it appears here once sales entries carry a services count and recipes exist.</div>
+  {% endif %}
+</div>
+
+<h2 style="margin-top:26px">Recent stock movements 出入库记录</h2>
+<div class="tablewrap">
+  <table>
+    <tr><th>Date</th><th>Item</th><th>Kind</th><th class="num">Qty</th><th>Ref</th><th>Notes</th><th>By</th></tr>
+    {% for m in movements %}
+    <tr>
+      <td>{{ m.date.strftime('%d/%m/%y') }}</td>
+      <td>{{ m.item.name }}</td>
+      <td><span class="badge {{ 'paid' if m.kind == 'Purchase' else 'draft' }}">{{ m.kind }}</span></td>
+      <td class="num" style="font-weight:700;{% if m.qty < 0 %}color:var(--red){% endif %}">{{ '%+g'|format(m.qty) }}</td>
+      <td class="mono">{{ m.ref }}</td>
+      <td style="color:var(--muted)">{{ m.notes[:40] }}</td>
+      <td>{{ m.recorded_by }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="7" class="empty">No movements yet.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+
+{% if user.role in ['admin','manager'] %}
+<div class="panel" style="margin-top:18px">
+  <h2>＋ Add recipe 添加耗用规则</h2>
+  <form method="post" action="/stock/recipe/new">
+    <div class="formrow" style="grid-template-columns:150px minmax(180px,1fr) 110px 140px auto">
+      <div><label>Service 服务</label>
+        <select name="stream">{% for s in sales_streams %}<option {% if s == 'Grooming' %}selected{% endif %}>{{ s }}</option>{% endfor %}</select></div>
+      <div><label>Item 品项</label>
+        <select name="item_id" required>{% for r in rows %}<option value="{{ r.item.id }}">{{ r.item.name }} ({{ r.item.unit }})</option>{% endfor %}</select></div>
+      <div><label>Usage 用量</label><input type="number" step="0.01" name="amount" required placeholder="e.g. 5"></div>
+      <div><label>Entered as 单位</label>
+        <select name="mode"><option value="pct">% of one unit</option><option value="units">units 直接数量</option></select></div>
+      <div class="f-btn"><button type="submit">＋ Add</button></div>
+    </div>
+  </form>
+  <div style="font-size:11.5px;color:var(--muted);margin-top:6px">Example: "1 Grooming uses 5% of a shampoo bottle" → Service Grooming, Item shampoo, Usage 5, "% of one unit".</div>
+</div>
+{% endif %}
+
+<dialog id="dlg-newitem">
+  <form method="post" action="/stock/item/new">
+    <div class="dlg-head"><b>＋ New stock item</b>
+      <button type="button" class="x" onclick="this.closest('dialog').close()">✕</button></div>
+    <div class="dlg-body">
+      <div class="dlg-grid">
+        <div class="full"><label>Name 名称</label><input name="name" required placeholder="e.g. Shampoo — oatmeal 5L"></div>
+        <div><label>Category 类别</label>
+          <select name="category">{% for c in categories %}<option>{{ c }}</option>{% endfor %}</select></div>
+        <div><label>Unit 单位</label><input name="unit" placeholder="bottle / pcs / pack" value="pcs"></div>
+        <div><label>Cost per unit RM 单价</label><input type="number" step="0.01" name="unit_cost" value="0"></div>
+        <div><label>Opening quantity 现有数量</label><input type="number" step="0.1" name="opening_qty" value="0"></div>
+        <div class="full"><label>Reorder when below 低于此数量提醒</label><input type="number" step="0.1" name="reorder_level" value="0"></div>
+        <div class="full"><label>Notes 备注</label><input name="notes"></div>
+      </div>
+    </div>
+    <div class="dlg-foot">
+      <button type="button" class="ghost" onclick="this.closest('dialog').close()">Cancel</button>
+      <button type="submit">Create 创建</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="dlg-stockin">
+  <form method="post" action="/stock/move">
+    <div class="dlg-head"><b>{{ icon('upload', 14) }} Stock in / adjustment</b>
+      <button type="button" class="x" onclick="this.closest('dialog').close()">✕</button></div>
+    <div class="dlg-body">
+      <div class="dlg-grid">
+        <div class="full"><label>Item 品项</label>
+          <select name="item_id" required>{% for r in rows %}<option value="{{ r.item.id }}">{{ r.item.name }} ({{ r.item.unit }})</option>{% endfor %}</select></div>
+        <div><label>Kind 类型</label>
+          <select name="kind" onchange="this.form.querySelector('.js-dir').style.display = this.value === 'Adjustment' ? '' : 'none'">
+            <option>Purchase</option><option>Adjustment</option></select></div>
+        <div><label>Date 日期</label><input type="date" name="date" value="{{ today_iso }}"></div>
+        <div><label>Quantity 数量</label><input type="number" step="0.1" name="qty" required></div>
+        <div class="js-dir" style="display:none"><label>Direction 方向</label>
+          <select name="direction"><option value="in">＋ add (stocktake up)</option><option value="out">− remove (wastage / count down)</option></select></div>
+        <div><label>Cost per unit RM 单价</label><input type="number" step="0.01" name="unit_cost" placeholder="updates costing price"></div>
+        <div><label>Payment ref 付款编号</label><input name="ref" placeholder="e.g. PAY-0012"></div>
+        <div class="full"><label>Notes 备注</label><input name="notes"></div>
+      </div>
+    </div>
+    <div class="dlg-foot">
+      <button type="button" class="ghost" onclick="this.closest('dialog').close()">Cancel</button>
+      <button type="submit">Record 记录</button>
+    </div>
+  </form>
+</dialog>
+{% endblock %}

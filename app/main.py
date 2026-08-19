@@ -105,6 +105,7 @@ NAV_GROUPS = [
         ("sales", "/sales", "cart", "Sales", ("admin", "manager", "staff", "viewer")),
         ("pettycash", "/pettycash", "coins", "Petty Cash", ("admin", "manager", "staff", "viewer")),
         ("boarding", "/boarding", "cat", "Boarding", ("admin", "manager", "staff", "viewer")),
+        ("stock", "/stock", "coins", "Stock & Usage 库存", ("admin", "manager", "staff", "viewer")),
     ]),
     ("Paying suppliers 付款", [
         ("payments", "/payments", "card", "Payments", ("admin", "manager", "viewer")),
@@ -534,6 +535,7 @@ async def verify_document(doc_id: int, request: Request, db: Session = Depends(g
                 db.add(M.SalesEntry(date=rdate, stream=stream,
                                     description=f"Daily report ({doc.doc_no})",
                                     amount=val, method="Mixed", month=month_str(rdate),
+                                    qty=float(f.get(f"qty_{stream}") or 0),
                                     recorded_by=doc.sender))
                 total += val
                 streams_hit.append(stream)
@@ -1050,12 +1052,12 @@ def sales(request: Request, db: Session = Depends(get_db)):
 def sales_new(request: Request, stream: str = Form(...), description: str = Form(""),
               amount: float = Form(...), method: str = Form("Cash"),
               tax_type: str = Form("None"), pdate: str = Form(""),
-              db: Session = Depends(get_db)):
+              qty: float = Form(0), db: Session = Depends(get_db)):
     user = current_user(request, db)
     d = parse_date(pdate)
     db.add(M.SalesEntry(date=d, stream=stream, description=description, amount=amount,
                         method=method, month=month_str(d), tax_type=tax_type,
-                        tax_amount=tax_of(tax_type, amount),
+                        tax_amount=tax_of(tax_type, amount), qty=qty or 0,
                         recorded_by=user.display_name if user else ""))
     db.commit()
     return RedirectResponse("/sales", status_code=302)
@@ -2185,6 +2187,204 @@ def ar_aging(request: Request, db: Session = Depends(get_db)):
     return render(request, db, "ar_aging.html", "araging",
                   rows=rows, totals=totals, grand=grand, buckets=AR_BUCKETS,
                   inv_rows=inv_rows)
+
+
+# ─────────────────────────── STOCK & SERVICE USAGE ───────────────────────────
+# Eugene's model: every service consumes a slice of stock ("1 grooming uses 5%
+# of a shampoo bottle"). Recipes define the slice; the sessions count on each
+# sales entry drives consumption. On-hand is always DERIVED (purchases and
+# adjustments minus computed usage) — never stored — so it can't drift and is
+# rebuildable, same philosophy as the ledger.
+STOCK_CATEGORIES = ["Grooming Supplies", "Cat Supplies", "Cleaning", "Tools & Equipment", "Other"]
+
+
+def _stock_state(db):
+    items = db.query(M.StockItem).order_by(M.StockItem.category, M.StockItem.name).all()
+    recipes = db.query(M.ServiceRecipe).filter(M.ServiceRecipe.active == True).all()  # noqa: E712
+    by_id = {i.id: i for i in items}
+
+    # Sessions per stream — total and per calendar month
+    sess_stream, sess_month, rev_stream = {}, {}, {}
+    for s in db.query(M.SalesEntry).filter(M.SalesEntry.qty > 0).all():
+        sess_stream[s.stream] = sess_stream.get(s.stream, 0) + s.qty
+        rev_stream[s.stream] = rev_stream.get(s.stream, 0) + s.amount
+        mk = s.date.replace(day=1)
+        sess_month.setdefault(mk, {})
+        sess_month[mk][s.stream] = sess_month[mk].get(s.stream, 0) + s.qty
+
+    # Usage per item (units, all time) = Σ sessions × recipe
+    usage = {}
+    for r in recipes:
+        if r.item_id in by_id:
+            usage[r.item_id] = usage.get(r.item_id, 0) + sess_stream.get(r.stream, 0) * r.qty_per_service
+
+    rows = []
+    for i in items:
+        bought = sum(m.qty for m in i.movements)
+        used = usage.get(i.id, 0.0)
+        on_hand = round(bought - used, 3)
+        rows.append({"item": i, "bought": round(bought, 2), "used": round(used, 2),
+                     "on_hand": on_hand, "value": round(on_hand * i.unit_cost, 2),
+                     "low": i.reorder_level > 0 and on_hand <= i.reorder_level})
+
+    # Cost per service and margin per stream (only streams with recipes)
+    streams = {}
+    for r in recipes:
+        i = by_id.get(r.item_id)
+        if not i:
+            continue
+        st = streams.setdefault(r.stream, {"lines": [], "cost": 0.0})
+        line_cost = round(r.qty_per_service * i.unit_cost, 4)
+        row = next((x for x in rows if x["item"].id == i.id), None)
+        st["lines"].append({"recipe": r, "item": i, "cost": line_cost,
+                            "services_left": round(row["on_hand"] / r.qty_per_service, 1)
+                            if row and r.qty_per_service > 0 else None})
+        st["cost"] = round(st["cost"] + line_cost, 4)
+    for stname, st in streams.items():
+        n = sess_stream.get(stname, 0)
+        st["sessions"] = n
+        st["rev_per_service"] = round(rev_stream.get(stname, 0) / n, 2) if n else None
+        st["margin"] = round(st["rev_per_service"] - st["cost"], 2) if n else None
+
+    # Last-6-months usage cost for the trend chart
+    today = date.today()
+    months = []
+    mk = date(today.year, today.month, 1)
+    for _ in range(6):
+        months.append(mk)
+        mk = (mk - timedelta(days=1)).replace(day=1)
+    months.reverse()
+    trend = []
+    for mk in months:
+        cost = sessions = 0.0
+        for r in recipes:
+            i = by_id.get(r.item_id)
+            if i:
+                cost += sess_month.get(mk, {}).get(r.stream, 0) * r.qty_per_service * i.unit_cost
+        for v in sess_month.get(mk, {}).values():
+            sessions += v
+        trend.append({"label": f"{mk:%b}", "month": f"{mk:%b %Y}",
+                      "cost": round(cost, 2), "sessions": int(sessions)})
+    return rows, streams, trend
+
+
+@app.get("/stock", response_class=HTMLResponse)
+def stock_page(request: Request, db: Session = Depends(get_db)):
+    rows, streams, trend = _stock_state(db)
+    movements = db.query(M.StockMovement).order_by(
+        M.StockMovement.date.desc(), M.StockMovement.id.desc()).limit(50).all()
+    max_cost = max([t["cost"] for t in trend] + [1])
+    return render(request, db, "stock.html", "stock",
+                  rows=rows, streams=streams, trend=trend, max_cost=max_cost,
+                  movements=movements, categories=STOCK_CATEGORIES,
+                  sales_streams=M.STREAMS, today_iso=date.today().isoformat(),
+                  total_value=round(sum(r["value"] for r in rows), 2),
+                  low_count=sum(1 for r in rows if r["low"]),
+                  flash=request.session.pop("flash_stock", None))
+
+
+@app.post("/stock/item/new")
+async def stock_item_new(request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user or user.role not in ("admin", "manager"):
+        return RedirectResponse("/", status_code=302)
+    f = await request.form()
+    name = str(f.get("name", "")).strip()
+    if not name:
+        return RedirectResponse("/stock", status_code=303)
+    item = M.StockItem(name=name, category=str(f.get("category") or "Grooming Supplies"),
+                       unit=str(f.get("unit", "pcs")).strip() or "pcs",
+                       unit_cost=float(f.get("unit_cost") or 0),
+                       reorder_level=float(f.get("reorder_level") or 0),
+                       notes=str(f.get("notes", "")).strip())
+    db.add(item)
+    db.flush()
+    opening = float(f.get("opening_qty") or 0)
+    if opening:
+        db.add(M.StockMovement(item_id=item.id, date=date.today(), qty=opening,
+                               kind="Adjustment", notes="Opening stock count",
+                               unit_cost=item.unit_cost, recorded_by=user.display_name))
+    db.commit()
+    request.session["flash_stock"] = f"Item added: {name}"
+    return RedirectResponse("/stock", status_code=303)
+
+
+@app.post("/stock/item/{item_id}/update")
+async def stock_item_update(item_id: int, request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user or user.role not in ("admin", "manager"):
+        return RedirectResponse("/", status_code=302)
+    item = db.get(M.StockItem, item_id)
+    if item:
+        f = await request.form()
+        if f.get("unit_cost") is not None and f.get("unit_cost") != "":
+            item.unit_cost = float(f.get("unit_cost") or 0)
+        if f.get("reorder_level") is not None and f.get("reorder_level") != "":
+            item.reorder_level = float(f.get("reorder_level") or 0)
+        if f.get("toggle"):
+            item.active = not item.active
+        db.commit()
+    return RedirectResponse("/stock", status_code=303)
+
+
+@app.post("/stock/move")
+async def stock_move(request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user or user.role not in ("admin", "manager"):
+        return RedirectResponse("/", status_code=302)
+    f = await request.form()
+    item = db.get(M.StockItem, int(f.get("item_id") or 0))
+    qty = float(f.get("qty") or 0)
+    if item and qty:
+        kind = str(f.get("kind") or "Purchase")
+        if kind not in ("Purchase", "Adjustment"):
+            kind = "Purchase"
+        if kind == "Adjustment" and str(f.get("direction") or "") == "out":
+            qty = -abs(qty)
+        unit_cost = float(f.get("unit_cost") or 0)
+        db.add(M.StockMovement(item_id=item.id,
+                               date=parse_date(str(f.get("date", ""))) or date.today(),
+                               qty=qty, kind=kind, ref=str(f.get("ref", "")).strip(),
+                               unit_cost=unit_cost, notes=str(f.get("notes", "")).strip(),
+                               recorded_by=user.display_name))
+        # Latest purchase price becomes the costing price for the recipes.
+        if kind == "Purchase" and unit_cost > 0:
+            item.unit_cost = unit_cost
+        db.commit()
+        request.session["flash_stock"] = f"{kind} recorded: {item.name} {qty:+g} {item.unit}"
+    return RedirectResponse("/stock", status_code=303)
+
+
+@app.post("/stock/recipe/new")
+async def stock_recipe_new(request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user or user.role not in ("admin", "manager"):
+        return RedirectResponse("/", status_code=302)
+    f = await request.form()
+    item = db.get(M.StockItem, int(f.get("item_id") or 0))
+    amount = float(f.get("amount") or 0)
+    if item and amount > 0:
+        # Entered either as "% of one unit" (Eugene's mental model) or in units.
+        qty = amount / 100.0 if str(f.get("mode") or "pct") == "pct" else amount
+        db.add(M.ServiceRecipe(stream=str(f.get("stream") or "Grooming"),
+                               item_id=item.id, qty_per_service=qty))
+        db.commit()
+        request.session["flash_stock"] = (
+            f"Recipe added: 1 {f.get('stream') or 'Grooming'} uses "
+            f"{qty:g} {item.unit} of {item.name}")
+    return RedirectResponse("/stock", status_code=303)
+
+
+@app.post("/stock/recipe/{rid}/delete")
+def stock_recipe_delete(rid: int, request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user or user.role not in ("admin", "manager"):
+        return RedirectResponse("/", status_code=302)
+    r = db.get(M.ServiceRecipe, rid)
+    if r:
+        db.delete(r)
+        db.commit()
+    return RedirectResponse("/stock", status_code=303)
 
 
 # ─────────────────────────── SALES / PURCHASE LEDGERS ───────────────────────────

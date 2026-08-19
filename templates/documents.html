@@ -95,6 +95,9 @@
       {% for stream in M.STREAMS %}
       <div><label>{{ stream }} (RM)</label><input type="number" step="0.01" name="sales_{{ stream }}" value="{{ sfound.get(stream, '') }}"></div>
       {% endfor %}
+      {% for stream in M.STREAMS %}
+      <div><label>{{ stream }} — services 次数</label><input type="number" step="1" min="0" name="qty_{{ stream }}" placeholder="0" title="How many {{ stream }} services that day — feeds Stock & Usage"></div>
+      {% endfor %}
       <div class="full"><label>Note 备注</label><input name="description" value="{{ d.description }}"></div>
     </div>
     <div class="vc-actions">

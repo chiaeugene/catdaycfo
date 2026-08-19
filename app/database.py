@@ -32,6 +32,7 @@ MIGRATIONS = [
     "ALTER TABLE suppliers ADD COLUMN tin VARCHAR(30) DEFAULT ''",
     "ALTER TABLE suppliers ADD COLUMN brn VARCHAR(30) DEFAULT ''",
     "ALTER TABLE documents ADD COLUMN doc_date DATE",
+    "ALTER TABLE sales ADD COLUMN qty FLOAT DEFAULT 0",
 ]
 
 

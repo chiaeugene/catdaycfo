@@ -221,6 +221,54 @@ class SalesEntry(Base):
     method: Mapped[str] = mapped_column(String(30), default="Cash")
     month: Mapped[str] = mapped_column(String(20), default="")
     recorded_by: Mapped[str] = mapped_column(String(100), default="")
+    # Number of services performed (grooming sessions, boarding nights…).
+    # Feeds the stock-usage engine: sessions × recipe = consumables used.
+    qty: Mapped[float] = mapped_column(Float, default=0.0)
+
+
+class StockItem(Base):
+    """A consumable or tool whose usage we track against services — shampoo,
+    combs, gloves. On-hand is DERIVED, never stored: purchases/adjustments
+    (StockMovement) minus computed usage (sales sessions × ServiceRecipe).
+    Rebuildable and always consistent, same philosophy as the ledger."""
+    __tablename__ = "stock_items"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(120))
+    category: Mapped[str] = mapped_column(String(40), default="Grooming Supplies")
+    unit: Mapped[str] = mapped_column(String(40), default="pcs")   # bottle (5L) / pcs / pack
+    unit_cost: Mapped[float] = mapped_column(Float, default=0.0)   # RM per unit
+    reorder_level: Mapped[float] = mapped_column(Float, default=0.0)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    notes: Mapped[str] = mapped_column(Text, default="")
+    movements = relationship("StockMovement", backref="item", cascade="all, delete-orphan")
+    recipes = relationship("ServiceRecipe", backref="item", cascade="all, delete-orphan")
+
+
+class StockMovement(Base):
+    """Stock in/out that ISN'T service usage: purchases (link the PAY ref so
+    stock ties back to the invoice trail), stocktake adjustments, wastage."""
+    __tablename__ = "stock_movements"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    item_id: Mapped[int] = mapped_column(ForeignKey("stock_items.id"))
+    date: Mapped[date] = mapped_column(Date, default=date.today)
+    qty: Mapped[float] = mapped_column(Float, default=0.0)         # + in, − out
+    kind: Mapped[str] = mapped_column(String(20), default="Purchase")  # Purchase / Adjustment
+    ref: Mapped[str] = mapped_column(String(60), default="")       # e.g. PAY-0012
+    unit_cost: Mapped[float] = mapped_column(Float, default=0.0)   # RM/unit on this purchase
+    notes: Mapped[str] = mapped_column(String(200), default="")
+    recorded_by: Mapped[str] = mapped_column(String(100), default="")
+
+
+class ServiceRecipe(Base):
+    """How much of an item one service consumes — Eugene's '1 grooming uses
+    5% of a shampoo bottle'. qty_per_service is in item units, so 5% of a
+    bottle = 0.05. Stream matches the sales stream (Grooming, Boarding…)."""
+    __tablename__ = "service_recipes"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    stream: Mapped[str] = mapped_column(String(30), default="Grooming")
+    item_id: Mapped[int] = mapped_column(ForeignKey("stock_items.id"))
+    qty_per_service: Mapped[float] = mapped_column(Float, default=0.0)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
 class BoardingLog(Base):
