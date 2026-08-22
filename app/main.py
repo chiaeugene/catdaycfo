@@ -2101,6 +2101,44 @@ def _ar_aging_rows(db):
     return rows, totals, round(sum(t for t in totals), 2), open_invs
 
 
+def _build_invoice_pdf(db, inv) -> str:
+    """Render (or re-render) the customer-facing PDF for an AR invoice and
+    store its path on the record. Called on creation and again after a
+    receipt, so the document always reflects what has actually been paid:
+    with nothing received it shows a payment schedule, and once money is in
+    it shows the deposit deducted and the balance still due."""
+    settings = {s.key: s.value for s in db.query(M.Setting).all()}
+    bank = {"bank_name": settings.get("COMPANY_BANK", ""),
+            "account_no": settings.get("COMPANY_BANK_ACCOUNT", ""),
+            "account_holder": settings.get("COMPANY_NAME", "")}
+    if not (bank["bank_name"] or bank["account_no"]):
+        acc = db.query(M.BankAccount).filter(M.BankAccount.active == True).first()  # noqa: E712
+        if acc:
+            bank = {"bank_name": acc.bank_name, "account_no": acc.account_no,
+                    "account_holder": settings.get("COMPANY_NAME", "")}
+    received = inv.received
+    schedule = None
+    if not received:
+        schedule = [{"label": f"{inv.stream} — full amount", "amount": inv.amount,
+                     "due": f"On or before {inv.due_date:%d/%m/%Y}", "status": "Due"}]
+    # The description doubles as the line item, so don't repeat it in Notes —
+    # that block is for payment terms the customer needs spelled out.
+    terms = (f"Deposit of RM{received:,.2f} received. Balance of "
+             f"RM{inv.outstanding:,.2f} due on or before "
+             f"{inv.due_date:%d/%m/%Y}.") if received and inv.outstanding > 0.005 else ""
+    return pdfgen.invoice_pdf(
+        inv_no=inv.inv_no, customer=inv.customer,
+        cust_address=inv.cust_address or "", cust_contact=inv.cust_contact or "",
+        items=[{"description": inv.notes or f"{inv.stream} services",
+                "amount": inv.amount}],
+        due_date=f"{inv.due_date:%d/%m/%Y}",
+        notes=terms,
+        deposit_paid=received, schedule=schedule,
+        company=settings.get("COMPANY_NAME", "MEOW & ME PET SHOP SDN BHD"),
+        address=settings.get("COMPANY_ADDRESS", ""),
+        reg_no=settings.get("COMPANY_ROC", ""), bank=bank)
+
+
 @app.get("/receivables", response_class=HTMLResponse)
 def receivables(request: Request, q: str = "", status: str = "",
                 db: Session = Depends(get_db)):
@@ -2133,15 +2171,43 @@ async def receivables_new(request: Request, db: Session = Depends(get_db)):
     inv_date = parse_date(str(f.get("date", ""))) or date.today()
     due = parse_date(str(f.get("due_date", ""))) if f.get("due_date") else None
     inv_no = telegram_bot.next_monthly_counter(db, "ARINV", "INV-", inv_date)
-    db.add(M.ARInvoice(inv_no=inv_no, customer=customer,
-                       stream=str(f.get("stream") or "Boarding"),
-                       date=inv_date, due_date=due or (inv_date + timedelta(days=30)),
-                       amount=amount, month=f"{inv_date:%b %Y}",
-                       notes=str(f.get("notes", "")).strip(),
-                       created_by=user.display_name))
+    inv = M.ARInvoice(inv_no=inv_no, customer=customer,
+                      cust_address=str(f.get("cust_address", "")).strip(),
+                      cust_contact=str(f.get("cust_contact", "")).strip(),
+                      stream=str(f.get("stream") or "Boarding"),
+                      date=inv_date, due_date=due or (inv_date + timedelta(days=30)),
+                      amount=amount, month=f"{inv_date:%b %Y}",
+                      notes=str(f.get("notes", "")).strip(),
+                      created_by=user.display_name)
+    db.add(inv)
+    db.flush()
+    try:
+        inv.pdf_path = _build_invoice_pdf(db, inv)
+    except Exception:
+        inv.pdf_path = ""   # never block the accounting record on a PDF failure
     db.commit()
     ledger.sync_ledger(db)
-    request.session["flash_ar"] = f"{inv_no} · {customer} · RM {amount:,.2f} posted (Dr Trade Debtors / Cr {f.get('stream') or 'Boarding'} revenue)"
+    request.session["flash_ar"] = (
+        f"{inv_no} · {customer} · RM {amount:,.2f} — invoice PDF ready, posted "
+        f"Dr Trade Debtors / Cr {f.get('stream') or 'Boarding'} revenue")
+    return RedirectResponse("/receivables", status_code=303)
+
+
+@app.post("/receivables/{inv_id}/pdf")
+def receivables_pdf(inv_id: int, request: Request, db: Session = Depends(get_db)):
+    """Re-issue the PDF — picks up edited company settings and any receipts
+    recorded since the invoice was created."""
+    user = current_user(request, db)
+    if not user or user.role not in ("admin", "manager"):
+        return RedirectResponse("/", status_code=302)
+    inv = db.get(M.ARInvoice, inv_id)
+    if inv:
+        try:
+            inv.pdf_path = _build_invoice_pdf(db, inv)
+            db.commit()
+            request.session["flash_ar"] = f"{inv.inv_no} PDF re-issued"
+        except Exception:
+            request.session["flash_ar"] = f"Could not generate the PDF for {inv.inv_no}"
     return RedirectResponse("/receivables", status_code=303)
 
 
@@ -2161,6 +2227,12 @@ async def receivables_receipt(inv_id: int, request: Request, db: Session = Depen
         db.flush()
         if inv.outstanding <= 0.005:
             inv.status = "Paid"
+        # Re-issue so the document shows the deposit received and the balance
+        # still due, rather than the original "nothing paid yet" schedule.
+        try:
+            inv.pdf_path = _build_invoice_pdf(db, inv)
+        except Exception:
+            pass
         db.commit()
         ledger.sync_ledger(db)
         request.session["flash_ar"] = f"Receipt RM {amount:,.2f} against {inv.inv_no} recorded"

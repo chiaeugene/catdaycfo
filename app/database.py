@@ -33,6 +33,9 @@ MIGRATIONS = [
     "ALTER TABLE suppliers ADD COLUMN brn VARCHAR(30) DEFAULT ''",
     "ALTER TABLE documents ADD COLUMN doc_date DATE",
     "ALTER TABLE sales ADD COLUMN qty FLOAT DEFAULT 0",
+    "ALTER TABLE ar_invoices ADD COLUMN cust_address TEXT DEFAULT ''",
+    "ALTER TABLE ar_invoices ADD COLUMN cust_contact VARCHAR(60) DEFAULT ''",
+    "ALTER TABLE ar_invoices ADD COLUMN pdf_path VARCHAR(200) DEFAULT ''",
 ]
 
 

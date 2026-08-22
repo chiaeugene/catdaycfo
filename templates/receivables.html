@@ -36,11 +36,19 @@
 
 <div class="tablewrap">
   <table>
-    <tr><th>Invoice</th><th>Date</th><th>Due</th><th>Customer</th><th>Stream</th>
+    <tr><th>Invoice</th><th>PDF</th><th>Date</th><th>Due</th><th>Customer</th><th>Stream</th>
         <th class="num">Amount</th><th class="num">Received</th><th class="num">Outstanding</th><th>Status</th><th></th></tr>
     {% for i in invoices %}
     <tr>
       <td class="mono"><b>{{ i.inv_no }}</b></td>
+      <td>
+        {% if i.pdf_path %}
+        <a class="docchip" href="/files/{{ i.pdf_path }}" target="_blank">{{ icon('file', 12) }} Invoice</a>
+        {% elif user.role in ['admin','manager'] %}
+        <form method="post" action="/receivables/{{ i.id }}/pdf" class="inline">
+          <button class="small secondary" type="submit">Generate</button></form>
+        {% else %}—{% endif %}
+      </td>
       <td>{{ i.date.strftime('%d/%m/%y') }}</td>
       <td>{{ i.due_date.strftime('%d/%m/%y') }}</td>
       <td>{{ i.customer }}</td>
@@ -65,10 +73,15 @@
         </form>
         {% endif %}
         {% endif %}
+        {% if user.role in ['admin','manager'] and i.pdf_path and i.status != 'Void' %}
+        <form method="post" action="/receivables/{{ i.id }}/pdf" class="inline"
+              title="Re-issue the PDF with the latest company details and payments">
+          <button class="small ghost" type="submit">↻ PDF</button></form>
+        {% endif %}
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="10" class="empty">No customer invoices yet — use ＋ New invoice for boarding packages, memberships, or corporate billing.<br>还没有客户发票。</td></tr>
+    <tr><td colspan="11" class="empty">No customer invoices yet — use ＋ New invoice for boarding packages, kitten sales, memberships, or corporate billing.<br>还没有客户发票。</td></tr>
     {% endfor %}
   </table>
 </div>
@@ -80,13 +93,17 @@
     <div class="dlg-body">
       <div class="dlg-grid">
         <div class="full"><label>Customer 客户</label><input name="customer" required placeholder="Customer / company name"></div>
+        <div class="full"><label>Customer address 地址 <span style="text-transform:none;font-weight:500">(printed on the invoice)</span></label>
+          <input name="cust_address" placeholder="e.g. 1, Jalan SS21/1, 47400 Petaling Jaya, Selangor"></div>
+        <div><label>Contact no. 联络号码</label><input name="cust_contact" placeholder="012-345 6789"></div>
         <div><label>Revenue stream 收入类别</label>
           <select name="stream">{% for s in streams %}<option>{{ s }}</option>{% endfor %}</select></div>
         <div><label>Amount RM 金额</label><input type="number" step="0.01" name="amount" required></div>
         <div><label>Invoice date 日期</label><input type="date" name="date" value="{{ today_iso }}"></div>
         <div><label>Due date 到期 <span style="text-transform:none;font-weight:500">(blank = +30 days)</span></label>
           <input type="date" name="due_date"></div>
-        <div class="full"><label>Notes 备注</label><input name="notes" placeholder="e.g. 3-month boarding package"></div>
+        <div class="full"><label>Description / notes 描述 <span style="text-transform:none;font-weight:500">(this becomes the invoice line item)</span></label>
+          <input name="notes" placeholder="e.g. Devon Rex Kitten (Male) — DOB 16 June 2025"></div>
       </div>
     </div>
     <div class="dlg-foot">

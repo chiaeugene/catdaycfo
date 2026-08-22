@@ -428,6 +428,9 @@ class ARInvoice(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     inv_no: Mapped[str] = mapped_column(String(30), unique=True)
     customer: Mapped[str] = mapped_column(String(120))
+    cust_address: Mapped[str] = mapped_column(Text, default="")
+    cust_contact: Mapped[str] = mapped_column(String(60), default="")
+    pdf_path: Mapped[str] = mapped_column(String(200), default="")
     stream: Mapped[str] = mapped_column(String(30), default="Boarding")
     date: Mapped[date] = mapped_column(Date, default=date.today)
     # No default: the route always supplies it (invoice date + 30 when blank).

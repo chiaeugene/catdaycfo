@@ -58,6 +58,7 @@ ACTION_PATTERNS = [
     (r"^POST /receivables/new$", "Created customer invoice"),
     (r"^POST /receivables/\d+/receipt$", "Recorded customer receipt"),
     (r"^POST /receivables/\d+/void$", "Voided customer invoice"),
+    (r"^POST /receivables/\d+/pdf$", "Re-issued customer invoice PDF"),
     (r"^POST /reconciliation/account/new$", "Added bank account"),
     (r"^POST /reconciliation/import$", "Imported bank statement"),
     (r"^POST /reconciliation/match$", "Matched bank line"),
