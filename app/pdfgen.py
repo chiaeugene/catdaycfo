@@ -26,6 +26,8 @@ H1 = ParagraphStyle("h1", parent=styles["Title"], textColor=ORANGE, fontSize=17,
 H2 = ParagraphStyle("h2", parent=styles["Heading2"], alignment=1, spaceBefore=4, textColor=ORANGE_MID)
 SMALL = ParagraphStyle("small", parent=styles["Normal"], fontSize=9)
 TINY = ParagraphStyle("tiny", parent=styles["Normal"], fontSize=7.5, textColor=GRAY)
+BANKVAL = ParagraphStyle("bankval", parent=styles["Normal"], fontSize=10, fontName="Helvetica-Bold")
+BANKCELL = ParagraphStyle("bankcell", parent=styles["Normal"], fontSize=10)
 
 
 def safe_name(s: str, maxlen: int = 40) -> str:
@@ -45,6 +47,33 @@ def _header(el, company, address, doc_title, reg_no=""):
     el.append(HRFlowable(width="100%", thickness=1.2, color=ORANGE))
     el.append(Paragraph(doc_title, H2))
     el.append(Spacer(1, 4 * mm))
+
+
+def _bank_block(title: str, bank: dict, fallback_holder: str):
+    """Bank transfer / payment details box. All cell content is wrapped in
+    Paragraphs (not raw strings) so long values — bank names, and especially
+    long company account-holder names — wrap inside their column instead of
+    overflowing past the box border."""
+    holder = bank.get("account_holder") or fallback_holder
+    bt = Table([
+        [title, "", ""],
+        [Paragraph("Bank:", BANKCELL), Paragraph(bank.get("bank_name") or "-", BANKVAL),
+         Paragraph(f"Account Holder: {holder}", BANKCELL)],
+        [Paragraph("Account No.:", BANKCELL), Paragraph(bank.get("account_no") or "-", BANKVAL), ""],
+    ], colWidths=[28 * mm, 60 * mm, 82 * mm])
+    bt.setStyle(TableStyle([
+        ("SPAN", (0, 0), (-1, 0)),
+        ("BACKGROUND", (0, 0), (-1, 0), LIGHT),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, 0), 8.5),
+        ("TEXTCOLOR", (0, 0), (-1, 0), ORANGE),
+        ("TEXTCOLOR", (0, 1), (0, -1), GRAY),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("BOX", (0, 0), (-1, -1), 0.8, ORANGE),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    return bt
 
 
 def _sig_block(labels):
@@ -103,26 +132,7 @@ def voucher_pdf(pv_no: str, payee: str, items: list[dict], total: float,
     el.append(Spacer(1, 4 * mm))
 
     if bank and (bank.get("bank_name") or bank.get("account_no")):
-        bt = Table([
-            ["BANK TRANSFER DETAILS", "", ""],
-            ["Bank:", bank.get("bank_name", "-"),
-             f"Account Holder: {bank.get('account_holder') or payee}"],
-            ["Account No.:", bank.get("account_no", "-"), ""],
-        ], colWidths=[28 * mm, 60 * mm, 82 * mm])
-        bt.setStyle(TableStyle([
-            ("SPAN", (0, 0), (-1, 0)),
-            ("BACKGROUND", (0, 0), (-1, 0), LIGHT),
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("FONTSIZE", (0, 0), (-1, 0), 8.5),
-            ("TEXTCOLOR", (0, 0), (-1, 0), ORANGE),
-            ("FONTSIZE", (0, 1), (-1, -1), 10),
-            ("FONTNAME", (1, 1), (1, -1), "Helvetica-Bold"),
-            ("TEXTCOLOR", (0, 1), (0, -1), GRAY),
-            ("BOX", (0, 0), (-1, -1), 0.8, ORANGE),
-            ("TOPPADDING", (0, 0), (-1, -1), 4),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-        ]))
-        el.append(bt)
+        el.append(_bank_block("BANK TRANSFER DETAILS", bank, payee))
     else:
         el.append(Paragraph("Bank details not on file - pay by cash/cheque or update the supplier directory.", TINY))
     el.append(Spacer(1, 6 * mm))
@@ -274,26 +284,7 @@ def invoice_pdf(inv_no: str, customer: str, cust_address: str, cust_contact: str
         el.append(Spacer(1, 6 * mm))
 
     if bank and (bank.get("bank_name") or bank.get("account_no")):
-        bt = Table([
-            ["PAYMENT DETAILS", "", ""],
-            ["Bank:", bank.get("bank_name", "-"),
-             f"Account Holder: {bank.get('account_holder', company)}"],
-            ["Account No.:", bank.get("account_no", "-"), ""],
-        ], colWidths=[28 * mm, 60 * mm, 82 * mm])
-        bt.setStyle(TableStyle([
-            ("SPAN", (0, 0), (-1, 0)),
-            ("BACKGROUND", (0, 0), (-1, 0), LIGHT),
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("FONTSIZE", (0, 0), (-1, 0), 8.5),
-            ("TEXTCOLOR", (0, 0), (-1, 0), ORANGE),
-            ("FONTSIZE", (0, 1), (-1, -1), 10),
-            ("FONTNAME", (1, 1), (1, -1), "Helvetica-Bold"),
-            ("TEXTCOLOR", (0, 1), (0, -1), GRAY),
-            ("BOX", (0, 0), (-1, -1), 0.8, ORANGE),
-            ("TOPPADDING", (0, 0), (-1, -1), 4),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-        ]))
-        el.append(bt)
+        el.append(_bank_block("PAYMENT DETAILS", bank, company))
         el.append(Spacer(1, 5 * mm))
 
     if notes:
