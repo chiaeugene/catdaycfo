@@ -35,8 +35,10 @@ def safe_name(s: str, maxlen: int = 40) -> str:
     return (s or "unnamed")[:maxlen]
 
 
-def _header(el, company, address, doc_title):
+def _header(el, company, address, doc_title, reg_no=""):
     el.append(Paragraph(company, H1))
+    if reg_no:
+        el.append(Paragraph(f"Company No.: {reg_no}", SMALL))
     if address:
         el.append(Paragraph(address, SMALL))
     el.append(Spacer(1, 2 * mm))
@@ -184,24 +186,34 @@ def listing_pdf(pl_no: str, vouchers: list[dict], total: float,
 
 
 def invoice_pdf(inv_no: str, customer: str, cust_address: str, cust_contact: str,
-                items: list[dict], deposit_paid: float, due_date: str,
-                notes: str = "", company="CATDAY SDN BHD", address="Uptown PJ",
+                items: list[dict], due_date: str, notes: str = "",
+                deposit_paid: float = 0.0, schedule: list[dict] | None = None,
+                company="CATDAY SDN BHD", address="Uptown PJ", reg_no="",
                 bank: dict | None = None) -> str:
     """Customer sales invoice. items: [{description, amount}]. Returns relative
-    pdf path. deposit_paid is shown as a payment already received against the
-    total, with the resulting balance due highlighted."""
+    pdf path.
+
+    Payment status is one of two mutually exclusive modes — never guess between
+    them, the caller must say which is true:
+      - deposit_paid > 0: money already received, shown as a deduction against
+        the total with the resulting balance due highlighted.
+      - schedule: nothing has been received yet — a Payment Schedule table
+        lists what's due and when (e.g. deposit due now, balance due later),
+        each row marked "Due", not paid. Use this when a deposit has been
+        AGREED but not actually collected.
+    """
     subdir = f"invoices/{date.today():%Y-%m}"
     os.makedirs(os.path.join(UPLOAD_DIR, subdir), exist_ok=True)
     rel = f"{subdir}/{inv_no}_{safe_name(customer)}.pdf"
     doc = SimpleDocTemplate(os.path.join(UPLOAD_DIR, rel), pagesize=A4,
                             topMargin=16 * mm, bottomMargin=16 * mm)
     el = []
-    _header(el, company, address, "SALES INVOICE")
+    _header(el, company, address, "SALES INVOICE", reg_no=reg_no)
 
     due_style = ParagraphStyle("due", parent=SMALL, fontName="Helvetica-Bold")
     info = Table([
         ["Invoice No.:", inv_no, "Invoice Date:", f"{date.today():%d/%m/%Y}"],
-        ["Bill To:", customer, "Balance Due:", Paragraph(due_date, due_style)],
+        ["Bill To:", customer, "Payment Due:", Paragraph(due_date, due_style)],
     ], colWidths=[26 * mm, 79 * mm, 26 * mm, 34 * mm])
     info.setStyle(TableStyle([
         ("FONTSIZE", (0, 0), (-1, -1), 10),
@@ -218,12 +230,12 @@ def invoice_pdf(inv_no: str, customer: str, cust_address: str, cust_contact: str
     el.append(Spacer(1, 5 * mm))
 
     total = sum(it["amount"] for it in items)
-    balance = round(total - deposit_paid, 2)
     data = [["No.", "Description", "Amount (RM)"]]
     for i, it in enumerate(items, 1):
         data.append([str(i), Paragraph(it["description"], SMALL), f"{it['amount']:,.2f}"])
     data.append(["", "TOTAL", f"{total:,.2f}"])
     if deposit_paid:
+        balance = round(total - deposit_paid, 2)
         data.append(["", "Less: Deposit Received", f"-{deposit_paid:,.2f}"])
         data.append(["", "BALANCE DUE", f"{balance:,.2f}"])
     t = Table(data, colWidths=[12 * mm, 118 * mm, 40 * mm], repeatRows=1)
@@ -231,6 +243,35 @@ def invoice_pdf(inv_no: str, customer: str, cust_address: str, cust_contact: str
     t.setStyle(TableStyle([("ALIGN", (2, 0), (2, -1), "RIGHT")]))
     el.append(t)
     el.append(Spacer(1, 6 * mm))
+
+    if schedule:
+        sched_style = ParagraphStyle("sched", parent=SMALL, fontSize=9.5)
+        sched_head = ParagraphStyle("schedh", parent=sched_style, textColor=colors.white,
+                                    fontName="Helvetica-Bold")
+        sdata = [["PAYMENT SCHEDULE", "", "", ""],
+                 [Paragraph(h, sched_head) for h in ("Payment", "Amount (RM)", "Due", "Status")]]
+        for s in schedule:
+            sdata.append([Paragraph(s["label"], sched_style),
+                         Paragraph(f"{s['amount']:,.2f}", sched_style),
+                         Paragraph(s["due"], sched_style),
+                         Paragraph(s.get("status", "Due"), sched_style)])
+        st = Table(sdata, colWidths=[48 * mm, 30 * mm, 42 * mm, 50 * mm])
+        st.setStyle(TableStyle([
+            ("SPAN", (0, 0), (-1, 0)),
+            ("BACKGROUND", (0, 0), (-1, 0), LIGHT),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, 0), 8.5),
+            ("TEXTCOLOR", (0, 0), (-1, 0), ORANGE),
+            ("BACKGROUND", (0, 1), (-1, 1), ORANGE),
+            ("ALIGN", (1, 1), (1, -1), "RIGHT"),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("GRID", (0, 1), (-1, -1), 0.5, colors.grey),
+            ("BOX", (0, 0), (-1, -1), 0.8, ORANGE),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ]))
+        el.append(st)
+        el.append(Spacer(1, 6 * mm))
 
     if bank and (bank.get("bank_name") or bank.get("account_no")):
         bt = Table([
