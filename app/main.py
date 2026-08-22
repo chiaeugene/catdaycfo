@@ -2940,5 +2940,11 @@ def global_search(request: Request, q: str = "", db: Session = Depends(get_db)):
 def health():
     # RENDER_GIT_COMMIT is set by Render at deploy time — lets us verify
     # from outside exactly which commit is serving.
+    # `brand` reports whether the cat day fonts and logo actually loaded in
+    # THIS environment: pdfgen falls back to Helvetica rather than failing, so
+    # without this a deploy missing its assets would silently produce
+    # off-brand PDFs and nobody would notice until a customer saw one.
     return {"status": "ok", "app": "CATDAY System",
-            "build": os.environ.get("RENDER_GIT_COMMIT", "local")[:10]}
+            "build": os.environ.get("RENDER_GIT_COMMIT", "local")[:10],
+            "brand": {"fonts": pdfgen.DISPLAY_F.startswith("Gliker"),
+                      "logo": os.path.exists(pdfgen.LOGO_CREAM)}}
