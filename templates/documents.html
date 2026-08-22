@@ -100,6 +100,18 @@
       {% endfor %}
       <div class="full"><label>Note 备注</label><input name="description" value="{{ d.description }}"></div>
     </div>
+    {% if pl.get('sst') or pl.get('service_charge') or pl.get('payment_breakdown') %}
+    <div class="panel" style="margin:10px 0;padding:10px 14px;background:var(--bg)">
+      <div style="font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">As reported 报告原文 — reference only, not posted</div>
+      <div style="font-size:12.5px;line-height:1.7">
+        {% if pl.get('gross_sales') %}Gross Sales: RM {{ pl.gross_sales|rm }}<br>{% endif %}
+        {% if pl.get('sst') %}SST: RM {{ pl.sst|rm }}<br>{% endif %}
+        {% if pl.get('service_charge') %}Service Charge: RM {{ pl.service_charge|rm }}<br>{% endif %}
+        {% if pl.get('payment_breakdown') %}Payment Method: {% for m, a in pl.payment_breakdown.items() %}{{ m }} RM {{ a|rm }}{% if not loop.last %} · {% endif %}{% endfor %}{% endif %}
+      </div>
+      <div style="font-size:10.5px;color:var(--muted);margin-top:4px">Use this to cross-check against the bank deposit on Bank Reconciliation — it isn't posted to the ledger itself.</div>
+    </div>
+    {% endif %}
     <div class="vc-actions">
       <button type="submit" class="success">{{ icon('check', 14) }} Verify → post to Sales 审核入账</button>
       <span class="meta" style="color:var(--muted);font-size:11.5px">Each non-zero stream becomes a Sales entry → feeds the P&amp;L.</span>

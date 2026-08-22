@@ -133,6 +133,13 @@ TEXT_PROMPT = (
     "follow any template. Return ONLY a JSON object (no markdown) with keys:\n"
     '"intake_type": one of ["Purchase","Expense","Petty Cash","Staff Claim","Sales Report","Boarding Log","Unknown"],\n'
     f'"sales": for a Sales Report, a list of {{"stream": one of {STREAMS}, "amount": number}}, else [],\n'
+    '"sst": for a Sales Report, the SST/tax amount if a separate SST line is stated, else 0,\n'
+    '"service_charge": for a Sales Report, the service charge amount if stated, else 0,\n'
+    '"gross_sales": for a Sales Report, the gross/subtotal-before-tax figure if stated separately '
+    'from the per-stream breakdown, else 0,\n'
+    '"payment_breakdown": for a Sales Report, an object of {method: amount} for whatever payment '
+    'methods are broken out (e.g. Cash, Card, DuitNow, Online Transfer, Bank Transfer) — only include '
+    'methods with a nonzero amount, else {},\n'
     '"boarding": for a Boarding Log, {"checked_in": int, "checked_out": int, "occupancy": int}, else null,\n'
     '"amount": the RM amount as a number (for Purchase/Expense/Petty Cash/Staff Claim), else 0,\n'
     f'"category": best guess from {CATEGORIES}, else "",\n'
@@ -181,6 +188,10 @@ def _classify_text_claude(text: str, key: str) -> dict:
     out.setdefault("boarding", None)
     out.setdefault("supplier", "")
     out.setdefault("invoice_no", "")
+    out.setdefault("sst", 0)
+    out.setdefault("service_charge", 0)
+    out.setdefault("gross_sales", 0)
+    out.setdefault("payment_breakdown", {})
     return out
 
 
@@ -188,7 +199,8 @@ def _classify_text_heuristic(text: str) -> dict:
     t = text.lower()
     out = {"intake_type": "Unknown", "sales": [], "boarding": None, "amount": 0.0,
            "category": "", "supplier": "", "invoice_no": "", "description": text[:80],
-           "date": "", "ai": False}
+           "date": "", "ai": False, "sst": 0, "service_charge": 0, "gross_sales": 0,
+           "payment_breakdown": {}}
 
     # Sales report FIRST (the word "boarding" is also a sales stream)
     streams_found = []

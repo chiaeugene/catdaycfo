@@ -237,9 +237,24 @@ def handle_text_report(chat_id, from_name: str, text: str, db: Session,
 
     if itype == "Sales Report":
         sales = [s for s in cls.get("sales", []) if s.get("amount")]
-        payload = {"sales": sales}
+        sst = float(cls.get("sst") or 0)
+        service_charge = float(cls.get("service_charge") or 0)
+        gross_sales = float(cls.get("gross_sales") or 0)
+        payment_breakdown = {k: float(v) for k, v in (cls.get("payment_breakdown") or {}).items() if v}
+        # Reference only — not posted to the ledger. Kept alongside the sales
+        # lines so whoever verifies can cross-check against the bank deposit
+        # without the original WhatsApp-style report being lost.
+        payload = {"sales": sales, "sst": sst, "service_charge": service_charge,
+                   "gross_sales": gross_sales, "payment_breakdown": payment_breakdown}
         amount = sum(float(s["amount"]) for s in sales)
         summary_lines = [f"🛒 {s['stream']}: RM {float(s['amount']):,.2f}" for s in sales]
+        if sst:
+            summary_lines.append(f"🧾 SST: RM {sst:,.2f}")
+        if service_charge:
+            summary_lines.append(f"🧾 Service Charge: RM {service_charge:,.2f}")
+        if payment_breakdown:
+            summary_lines.append("💳 " + " · ".join(
+                f"{m}: RM {a:,.2f}" for m, a in payment_breakdown.items()))
     elif itype == "Boarding Log":
         b = cls.get("boarding") or {}
         payload = {"boarding": b}
