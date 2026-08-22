@@ -810,6 +810,7 @@ async def create_voucher(request: Request, db: Session = Depends(get_db)):
     rel = pdfgen.voucher_pdf(pv_no, payee, items, total,
                              company=settings.get("COMPANY_NAME", "CATDAY SDN BHD"),
                              address=settings.get("COMPANY_ADDRESS", "Uptown PJ"),
+                             reg_no=settings.get("COMPANY_ROC", ""),
                              bank=bank)
     pv = M.Voucher(pv_no=pv_no, payee=payee, total=total, pdf_path=rel,
                    created_by=user.display_name if user else "")
@@ -881,7 +882,8 @@ async def create_listing(request: Request, db: Session = Depends(get_db)):
     settings = {s.key: s.value for s in db.query(M.Setting).all()}
     rel = pdfgen.listing_pdf(pl_no, vdata, total,
                              company=settings.get("COMPANY_NAME", "CATDAY SDN BHD"),
-                             address=settings.get("COMPANY_ADDRESS", "Uptown PJ"))
+                             address=settings.get("COMPANY_ADDRESS", "Uptown PJ"),
+                             reg_no=settings.get("COMPANY_ROC", ""))
     pl = M.Listing(pl_no=pl_no, total=total, pdf_path=rel,
                    prepared_by=user.display_name if user else "")
     db.add(pl)
@@ -1213,7 +1215,8 @@ def payroll_confirm(rid: int, request: Request, db: Session = Depends(get_db)):
         for item in run.items:
             pdfgen.payslip_pdf(run.month, item,
                                company=settings.get("COMPANY_NAME", "CATDAY SDN BHD"),
-                               address=settings.get("COMPANY_ADDRESS", "Uptown PJ"))
+                               address=settings.get("COMPANY_ADDRESS", "Uptown PJ"),
+                               reg_no=settings.get("COMPANY_ROC", ""))
         db.commit()
     return RedirectResponse(f"/payroll/run/{rid}", status_code=302)
 
@@ -1239,7 +1242,8 @@ def payslip_download(rid: int, iid: int, request: Request, db: Session = Depends
     settings = {s.key: s.value for s in db.query(M.Setting).all()}
     rel = pdfgen.payslip_pdf(run.month, item,
                              company=settings.get("COMPANY_NAME", "CATDAY SDN BHD"),
-                             address=settings.get("COMPANY_ADDRESS", "Uptown PJ"))
+                             address=settings.get("COMPANY_ADDRESS", "Uptown PJ"),
+                             reg_no=settings.get("COMPANY_ROC", ""))
     full = os.path.join(UPLOAD_DIR, rel)
     return FileResponse(full, filename=os.path.basename(full),
                         content_disposition_type="inline")

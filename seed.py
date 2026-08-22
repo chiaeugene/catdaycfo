@@ -53,8 +53,11 @@ for u in db.query(User).all():
         print(f"User deactivated (not in allowed list): {u.username}")
 
 DEFAULTS = {
-    "COMPANY_NAME": "CATDAY SDN BHD",
-    "COMPANY_ADDRESS": "Uptown PJ, Petaling Jaya",
+    # Legal entity behind the cat day brand. Documents show the cat day logo
+    # but must carry the registered name and company number.
+    "COMPANY_NAME": "MEOW & ME PET SHOP SDN BHD",
+    "COMPANY_ADDRESS": "No 34, Jalan SS21/1, Damansara Utama, 47400 Petaling Jaya, Selangor",
+    "COMPANY_ROC": "202501052347",
     "TELEGRAM_WHITELIST": "*",
     "PETTY_CASH_FLOAT": "5000",
 }
