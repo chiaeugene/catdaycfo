@@ -5,6 +5,7 @@ and by poll_bot.py for local development.
 """
 import json
 import os
+import re
 from datetime import datetime, date
 
 import httpx
@@ -31,6 +32,48 @@ HELP_TEXT = (
     "🏨 *Boarding log 寄宿记录*\n"
     "`Check in 3, check out 1, now 22 cats`\n\n"
     "Everything goes to the admin for verification first. ✅\n所有记录先经管理员审核。"
+)
+
+
+# Daily sales report Karen fills in and sends. Categorised by revenue stream
+# because that is what the P&L, the sales ledger and the per-service costing all
+# key off — a single day total can't be split back out afterwards. Service
+# counts feed Stock & Usage (sessions × recipe = consumables used).
+DAILY_TEMPLATE = (
+    "📋 *CAT DAY — DAILY SALES REPORT*\n"
+    "Copy this, fill in the numbers, send it here. Leave a line as `-` if none.\n"
+    "复制以下格式，填上数字后发送。没有就填 `-`。\n\n"
+    "```\n"
+    "CAT DAY DAILY SALES\n"
+    "Date: dd/mm/yyyy\n"
+    "\n"
+    "SALES BY SERVICE\n"
+    "Boarding   : RM \n"
+    "Grooming   : RM \n"
+    "Cat Sales  : RM \n"
+    "Membership : RM \n"
+    "Retail     : RM \n"
+    "Other      : RM \n"
+    "Gross Sales: RM \n"
+    "SST        : RM \n"
+    "Service Chg: RM \n"
+    "TOTAL SALES: RM \n"
+    "\n"
+    "PAYMENT METHOD\n"
+    "Cash       : RM \n"
+    "Card       : RM \n"
+    "DuitNow/QR : RM \n"
+    "Bank Xfer  : RM \n"
+    "\n"
+    "SERVICES DONE\n"
+    "Grooming sessions : \n"
+    "Boarding nights   : \n"
+    "\n"
+    "Notes: \n"
+    "```\n"
+    "💡 Sales *by service* matter most — that is what feeds the P&L and shows "
+    "which service actually makes money.\n"
+    "按服务分类最重要，这样才能看出哪项服务赚钱。"
 )
 
 
@@ -100,6 +143,28 @@ def next_monthly_counter(db: Session, name: str, prefix: str, d=None) -> str:
     return f"{prefix}{yymm}-{n:03d}"
 
 
+# Signals that a typed group message is a report rather than chat. Used as a
+# cheap local gate BEFORE spending an AI call: in a group the bot sees every
+# message, so classifying all of them would be slow and costly.
+REPORT_HINTS = re.compile(
+    r"\b(?:rm|myr)\s*[\d,]|"
+    r"\b(?:sales|takings|revenue|total|gross|nett?|deposit|top\s*up|boarding|"
+    r"grooming|check[\s-]?in|check[\s-]?out|occupanc|in[\s-]?house|petty|claim|"
+    r"reimburse|invoice|receipt|payment|paid|expense|purchase|sst|service\s*charge)\b|"
+    r"(?:营业|销售|收入|总额|寄宿|美容|"
+    r"入住|退房|报销|发票|收据|付款|"
+    r"零用|采购)",
+    re.I)
+
+
+def looks_like_report(text: str) -> bool:
+    """True if a group message is worth classifying. Needs a number plus at
+    least one finance/ops signal — 'ok', 'thanks', 'on the way' never match."""
+    if len(text) < 12 or not re.search(r"\d", text):
+        return False
+    return bool(REPORT_HINTS.search(text))
+
+
 def handle_update(update: dict, db: Session):
     msg = update.get("message") or update.get("edited_message")
     if not msg:
@@ -112,9 +177,9 @@ def handle_update(update: dict, db: Session):
     from_name = " ".join(filter(None, [frm.get("first_name"), frm.get("last_name")])) \
         or frm.get("username") or from_id
 
-    # In a group the bot sees every message (privacy mode off). Only act on messages
-    # explicitly aimed at it: a file, or text that starts with the bot name / mentions it,
-    # or replies to the bot — otherwise stay silent so it doesn't spam the chat.
+    # In a group the bot sees every message (privacy mode off). It acts on
+    # files, on anything addressed to it, and on typed text that looks like a
+    # report; everything else is ignored so it never spams the chat.
     text = (msg.get("text") or msg.get("caption") or "").strip()
     bot_un = "@catdaycfobot"
     mentioned = bot_un.lower() in text.lower()
@@ -148,13 +213,19 @@ def handle_update(update: dict, db: Session):
 
     # No file → treat as a typed report (or a command / greeting)
     if not file_id:
+        if text.lower().startswith(("/template", "/report", "/daily")):
+            tg_send(chat_id, DAILY_TEMPLATE)   # answer this one even in a group
+            return
         if not text or text.startswith("/"):
             if not is_group:            # greetings/commands: reply only in private
                 tg_send(chat_id, HELP_TEXT)
             return
-        # In a group, only parse text aimed at the bot (mention or reply to it);
-        # in private, parse everything. Stay silent on unrecognised group chatter.
-        if is_group and not (mentioned or replied_to_bot):
+        # In a group, reports are captured WITHOUT an @mention — that was the
+        # stated requirement ("work without the @mention, just no improper
+        # conversation"). Ordinary chatter is filtered out twice: cheaply by
+        # looks_like_report() before any AI call, then by handle_text_report,
+        # which stays silent when the classifier returns "Unknown".
+        if is_group and not (mentioned or replied_to_bot) and not looks_like_report(text):
             return
         handle_text_report(chat_id, from_name, text, db, silent_if_unknown=is_group)
         return
@@ -244,10 +315,20 @@ def handle_text_report(chat_id, from_name: str, text: str, db: Session,
         # Reference only — not posted to the ledger. Kept alongside the sales
         # lines so whoever verifies can cross-check against the bank deposit
         # without the original WhatsApp-style report being lost.
+        total_sales = float(cls.get("total_sales") or 0)
         payload = {"sales": sales, "sst": sst, "service_charge": service_charge,
-                   "gross_sales": gross_sales, "payment_breakdown": payment_breakdown}
-        amount = sum(float(s["amount"]) for s in sales)
+                   "gross_sales": gross_sales, "total_sales": total_sales,
+                   "payment_breakdown": payment_breakdown}
+        # Prefer the per-stream breakdown; fall back to the reported totals so a
+        # report without service categories still records a real figure instead
+        # of RM 0.00. The verifier splits it across streams on the verify card.
+        amount = (sum(float(s["amount"]) for s in sales)
+                  or total_sales or gross_sales
+                  or sum(payment_breakdown.values()))
         summary_lines = [f"🛒 {s['stream']}: RM {float(s['amount']):,.2f}" for s in sales]
+        if not sales and amount:
+            summary_lines.append(f"💰 Total: RM {amount:,.2f}")
+            summary_lines.append("⚠️ No service breakdown — split it by service when verifying")
         if sst:
             summary_lines.append(f"🧾 SST: RM {sst:,.2f}")
         if service_charge:

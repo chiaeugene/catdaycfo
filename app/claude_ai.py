@@ -137,6 +137,8 @@ TEXT_PROMPT = (
     '"service_charge": for a Sales Report, the service charge amount if stated, else 0,\n'
     '"gross_sales": for a Sales Report, the gross/subtotal-before-tax figure if stated separately '
     'from the per-stream breakdown, else 0,\n'
+    '"total_sales": for a Sales Report, the final total takings for the day '
+    '(gross + SST + service charge, i.e. the "Total Sales" line) if stated, else 0,\n'
     '"payment_breakdown": for a Sales Report, an object of {method: amount} for whatever payment '
     'methods are broken out (e.g. Cash, Card, DuitNow, Online Transfer, Bank Transfer) — only include '
     'methods with a nonzero amount, else {},\n'
@@ -191,6 +193,7 @@ def _classify_text_claude(text: str, key: str) -> dict:
     out.setdefault("sst", 0)
     out.setdefault("service_charge", 0)
     out.setdefault("gross_sales", 0)
+    out.setdefault("total_sales", 0)
     out.setdefault("payment_breakdown", {})
     return out
 
@@ -200,7 +203,7 @@ def _classify_text_heuristic(text: str) -> dict:
     out = {"intake_type": "Unknown", "sales": [], "boarding": None, "amount": 0.0,
            "category": "", "supplier": "", "invoice_no": "", "description": text[:80],
            "date": "", "ai": False, "sst": 0, "service_charge": 0, "gross_sales": 0,
-           "payment_breakdown": {}}
+           "total_sales": 0, "payment_breakdown": {}}
 
     # Sales report FIRST (the word "boarding" is also a sales stream)
     streams_found = []
