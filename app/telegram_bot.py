@@ -300,6 +300,15 @@ def handle_text_report(chat_id, from_name: str, text: str, db: Session,
                "Staff Claim": "Staff Claim", "Boarding Log": "Boarding Log",
                "Purchase": "Purchase", "Expense": "Expense"}.get(itype, "Filing Only")
     doc_no = next_counter(db, "DOC", "DOC-")
+    # The report states the day it covers ("Date: 20/08/2026"). Without this the
+    # verify screen defaults to today and a report sent the next morning posts
+    # against the wrong day.
+    report_date = None
+    if cls.get("date"):
+        try:
+            report_date = datetime.strptime(cls["date"], "%Y-%m-%d").date()
+        except ValueError:
+            report_date = None
 
     payload = {}
     summary_lines = []
@@ -316,9 +325,16 @@ def handle_text_report(chat_id, from_name: str, text: str, db: Session,
         # lines so whoever verifies can cross-check against the bank deposit
         # without the original WhatsApp-style report being lost.
         total_sales = float(cls.get("total_sales") or 0)
+        # A daily report also carries service counts, the cats in/out figures and
+        # any deposit taken. Keep them all: they drive Stock & Usage, the boarding
+        # log and the deposit follow-up, and re-typing them later is error-prone.
+        services = {k: float(v) for k, v in (cls.get("services") or {}).items() if v}
+        cats = cls.get("boarding") or None
+        deposit = float(cls.get("deposit_received") or 0)
         payload = {"sales": sales, "sst": sst, "service_charge": service_charge,
                    "gross_sales": gross_sales, "total_sales": total_sales,
-                   "payment_breakdown": payment_breakdown}
+                   "payment_breakdown": payment_breakdown, "services": services,
+                   "boarding": cats, "deposit_received": deposit}
         # Prefer the per-stream breakdown; fall back to the reported totals so a
         # report without service categories still records a real figure instead
         # of RM 0.00. The verifier splits it across streams on the verify card.
@@ -336,6 +352,15 @@ def handle_text_report(chat_id, from_name: str, text: str, db: Session,
         if payment_breakdown:
             summary_lines.append("💳 " + " · ".join(
                 f"{m}: RM {a:,.2f}" for m, a in payment_breakdown.items()))
+        if services:
+            summary_lines.append("✂️ " + " · ".join(
+                f"{k}: {v:g}" for k, v in services.items()))
+        if cats and any(cats.get(k) for k in ("checked_in", "checked_out", "occupancy")):
+            summary_lines.append(
+                f"🏨 In {cats.get('checked_in', 0)} · Out {cats.get('checked_out', 0)}"
+                f" · In-house {cats.get('occupancy', 0)}")
+        if deposit:
+            summary_lines.append(f"💰 Deposit received: RM {deposit:,.2f}")
     elif itype == "Boarding Log":
         b = cls.get("boarding") or {}
         payload = {"boarding": b}
@@ -360,6 +385,7 @@ def handle_text_report(chat_id, from_name: str, text: str, db: Session,
         intake_type=itype, supplier=cls.get("supplier", ""), amount=amount,
         invoice_no=invoice_no,
         month=f"{date.today():%b %Y}", description=cls.get("description") or text[:120],
+        doc_date=report_date,
         category=cls.get("category", ""), payload_json=json.dumps(payload),
         raw_text=text, ai_classified=cls.get("ai", False), status="Pending",
     )

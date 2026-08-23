@@ -89,15 +89,23 @@
     <div class="vc-grid">
       <div><label>Section 分区</label>
         <select name="section">{% for s in M.DOC_SECTIONS %}<option {% if d.section==s %}selected{% endif %}>{{ s }}</option>{% endfor %}</select></div>
-      <div><label>Sale date 销售日期</label><input type="date" name="rdate" value="{{ today }}"></div>
+      <div><label>Sale date 销售日期</label>
+        <input type="date" name="rdate" value="{{ (d.doc_date or today).isoformat() }}"
+               title="Taken from the report's own Date line, not the day it was sent"></div>
       {% set sfound = {} %}
       {% for row in pl.get('sales', []) %}{% set _ = sfound.update({row.stream: row.amount}) %}{% endfor %}
       {% for stream in M.STREAMS %}
       <div><label>{{ stream }} (RM)</label><input type="number" step="0.01" name="sales_{{ stream }}" value="{{ sfound.get(stream, '') }}"></div>
       {% endfor %}
       {% for stream in M.STREAMS %}
-      <div><label>{{ stream }} — services 次数</label><input type="number" step="1" min="0" name="qty_{{ stream }}" placeholder="0" title="How many {{ stream }} services that day — feeds Stock & Usage"></div>
+      <div><label>{{ stream }} — services 次数</label><input type="number" step="1" min="0" name="qty_{{ stream }}" value="{{ pl.get('services', {}).get(stream, '') }}" placeholder="0" title="How many {{ stream }} services that day — feeds Stock & Usage"></div>
       {% endfor %}
+      {% set cats = pl.get('boarding') %}
+      {% if cats and (cats.get('checked_in') or cats.get('checked_out') or cats.get('occupancy')) %}
+      <div><label>Cats checked in 入住</label><input type="number" step="1" min="0" name="cats_in" value="{{ cats.get('checked_in', 0) }}"></div>
+      <div><label>Cats checked out 退房</label><input type="number" step="1" min="0" name="cats_out" value="{{ cats.get('checked_out', 0) }}"></div>
+      <div><label>In-house tonight 在店</label><input type="number" step="1" min="0" name="cats_occ" value="{{ cats.get('occupancy', 0) }}"></div>
+      {% endif %}
       <div class="full"><label>Note 备注</label><input name="description" value="{{ d.description }}"></div>
     </div>
     {% if pl.get('sst') or pl.get('service_charge') or pl.get('payment_breakdown') %}
@@ -107,7 +115,9 @@
         {% if pl.get('gross_sales') %}Gross Sales: RM {{ pl.gross_sales|rm }}<br>{% endif %}
         {% if pl.get('sst') %}SST: RM {{ pl.sst|rm }}<br>{% endif %}
         {% if pl.get('service_charge') %}Service Charge: RM {{ pl.service_charge|rm }}<br>{% endif %}
-        {% if pl.get('payment_breakdown') %}Payment Method: {% for m, a in pl.payment_breakdown.items() %}{{ m }} RM {{ a|rm }}{% if not loop.last %} · {% endif %}{% endfor %}{% endif %}
+        {% if pl.get('total_sales') %}Total Sales: RM {{ pl.total_sales|rm }}<br>{% endif %}
+        {% if pl.get('payment_breakdown') %}Payment Method: {% for m, a in pl.payment_breakdown.items() %}{{ m }} RM {{ a|rm }}{% if not loop.last %} · {% endif %}{% endfor %}<br>{% endif %}
+        {% if pl.get('deposit_received') %}<b style="color:var(--amber)">Deposit received: RM {{ pl.deposit_received|rm }}</b> — record it under <a href="/receivables">Receivables</a>; it is not posted from here.{% endif %}
       </div>
       <div style="font-size:10.5px;color:var(--muted);margin-top:4px">Use this to cross-check against the bank deposit on Bank Reconciliation — it isn't posted to the ledger itself.</div>
     </div>

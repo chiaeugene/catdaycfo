@@ -543,6 +543,17 @@ async def verify_document(doc_id: int, request: Request, db: Session = Depends(g
         made.append(f"Sales · RM {total:,.2f} across {', '.join(streams_hit) or 'no streams'}")
         made.append(f"Journal: Dr {acct(M.ACC_BANK)} / Cr revenue accounts per stream")
         links += [("Sales", "/sales"), ("P&L", f"/pnl?month={month_str(rdate)}")]
+        # A daily report can also carry the cats in/out figures. Post them as a
+        # boarding log in the same click rather than making someone re-key them.
+        cats_in = int(float(f.get("cats_in") or 0))
+        cats_out = int(float(f.get("cats_out") or 0))
+        cats_occ = int(float(f.get("cats_occ") or 0))
+        if cats_in or cats_out or cats_occ:
+            db.add(M.BoardingLog(date=rdate, checked_in=cats_in, checked_out=cats_out,
+                                 occupancy=cats_occ, notes=f"From daily report {doc.doc_no}",
+                                 recorded_by=doc.sender))
+            made.append(f"Boarding log · in {cats_in} · out {cats_out} · in-house {cats_occ}")
+            links.append(("Boarding", "/boarding"))
 
     elif section == "Boarding Log":
         db.add(M.BoardingLog(

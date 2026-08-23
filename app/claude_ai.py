@@ -140,9 +140,15 @@ TEXT_PROMPT = (
     '"total_sales": for a Sales Report, the final total takings for the day '
     '(gross + SST + service charge, i.e. the "Total Sales" line) if stated, else 0,\n'
     '"payment_breakdown": for a Sales Report, an object of {method: amount} for whatever payment '
-    'methods are broken out (e.g. Cash, Card, DuitNow, Online Transfer, Bank Transfer) — only include '
-    'methods with a nonzero amount, else {},\n'
-    '"boarding": for a Boarding Log, {"checked_in": int, "checked_out": int, "occupancy": int}, else null,\n'
+    'methods are broken out (e.g. Cash, Card, DuitNow, Online Transfer, Bank Transfer, Member Wallet) '
+    '— only include methods with a nonzero amount, else {},\n'
+    f'"services": for a Sales Report with a "Services Performed" / 服务次数 section, an object of '
+    f'{{stream: count}} using stream names from {STREAMS} (e.g. "Grooming sessions: 2" -> '
+    '{"Grooming": 2}, "Boarding nights: 6" -> {"Boarding": 6}) — counts only, not money, else {},\n'
+    '"deposit_received": for a Sales Report, the deposit/booking money taken that day if stated, else 0,\n'
+    '"boarding": {"checked_in": int, "checked_out": int, "occupancy": int} — fill this in for a '
+    'Boarding Log AND ALSO for a daily sales report that carries a Cats / 猫只 check-in section; '
+    'null only when no such numbers appear,\n'
     '"amount": the RM amount as a number (for Purchase/Expense/Petty Cash/Staff Claim), else 0,\n'
     f'"category": best guess from {CATEGORIES}, else "",\n'
     '"supplier": the supplier/company name; for Staff Claim the claimant staff name; else "",\n'
@@ -194,6 +200,8 @@ def _classify_text_claude(text: str, key: str) -> dict:
     out.setdefault("service_charge", 0)
     out.setdefault("gross_sales", 0)
     out.setdefault("total_sales", 0)
+    out.setdefault("services", {})
+    out.setdefault("deposit_received", 0)
     out.setdefault("payment_breakdown", {})
     return out
 
@@ -203,7 +211,8 @@ def _classify_text_heuristic(text: str) -> dict:
     out = {"intake_type": "Unknown", "sales": [], "boarding": None, "amount": 0.0,
            "category": "", "supplier": "", "invoice_no": "", "description": text[:80],
            "date": "", "ai": False, "sst": 0, "service_charge": 0, "gross_sales": 0,
-           "total_sales": 0, "payment_breakdown": {}}
+           "total_sales": 0, "payment_breakdown": {}, "services": {},
+           "deposit_received": 0}
 
     # Sales report FIRST (the word "boarding" is also a sales stream)
     streams_found = []
