@@ -342,8 +342,10 @@ def handle_text_report(chat_id, from_name: str, text: str, db: Session,
                   or total_sales or gross_sales
                   or sum(payment_breakdown.values()))
         summary_lines = [f"🛒 {s['stream']}: RM {float(s['amount']):,.2f}" for s in sales]
-        if not sales and amount:
-            summary_lines.append(f"💰 Total: RM {amount:,.2f}")
+        if sales:
+            summary_lines.append(f"💰 *Sales total: RM {amount:,.2f}*")
+        elif amount:
+            summary_lines.append(f"💰 *Total: RM {amount:,.2f}*")
             summary_lines.append("⚠️ No service breakdown — split it by service when verifying")
         if sst:
             summary_lines.append(f"🧾 SST: RM {sst:,.2f}")
@@ -352,6 +354,16 @@ def handle_text_report(chat_id, from_name: str, text: str, db: Session,
         if payment_breakdown:
             summary_lines.append("💳 " + " · ".join(
                 f"{m}: RM {a:,.2f}" for m, a in payment_breakdown.items()))
+            # Cross-check the payment split against the day's total. Catching a
+            # mismatch here — while the sender is still looking at the chat — is
+            # far cheaper than finding it at bank reconciliation weeks later.
+            paid = sum(payment_breakdown.values())
+            expected = total_sales or round(amount + sst + service_charge, 2)
+            if expected and abs(paid - expected) > 0.01:
+                summary_lines.append(
+                    f"⚠️ Payments add to RM {paid:,.2f} but the day totals "
+                    f"RM {expected:,.2f} — off by RM {abs(paid - expected):,.2f}. "
+                    "Please check 请核对。")
         if services:
             summary_lines.append("✂️ " + " · ".join(
                 f"{k}: {v:g}" for k, v in services.items()))
@@ -393,11 +405,18 @@ def handle_text_report(chat_id, from_name: str, text: str, db: Session,
     db.commit()
 
     body = "\n".join(summary_lines)
+    # Echo the date the report covers: it is the easiest thing to misread and
+    # the most costly to miss, because revenue would land on the wrong day.
+    date_line = (f"📅 For 日期: *{report_date:%d/%m/%Y}*\n" if report_date
+                 else "📅 No date found — will use the day it is verified\n"
+                 if itype == "Sales Report" else "")
     tg_send(chat_id,
         f"✅ *Got it — {itype}!  已收到！*\n\n"
         f"📋 ID: `{doc_no}`\n"
+        + date_line
         + (body + "\n" if body else "")
         + "\n🕐 *Awaiting verification 等待审核* — admin will confirm before it enters the system.\n"
+        + "❓ Anything wrong above? Just send a corrected report. 有错请重发。\n"
         + ("🤖 Understood by AI.  AI 已识别。" if cls.get("ai") else
            "ℹ️ Basic parsing.  基础识别。"),
         buttons=verify_button())
