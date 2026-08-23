@@ -2152,6 +2152,7 @@ def _build_invoice_pdf(db, inv) -> str:
 
 @app.get("/receivables", response_class=HTMLResponse)
 def receivables(request: Request, q: str = "", status: str = "",
+                deposit: float = 0, note: str = "", on: str = "",
                 db: Session = Depends(get_db)):
     ledger.sync_ledger(db)
     query = db.query(M.ARInvoice).order_by(M.ARInvoice.date.desc(), M.ARInvoice.id.desc())
@@ -2166,6 +2167,10 @@ def receivables(request: Request, q: str = "", status: str = "",
     return render(request, db, "receivables.html", "receivables",
                   invoices=invoices, q=q, flt=status, streams=M.STREAMS,
                   open_total=round(open_total, 2), today_iso=date.today().isoformat(),
+                  # Pre-fill when arriving from a daily report that reported a
+                  # deposit, so the figure and its context aren't re-typed.
+                  prefill_deposit=deposit or 0, prefill_note=note,
+                  prefill_date=on or date.today().isoformat(),
                   flash=request.session.pop("flash_ar", None))
 
 

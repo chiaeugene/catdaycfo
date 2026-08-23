@@ -145,7 +145,10 @@ TEXT_PROMPT = (
     f'"services": for a Sales Report with a "Services Performed" / 服务次数 section, an object of '
     f'{{stream: count}} using stream names from {STREAMS} (e.g. "Grooming sessions: 2" -> '
     '{"Grooming": 2}, "Boarding nights: 6" -> {"Boarding": 6}) — counts only, not money, else {},\n'
-    '"deposit_received": for a Sales Report, the deposit/booking money taken that day if stated, else 0,\n'
+    '"deposit_received": for a Sales Report, the deposit/booking money taken that day if stated, else 0. '
+    'A deposit is money held against a FUTURE sale or booking — never add it to sales or gross/total,\n'
+    '"notes": any free-text note the sender wrote (a "Notes"/备注 line, or context they added about a '
+    'deposit, a customer, or a balance owing). Copy it through verbatim, else "",\n'
     '"boarding": {"checked_in": int, "checked_out": int, "occupancy": int} — fill this in for a '
     'Boarding Log AND ALSO for a daily sales report that carries a Cats / 猫只 check-in section; '
     'null only when no such numbers appear,\n'
@@ -202,6 +205,7 @@ def _classify_text_claude(text: str, key: str) -> dict:
     out.setdefault("total_sales", 0)
     out.setdefault("services", {})
     out.setdefault("deposit_received", 0)
+    out.setdefault("notes", "")
     out.setdefault("payment_breakdown", {})
     return out
 
@@ -212,7 +216,7 @@ def _classify_text_heuristic(text: str) -> dict:
            "category": "", "supplier": "", "invoice_no": "", "description": text[:80],
            "date": "", "ai": False, "sst": 0, "service_charge": 0, "gross_sales": 0,
            "total_sales": 0, "payment_breakdown": {}, "services": {},
-           "deposit_received": 0}
+           "deposit_received": 0, "notes": ""}
 
     # Sales report FIRST (the word "boarding" is also a sales stream)
     streams_found = []

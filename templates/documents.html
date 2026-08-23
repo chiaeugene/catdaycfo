@@ -117,9 +117,29 @@
         {% if pl.get('service_charge') %}Service Charge: RM {{ pl.service_charge|rm }}<br>{% endif %}
         {% if pl.get('total_sales') %}Total Sales: RM {{ pl.total_sales|rm }}<br>{% endif %}
         {% if pl.get('payment_breakdown') %}Payment Method: {% for m, a in pl.payment_breakdown.items() %}{{ m }} RM {{ a|rm }}{% if not loop.last %} · {% endif %}{% endfor %}<br>{% endif %}
-        {% if pl.get('deposit_received') %}<b style="color:var(--amber)">Deposit received: RM {{ pl.deposit_received|rm }}</b> — record it under <a href="/receivables">Receivables</a>; it is not posted from here.{% endif %}
+        {% if pl.get('notes') %}<div style="margin-top:4px">📝 Note: <i>{{ pl.notes }}</i></div>{% endif %}
       </div>
       <div style="font-size:10.5px;color:var(--muted);margin-top:4px">Use this to cross-check against the bank deposit on Bank Reconciliation — it isn't posted to the ledger itself.</div>
+    </div>
+    {% endif %}
+    {% if pl.get('deposit_received') %}
+    {# A deposit is money held against a FUTURE sale, so it must not ride along
+       with the day's revenue. Verifying below posts the sales only — this panel
+       is the reminder (and the shortcut) to record the deposit properly once. #}
+    <div class="panel" style="margin:10px 0;padding:12px 14px;background:var(--amber-bg);border-color:var(--amber)">
+      <div style="font-size:12.5px;color:var(--amber);font-weight:700;margin-bottom:4px">
+        ⚠️ Deposit received: RM {{ pl.deposit_received|rm }} — not included in the sales above
+      </div>
+      <div style="font-size:12px;line-height:1.6">
+        A deposit is money held for a future sale, so it is <b>not</b> revenue today —
+        it belongs to the customer until the sale completes. Record it once against a
+        customer invoice so the balance owing is tracked.<br>
+        <span style="color:var(--muted)">订金不是今日营业额，请在应收账款记录。</span>
+      </div>
+      <a class="btn secondary" style="margin-top:8px"
+         href="/receivables?deposit={{ pl.deposit_received }}&note={{ (pl.get('notes') or '')|urlencode }}&on={{ (d.doc_date or today).isoformat() }}">
+        {{ icon('receipt', 14) }} Record deposit in Receivables 记录订金
+      </a>
     </div>
     {% endif %}
     <div class="vc-actions">

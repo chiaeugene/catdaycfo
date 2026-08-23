@@ -331,10 +331,11 @@ def handle_text_report(chat_id, from_name: str, text: str, db: Session,
         services = {k: float(v) for k, v in (cls.get("services") or {}).items() if v}
         cats = cls.get("boarding") or None
         deposit = float(cls.get("deposit_received") or 0)
+        note = (cls.get("notes") or "").strip()
         payload = {"sales": sales, "sst": sst, "service_charge": service_charge,
                    "gross_sales": gross_sales, "total_sales": total_sales,
                    "payment_breakdown": payment_breakdown, "services": services,
-                   "boarding": cats, "deposit_received": deposit}
+                   "boarding": cats, "deposit_received": deposit, "notes": note}
         # Prefer the per-stream breakdown; fall back to the reported totals so a
         # report without service categories still records a real figure instead
         # of RM 0.00. The verifier splits it across streams on the verify card.
@@ -372,7 +373,14 @@ def handle_text_report(chat_id, from_name: str, text: str, db: Session,
                 f"🏨 In {cats.get('checked_in', 0)} · Out {cats.get('checked_out', 0)}"
                 f" · In-house {cats.get('occupancy', 0)}")
         if deposit:
-            summary_lines.append(f"💰 Deposit received: RM {deposit:,.2f}")
+            # Spelled out because it is the one figure people expect to see in
+            # sales: a deposit is money held against a future sale, so counting
+            # it as revenue would overstate the day and understate what is owed.
+            summary_lines.append(
+                f"💰 *Deposit received: RM {deposit:,.2f}* — held for a future sale, "
+                "NOT counted in today's sales. Record it under Receivables. 订金不算今日营业额。")
+        if note:
+            summary_lines.append(f"📝 Note: _{note}_")
     elif itype == "Boarding Log":
         b = cls.get("boarding") or {}
         payload = {"boarding": b}
