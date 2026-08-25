@@ -185,6 +185,32 @@ def parse_date(s: str) -> date:
     return datetime.strptime(s, "%Y-%m-%d").date() if s else date.today()
 
 
+# Date formats seen in Malaysian bank statement exports. Day-first is the local
+# convention, so 03/04/2026 is 3 April — never 4 March.
+_IMPORT_DATE_FORMATS = ("%d/%m/%Y", "%d-%m-%Y", "%d/%m/%y", "%d-%m-%y",
+                        "%Y-%m-%d", "%Y/%m/%d", "%d %b %Y", "%d %B %Y",
+                        "%d/%b/%Y", "%b %d, %Y")
+
+
+def parse_import_date(s: str):
+    """Read a date from an imported file, or None if it can't be read.
+
+    Bank CSVs are exported in whatever the bank feels like — dd/mm/yyyy is the
+    Malaysian norm, while parse_date() only accepts ISO. Returning None (rather
+    than defaulting to today) lets the caller count and report unreadable rows
+    instead of importing them under the wrong date.
+    """
+    s = (s or "").strip()
+    if not s:
+        return None
+    for fmt in _IMPORT_DATE_FORMATS:
+        try:
+            return datetime.strptime(s, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
 def month_options(back: int = 12, fwd: int = 1) -> list[str]:
     """Selectable months around today, newest first. Free-typing a month is the
     single easiest way to lose a record — a typo like 'July 2026' matches no
@@ -1486,7 +1512,11 @@ def reconciliation(request: Request, account: int = 0, db: Session = Depends(get
     opening_balance = acc.opening_balance if acc else 0.0
     balance_per_bank = opening_balance + reconciled_total + unreconciled_total
     balance_per_books = opening_balance + reconciled_total
+    post_accounts = db.query(M.Account).filter(
+        M.Account.active == True, M.Account.code != M.ACC_BANK).order_by(  # noqa: E712
+        M.Account.code).all()
     return render(request, db, "reconciliation.html", "reconciliation",
+                  post_accounts=post_accounts,
                   accounts=accounts, acc=acc, lines=lines, candidates=candidates,
                   reconciled_total=reconciled_total, unreconciled_total=unreconciled_total,
                   unmatched_count=unmatched_count, opening_balance=opening_balance,
@@ -1509,6 +1539,39 @@ def reconciliation_account_new(request: Request, name: str = Form(...), bank_nam
     return RedirectResponse("/reconciliation", status_code=302)
 
 
+@app.post("/reconciliation/post-line")
+async def reconciliation_post_line(request: Request, db: Session = Depends(get_db)):
+    """Assign a ledger account to an unmatched statement line so it posts.
+
+    For movements with no source document in the system: historical months
+    rebuilt from statements, and ongoing items that never pass through the
+    verify inbox (bank charges, interest). Clearing the account un-posts it —
+    the ledger is derived, so the entry disappears on the next sync.
+    """
+    user = current_user(request, db)
+    if not user or user.role not in ("admin", "manager"):
+        return RedirectResponse("/", status_code=302)
+    f = await request.form()
+    line = db.get(M.BankStatementLine, int(f.get("line_id") or 0))
+    if line:
+        if line.matched:
+            request.session["flash_recon"] = (
+                "That line is already matched to a record — posting it as well "
+                "would count the money twice. Undo the match first.")
+        else:
+            aid = int(f.get("post_account_id") or 0)
+            line.post_account_id = aid or None
+            db.commit()
+            ledger.sync_ledger(db)
+            acc = db.get(M.Account, aid) if aid else None
+            request.session["flash_recon"] = (
+                f"Posted {line.date:%d/%m/%y} · {line.description[:40]} · "
+                f"RM {abs(line.amount):,.2f} to {acc.code} {acc.name}" if acc
+                else "Line un-posted — its journal entry has been removed.")
+    back = f.get("back") or "/reconciliation"
+    return RedirectResponse(str(back), status_code=303)
+
+
 @app.post("/reconciliation/import")
 async def reconciliation_import(request: Request, account_id: int = Form(...),
                                 file: UploadFile = File(...), db: Session = Depends(get_db)):
@@ -1523,6 +1586,7 @@ async def reconciliation_import(request: Request, account_id: int = Form(...),
     reader = csv.DictReader(io.StringIO(raw))
     batch = uuid.uuid4().hex[:8]
     added = 0
+    skipped_date = skipped_amount = 0
     for row in reader:
         keys = {k.strip().lower(): k for k in row.keys() if k}
         def get(*names):
@@ -1536,9 +1600,9 @@ async def reconciliation_import(request: Request, account_id: int = Form(...),
         amt_raw = get("amount")
         debit = get("debit", "withdrawal")
         credit = get("credit", "deposit")
-        try:
-            d = parse_date(d_raw) if d_raw else date.today()
-        except Exception:
+        d = parse_import_date(d_raw)
+        if d is None:
+            skipped_date += 1
             continue
         if amt_raw:
             try:
@@ -1560,9 +1624,25 @@ async def reconciliation_import(request: Request, account_id: int = Form(...),
     # Try to match the fresh lines immediately — most of a clean statement
     # should reconcile itself, leaving only genuine mysteries for a human.
     stats = _auto_match_lines(db, account_id, only_batch=batch)
-    request.session["flash_recon"] = (
-        f"Imported {added} lines · auto-matched {stats['matched']}"
-        + (f" · {stats['left']} need review" if stats["left"] else " · all reconciled ✓"))
+    if added == 0:
+        # Never report an empty import as success — a statement whose dates or
+        # amounts couldn't be read used to come back as "all reconciled", which
+        # looks identical to a clean reconciliation.
+        why = []
+        if skipped_date:
+            why.append(f"{skipped_date} row(s) had a date this couldn't read")
+        if skipped_amount:
+            why.append(f"{skipped_amount} row(s) had an unreadable amount")
+        request.session["flash_recon"] = (
+            "⚠️ Nothing was imported"
+            + (" — " + "; ".join(why) if why else " — no Date/Amount columns were found")
+            + ". Check the file has Date, Description and Amount columns.")
+    else:
+        note = f"Imported {added} lines · auto-matched {stats['matched']}"
+        note += (f" · {stats['left']} need review" if stats["left"] else " · all reconciled ✓")
+        if skipped_date or skipped_amount:
+            note += f" · skipped {skipped_date + skipped_amount} unreadable row(s)"
+        request.session["flash_recon"] = note
     return RedirectResponse(f"/reconciliation?account={account_id}", status_code=302)
 
 

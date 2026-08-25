@@ -405,7 +405,15 @@ class BankStatementLine(Base):
     matched_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     matched_note: Mapped[str] = mapped_column(String(200), default="")
     import_batch: Mapped[str] = mapped_column(String(40), default="")
+    # Posting a statement line directly to the ledger. Used for movements with
+    # no source document in the system — historical months reconstructed from
+    # statements, and ongoing bank charges or interest. Only ever set on
+    # UNMATCHED lines: a matched line is already represented by its own record,
+    # so posting it too would count the money twice.
+    post_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("accounts.id"), nullable=True)
     account = relationship("BankAccount")
+    post_account = relationship("Account", foreign_keys=[post_account_id])
 
 
 SUPPLIER_TYPES = ["Supplier", "Contractor", "Service Provider", "Landlord", "Utility"]

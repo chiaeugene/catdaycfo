@@ -37,6 +37,7 @@ MIGRATIONS = [
     "ALTER TABLE ar_invoices ADD COLUMN cust_contact VARCHAR(60) DEFAULT ''",
     "ALTER TABLE ar_invoices ADD COLUMN pdf_path VARCHAR(200) DEFAULT ''",
     "ALTER TABLE sales ADD COLUMN document_id INTEGER",
+    "ALTER TABLE bank_statement_lines ADD COLUMN post_account_id INTEGER",
 ]
 
 

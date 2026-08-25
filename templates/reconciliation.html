@@ -89,6 +89,8 @@
       <td>
         {% if l.matched %}
         <span class="badge paid">Matched · {{ l.matched_type }}</span>
+        {% elif l.post_account_id %}
+        <span class="badge categorized">Posted · {{ l.post_account.code }}</span>
         {% if l.matched_note and l.matched_note.startswith('auto') %}
         <span class="badge draft" title="{{ l.matched_note }}">⚡ auto</span>
         {% endif %}
@@ -100,6 +102,20 @@
         {% if l.matched %}
         <form method="post" action="/reconciliation/unmatch/{{ l.id }}"><button class="small secondary" type="submit">Undo</button></form>
         {% else %}
+        {# No source document for this movement? Post it straight to an account.
+           Used for historical months rebuilt from statements, and for bank
+           charges or interest that never pass through the verify inbox. #}
+        <form method="post" action="/reconciliation/post-line" class="inline" style="margin-bottom:4px">
+          <input type="hidden" name="line_id" value="{{ l.id }}">
+          <input type="hidden" name="back" value="/reconciliation?account={{ acc.id }}">
+          <select name="post_account_id" class="slim" style="max-width:210px">
+            <option value="">Post to account… 直接入账</option>
+            {% for a in post_accounts %}
+            <option value="{{ a.id }}" {% if l.post_account_id == a.id %}selected{% endif %}>{{ a.code }} {{ a.name }}</option>
+            {% endfor %}
+          </select>
+          <button class="small secondary" type="submit">Post</button>
+        </form>
         <form method="post" action="/reconciliation/match" class="inline">
           <input type="hidden" name="line_id" value="{{ l.id }}">
           <select name="txn_type_id" onchange="this.form.querySelector('[name=txn_type]').value=this.value.split('|')[0]; this.form.querySelector('[name=txn_id]').value=this.value.split('|')[1]" class="slim" style="max-width:220px">

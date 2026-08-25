@@ -251,6 +251,30 @@ def _expected_entries(db: Session):
                           (M.ACC_AR, 0, r.amount, inv.customer)],
             }
 
+    # Bank statement lines posted straight to the ledger. This is how a period
+    # with no source documents in the system gets a real transaction history —
+    # the bank ledger shows each rent payment, payroll run and deposit instead
+    # of one opening lump. Skips matched lines, which already have their own
+    # record and would otherwise be counted twice.
+    accounts_by_id = {a.id: a for a in db.query(M.Account).all()}
+    for bl in db.query(M.BankStatementLine).filter(
+            M.BankStatementLine.post_account_id.isnot(None),
+            M.BankStatementLine.matched == False).all():   # noqa: E712
+        contra = accounts_by_id.get(bl.post_account_id)
+        if not contra or not bl.amount:
+            continue
+        amt = abs(bl.amount)
+        if bl.amount > 0:      # money into the bank
+            lines = [(M.ACC_BANK, amt, 0, bl.description[:60]),
+                     (contra.code, 0, amt, bl.description[:60])]
+        else:                  # money out of the bank
+            lines = [(contra.code, amt, 0, bl.description[:60]),
+                     (M.ACC_BANK, 0, amt, bl.description[:60])]
+        out[("BankLine", bl.id, "post")] = {
+            "date": bl.date, "ref": bl.ref or "BANK", "month": f"{bl.date:%b %Y}",
+            "memo": f"Bank · {bl.description[:70]}", "lines": lines,
+        }
+
     kind_acct = {"EPF": M.ACC_EPF, "SOCSO": M.ACC_SOCSO_EIS, "EIS": M.ACC_SOCSO_EIS,
                  "PCB": M.ACC_PCB}
     for sp in db.query(M.StatutoryPaid).all():

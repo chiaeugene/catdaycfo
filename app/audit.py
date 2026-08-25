@@ -62,6 +62,7 @@ ACTION_PATTERNS = [
     (r"^POST /receivables/\d+/pdf$", "Re-issued customer invoice PDF"),
     (r"^POST /reconciliation/account/new$", "Added bank account"),
     (r"^POST /reconciliation/import$", "Imported bank statement"),
+    (r"^POST /reconciliation/post-line$", "Posted bank line to the ledger"),
     (r"^POST /reconciliation/match$", "Matched bank line"),
     (r"^POST /reconciliation/auto-match$", "Ran bank auto-match"),
     (r"^POST /reconciliation/unmatch/\d+$", "Unmatched bank line"),
