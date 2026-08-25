@@ -60,6 +60,18 @@
     </div>
   </aside>
   <main class="main">
+    {# Letterhead for printed/PDF'd reports only — hidden on screen. Without it a
+       printed Trial Balance carries no company identity at all, which is no use
+       to a bank, an auditor or the client. #}
+    <div class="printhead">
+      <img src="/static/brand/catday-logo-brown.png?v={{ asset_v }}" alt="cat day">
+      <div class="ph-co">
+        <b>{{ company_name }}</b>
+        {% if company_roc %}<span>Company No. {{ company_roc }}</span>{% endif %}
+        {% if company_address %}<span>{{ company_address }}</span>{% endif %}
+        <span class="ph-when">Printed {{ today.strftime('%d/%m/%Y') }}</span>
+      </div>
+    </div>
     {% if user.role == 'viewer' %}
     <div class="viewer-banner">{{ icon('eye', 13) }} View-only access — you can see everything, nothing here can be changed by you.</div>
     {% endif %}

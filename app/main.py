@@ -164,10 +164,17 @@ def render(request: Request, db: Session, template: str, page: str, **ctx):
             nav_groups.append((glabel, visible))
     pending_docs = db.query(M.Document).filter(M.Document.status == "Pending").count() \
         if user.role in ("admin", "manager", "viewer") else 0
+    # Company identity for the print letterhead — one lookup here rather than in
+    # every report route, so printed reports can never go out unbranded.
+    co = {s.key: s.value for s in db.query(M.Setting).filter(
+        M.Setting.key.in_(("COMPANY_NAME", "COMPANY_ADDRESS", "COMPANY_ROC"))).all()}
     return templates.TemplateResponse(request, template,
         {"user": user, "nav_groups": nav_groups, "page": page, "M": M, "today": date.today(),
          "pending_docs": pending_docs, "collapsed_groups": COLLAPSED_GROUPS,
-         "asset_v": ASSET_V, **ctx})
+         "asset_v": ASSET_V,
+         "company_name": co.get("COMPANY_NAME", "MEOW & ME PET SHOP SDN BHD"),
+         "company_address": co.get("COMPANY_ADDRESS", ""),
+         "company_roc": co.get("COMPANY_ROC", ""), **ctx})
 
 
 def month_str(d: date | None = None) -> str:

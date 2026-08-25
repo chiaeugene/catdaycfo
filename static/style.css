@@ -467,6 +467,19 @@ details.rowedit summary { cursor: pointer; font-size: 11.5px; color: var(--brand
 /* ═══ Print — P&L, Balance Sheet and vouchers get handed to accountants
    and investors on paper. Without this they print with the sidebar,
    dark chrome and hidden table rows. ═══ */
+/* ═══ Brand typefaces (cat day Brand Guidelines) ═══
+   Loaded for printed/PDF'd reports so they match the generated documents.
+   Screen typography is untouched — these are used only in @media print. */
+@font-face { font-family: "Gliker"; src: url("/static/fonts/Gliker-Bold.ttf") format("truetype");
+             font-weight: 700; font-display: swap; }
+@font-face { font-family: "Onest"; src: url("/static/fonts/Onest-Regular.ttf") format("truetype");
+             font-weight: 400; font-display: swap; }
+@font-face { font-family: "Onest"; src: url("/static/fonts/Onest-Bold.ttf") format("truetype");
+             font-weight: 700; font-display: swap; }
+
+/* Print-only letterhead; hidden on screen. */
+.printhead { display: none; }
+
 @media print {
   @page { margin: 14mm; }
   .sidebar, .mobilebar, .nav-scrim, .selectbar, .filters,
@@ -488,6 +501,48 @@ details.rowedit summary { cursor: pointer; font-size: 11.5px; color: var(--brand
   a[href^="/"]::after { content: ""; }     /* don't print internal URLs */
   details > summary { list-style: none; font-weight: 600; }   /* summary is the category label — keep it */
   .total-row td { background: #f0f0f0 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+  /* ── cat day brand identity on paper ──────────────────────────────────────
+     A printed report is an output document like any other, so it carries the
+     same logo, typefaces and palette as the generated invoices and vouchers.
+     print-color-adjust keeps the brand colours instead of letting the browser
+     drop them to save ink. */
+  body { font-family: "Onest", -apple-system, sans-serif; color: #2D1907; }
+  h1, h2, .pagehead h1 { font-family: "Gliker", Georgia, serif; color: #2D1907; }
+  .printhead {
+    display: flex; align-items: flex-start; gap: 14px;
+    padding-bottom: 8px; margin-bottom: 14px;
+    border-bottom: 1.5px solid #2D1907;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .printhead img { width: 42mm; height: auto; }
+  .printhead .ph-co { margin-left: auto; text-align: right; font-size: 8.5pt; line-height: 1.5; color: #2D1907; }
+  .printhead .ph-co b { display: block; font-size: 9.5pt; }
+  .printhead .ph-co span { display: block; color: #729094; }
+  .printhead .ph-when { margin-top: 2px; }
+  th {
+    background: #2D1907 !important; color: #ECDBB6 !important;
+    font-family: "Onest", sans-serif; font-weight: 700;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .total-row td, .section-row td {
+    background: #ECDBB6 !important; color: #2D1907 !important; font-weight: 700;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .panel, .card, .tablewrap { border-color: #ECDBB6 !important; }
+  .card .value { color: #2D1907; }
+  .badge {
+    border: 1px solid #ECDBB6; background: #FAF5EA !important; color: #2D1907 !important;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  /* Page footer line, mirroring the generated documents' tagline strip */
+  .main::after {
+    content: "a good day for every cat.";
+    display: block; margin-top: 16px; padding-top: 6px;
+    border-top: 1px solid #ECDBB6;
+    font-family: "Gliker", Georgia, serif; font-size: 8.5pt; color: #B14919;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
 }
 
 /* ═══ Mobile ═══ */
