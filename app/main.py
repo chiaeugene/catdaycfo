@@ -397,11 +397,16 @@ def documents(request: Request, view: str = "pending", db: Session = Depends(get
     # Account maps for the live posting preview on each verify card
     acct_names = {code: name for code, name, _typ in M.COA_SEED}
     flash = request.session.pop("flash", None)
+    # Open customer invoices, so a receipt can be applied to what it settles
+    open_invoices = [i for i in db.query(M.ARInvoice)
+                     .filter(M.ARInvoice.status == "Open")
+                     .order_by(M.ARInvoice.date.desc()).all() if i.outstanding > 0.005]
 
     return render(request, db, "documents.html", "documents",
                   pending=pending, processed=processed, view=view, payloads=payloads,
                   months=month_options(), dup_warnings=dup_warnings, flash=flash,
                   category_account=M.CATEGORY_ACCOUNT, acct_names=acct_names,
+                  open_invoices=open_invoices,
                   supplier_names=[s.name for s in db.query(M.Supplier)
                                   .filter(M.Supplier.active == True).order_by(M.Supplier.name).all()],  # noqa: E712
                   pc_accounts=db.query(M.PettyCashAccount)
@@ -539,6 +544,17 @@ async def verify_document(doc_id: int, request: Request, db: Session = Depends(g
                                     recorded_by=doc.sender))
                 total += val
                 streams_hit.append(stream)
+        if not streams_hit and amount:
+            # Section "Sales Report" chosen on a plain document card, which has
+            # no per-stream inputs. Previously total stayed 0 and overwrote the
+            # amount, so the figure the verifier typed was destroyed and nothing
+            # posted. Book it to a single stream instead — never silently drop it.
+            stream = category if category in M.STREAMS else "Other"
+            db.add(M.SalesEntry(date=rdate, stream=stream,
+                                description=description or f"Sale ({doc.doc_no})",
+                                amount=amount, method="Mixed", month=month_str(rdate),
+                                recorded_by=doc.sender))
+            total, streams_hit = amount, [stream]
         doc.amount = total
         made.append(f"Sales · RM {total:,.2f} across {', '.join(streams_hit) or 'no streams'}")
         made.append(f"Journal: Dr {acct(M.ACC_BANK)} / Cr revenue accounts per stream")
@@ -554,6 +570,59 @@ async def verify_document(doc_id: int, request: Request, db: Session = Depends(g
                                  recorded_by=doc.sender))
             made.append(f"Boarding log · in {cats_in} · out {cats_out} · in-house {cats_occ}")
             links.append(("Boarding", "/boarding"))
+
+    elif section == "Customer Receipt":
+        # Money RECEIVED from a customer — a bank-in slip, transfer screenshot or
+        # cash receipt. This is not revenue on its own: revenue is recognised when
+        # the invoice is raised, and the receipt just settles what the customer
+        # owes. Two postings, exactly as an accountant would expect:
+        #   invoice   Dr Trade Debtors / Cr Revenue
+        #   receipt   Dr Bank or Cash / Cr Trade Debtors
+        # Both can be done from this one card, so a part payment against a new
+        # sale doesn't need a separate trip to Receivables.
+        inv = None
+        inv_id = int(f.get("ar_invoice_id") or 0)
+        if inv_id:
+            inv = db.get(M.ARInvoice, inv_id)
+        elif str(f.get("ar_new_customer", "")).strip():
+            customer = str(f.get("ar_new_customer")).strip()
+            sale_total = float(f.get("ar_sale_total") or 0) or amount
+            due = parse_date(str(f.get("ar_due_date", ""))) if f.get("ar_due_date") else None
+            inv_no = telegram_bot.next_monthly_counter(db, "ARINV", "INV-", doc_date)
+            inv = M.ARInvoice(
+                inv_no=inv_no, customer=customer,
+                cust_address=str(f.get("ar_address", "")).strip(),
+                cust_contact=str(f.get("ar_contact", "")).strip(),
+                stream=str(f.get("ar_stream") or "Other"),
+                date=doc_date, due_date=due or (doc_date + timedelta(days=30)),
+                amount=sale_total, month=f"{doc_date:%b %Y}",
+                notes=description or "", created_by=user.display_name)
+            db.add(inv)
+            db.flush()
+            made.append(f"Invoice {inv_no} · {customer} · RM {sale_total:,.2f}")
+            made.append(f"Journal: Dr {acct(M.ACC_AR)} / Cr {inv.stream} revenue")
+
+        if inv and amount > 0:
+            method = "Cash" if str(f.get("ar_method")) == "Cash" else "Bank"
+            db.add(M.ARReceipt(invoice_id=inv.id, date=doc_date, amount=amount,
+                               method=method, notes=f"from {doc.doc_no}",
+                               recorded_by=user.display_name))
+            db.flush()
+            if inv.outstanding <= 0.005:
+                inv.status = "Paid"
+            cash_acct = M.ACC_CASH if method == "Cash" else M.ACC_BANK
+            made.append(f"Receipt RM {amount:,.2f} against {inv.inv_no}")
+            made.append(f"Journal: Dr {acct(cash_acct)} / Cr {acct(M.ACC_AR)}")
+            made.append(f"Balance still owing on {inv.inv_no}: RM {inv.outstanding:,.2f}")
+            try:
+                inv.pdf_path = _build_invoice_pdf(db, inv)
+            except Exception:
+                pass
+            links += [("Receivables", "/receivables"), ("AR Aging", "/reports/ar-aging"),
+                      ("Trial Balance", "/reports/trial-balance")]
+        else:
+            made.append("⚠️ No customer invoice selected — nothing posted. "
+                        "Re-verify choosing an invoice, or create one.")
 
     elif section == "Boarding Log":
         db.add(M.BoardingLog(

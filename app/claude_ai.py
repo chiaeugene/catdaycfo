@@ -19,7 +19,15 @@ PE_RULE = (
     'transport/courier, aircon servicing / pest control / cleaning services, bank charges.\n'
     '- "Staff Claim" = a receipt a staff member paid personally and wants reimbursed.\n'
     '- "Petty Cash" = small out-of-pocket cash with NO supplier invoice/business name.\n'
-    '- "Bank-in Slip" = bank deposit slip. "Payroll" = salary document. '
+    '- "Customer Receipt" = money coming IN from a CUSTOMER: a bank transfer slip, '
+    'DuitNow/online-banking screenshot or receipt where CATDAY / MEOW & ME is the '
+    'RECIPIENT ("To:" our company, our bank account credited). Look at the direction: '
+    'if we RECEIVED the money it is a Customer Receipt, not a Purchase or Expense, and '
+    'the supplier field should be the PAYER (the customer who sent it), never our own '
+    'company name. A deposit or part payment for a kitten, boarding or package is a '
+    'Customer Receipt.\n'
+    '- "Bank-in Slip" = depositing our OWN takings into our bank (cash/cheque banked in), '
+    'not money from a customer. "Payroll" = salary document. '
     '"Filing Only" = quotation/statement/anything not creating a transaction.'
 )
 

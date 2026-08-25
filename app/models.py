@@ -33,7 +33,7 @@ def group_for(category: str, section: str = "") -> str:
 DOC_TYPES = ["Invoice", "Receipt", "Quotation", "Statement", "Bank-in Slip", "Payslip", "Other"]
 # Section = where a verified submission is routed
 DOC_SECTIONS = ["Purchase", "Expense", "Staff Claim", "Petty Cash", "Sales Report",
-                "Boarding Log", "Bank-in Slip", "Payroll", "Filing Only"]
+                "Customer Receipt", "Boarding Log", "Bank-in Slip", "Payroll", "Filing Only"]
 # Intake type = what kind of thing the bot received
 INTAKE_TYPES = ["Document", "Sales Report", "Petty Cash", "Staff Claim", "Boarding Log"]
 DOC_STATUS = ["Pending", "Verified", "Rejected"]
