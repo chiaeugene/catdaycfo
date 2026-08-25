@@ -112,7 +112,29 @@
       <div><label>Cats checked out 退房</label><input type="number" step="1" min="0" name="cats_out" value="{{ cats.get('checked_out', 0) }}"></div>
       <div><label>In-house tonight 在店</label><input type="number" step="1" min="0" name="cats_occ" value="{{ cats.get('occupancy', 0) }}"></div>
       {% endif %}
+      {# Where the money landed. Revenue splits by service; the money splits by
+         how it was paid — both come from the report and must agree. Without this
+         the whole day defaults to Bank and cash never reaches Cash in Hand. #}
+      {% set pb = pl.get('payment_breakdown', {}) %}
+      {% set ns = namespace(cash=0, bank=0, wallet=0) %}
+      {% for mname, amt in pb.items() %}
+        {% set ml = mname|lower %}
+        {% if 'cash' in ml or '现金' in ml %}{% set ns.cash = ns.cash + amt %}
+        {% elif 'wallet' in ml or 'member' in ml or '钱包' in ml %}{% set ns.wallet = ns.wallet + amt %}
+        {% else %}{% set ns.bank = ns.bank + amt %}{% endif %}
+      {% endfor %}
+      <div><label>Received — Cash 现金 → {{ M.ACC_CASH }}</label>
+        <input type="number" step="0.01" name="pay_cash" value="{{ ns.cash or '' }}" placeholder="0"></div>
+      <div><label>Received — Bank / Card / QR 银行 → {{ M.ACC_BANK }}</label>
+        <input type="number" step="0.01" name="pay_bank" value="{{ ns.bank or '' }}" placeholder="0"></div>
+      <div><label>Received — Member wallet 会员钱包 → {{ M.ACC_DEFERRED }}</label>
+        <input type="number" step="0.01" name="pay_wallet" value="{{ ns.wallet or '' }}" placeholder="0"
+               title="Wallet spending draws down money already paid — not new cash"></div>
       <div class="full"><label>Note 备注</label><input name="description" value="{{ d.description }}"></div>
+    </div>
+    <div style="font-size:11.5px;color:var(--muted);margin:-4px 0 8px 2px">
+      The three “Received” boxes must add up to the day’s sales total — otherwise
+      everything posts to Bank and the cash goes missing from Cash in Hand.
     </div>
     {% if pl.get('sst') or pl.get('service_charge') or pl.get('payment_breakdown') %}
     <div class="panel" style="margin:10px 0;padding:10px 14px;background:var(--bg)">

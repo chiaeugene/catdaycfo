@@ -224,6 +224,10 @@ class SalesEntry(Base):
     # Number of services performed (grooming sessions, boarding nights…).
     # Feeds the stock-usage engine: sessions × recipe = consumables used.
     qty: Mapped[float] = mapped_column(Float, default=0.0)
+    # Which daily report this row came from. Lets the ledger post one balanced
+    # entry per day — revenue split by service, money split by payment method —
+    # instead of assuming every row landed in the bank.
+    document_id: Mapped[int] = mapped_column(ForeignKey("documents.id"), nullable=True)
 
 
 class StockItem(Base):

@@ -459,6 +459,7 @@ async def verify_document(doc_id: int, request: Request, db: Session = Depends(g
     if not doc or doc.status != "Pending":
         return RedirectResponse("/documents", status_code=302)
 
+    import json as _json
     f = await request.form()
     section = str(f.get("section", doc.section))
     supplier = str(f.get("supplier", "")).strip()
@@ -549,7 +550,7 @@ async def verify_document(doc_id: int, request: Request, db: Session = Depends(g
                                     description=f"Daily report ({doc.doc_no})",
                                     amount=val, method="Mixed", month=month_str(rdate),
                                     qty=float(f.get(f"qty_{stream}") or 0),
-                                    recorded_by=doc.sender))
+                                    document_id=doc.id, recorded_by=doc.sender))
                 total += val
                 streams_hit.append(stream)
         if not streams_hit and amount:
@@ -564,8 +565,29 @@ async def verify_document(doc_id: int, request: Request, db: Session = Depends(g
                                 recorded_by=doc.sender))
             total, streams_hit = amount, [stream]
         doc.amount = total
+        # Where the money actually landed. Confirmed by the verifier (pre-filled
+        # from the report) and stored on the document, because the ledger must
+        # debit cash, bank and wallet separately — not dump the day in the bank.
+        split = {k: float(f.get(f"pay_{k}") or 0) for k in ("cash", "bank", "wallet")}
+        if abs(sum(split.values()) - total) > 0.01:
+            split = {}          # doesn't account for the day — don't post a wrong split
+        payload_now = {}
+        try:
+            payload_now = _json.loads(doc.payload_json or "{}") or {}
+        except ValueError:
+            payload_now = {}
+        payload_now["money_split"] = split
+        doc.payload_json = _json.dumps(payload_now)
         made.append(f"Sales · RM {total:,.2f} across {', '.join(streams_hit) or 'no streams'}")
-        made.append(f"Journal: Dr {acct(M.ACC_BANK)} / Cr revenue accounts per stream")
+        if split:
+            made.append("Journal: Dr " + " / Dr ".join(
+                f"{acct(a)} RM {split[k]:,.2f}" for k, a in
+                (("cash", M.ACC_CASH), ("bank", M.ACC_BANK), ("wallet", M.ACC_DEFERRED))
+                if split.get(k)) + " / Cr revenue per stream")
+        else:
+            made.append(f"Journal: Dr {acct(M.ACC_BANK)} / Cr revenue accounts per stream")
+            made.append("⚠️ Payment split didn't match the day's total — all takings "
+                        "posted to Bank. Re-check the Cash / Bank / Wallet boxes.")
         links += [("Sales", "/sales"), ("P&L", f"/pnl?month={month_str(rdate)}")]
         # A daily report can also carry the cats in/out figures. Post them as a
         # boarding log in the same click rather than making someone re-key them.
@@ -645,7 +667,6 @@ async def verify_document(doc_id: int, request: Request, db: Session = Depends(g
     elif section == "Bank-in Slip":
         # A real accounting event, not just filing: the deposit moves cash into
         # the bank. Revenue was already recognised when the sale was recorded.
-        import json as _json
         credit = str(f.get("bankin_credit") or M.ACC_CASH)
         credit = M.COA_RECODE.get(credit, credit)
         if credit not in (M.ACC_CASH, M.ACC_TNG_CLEARING):

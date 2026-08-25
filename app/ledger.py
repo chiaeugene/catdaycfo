@@ -99,9 +99,61 @@ def _expected_entries(db: Session):
                       (M.ACC_BANK, 0, v.total, f"Bank payment {v.pv_no}")],
         }
 
+    # A day's takings split two independent ways: by service (the revenue) and
+    # by payment method (where the money actually went). Both come from the
+    # daily report, so when the verifier has confirmed the payment split the day
+    # posts as ONE balanced entry. Without this every row defaulted to the bank,
+    # so cash takings inflated the bank balance and Cash in Hand stayed empty.
+    import json as _json2
+    day_rows, loose = {}, []
     for s in db.query(M.SalesEntry).all():
         if not s.amount:
             continue
+        if s.document_id:
+            day_rows.setdefault(s.document_id, []).append(s)
+        else:
+            loose.append(s)
+
+    for doc_id, rows in list(day_rows.items()):
+        doc = db.get(M.Document, doc_id)
+        split = {}
+        if doc:
+            try:
+                split = (_json2.loads(doc.payload_json or "{}") or {}).get("money_split") or {}
+            except ValueError:
+                split = {}
+        revenue = round(sum(r.amount for r in rows), 2)
+        tax_total = round(sum(r.tax_amount or 0 for r in rows), 2)
+        received = round(sum(float(v or 0) for v in split.values()), 2)
+        # Only trust the split when it accounts for the whole day; otherwise fall
+        # back to per-row posting rather than silently booking a wrong figure.
+        if not split or abs(received - revenue) > 0.01:
+            loose.extend(rows)
+            day_rows.pop(doc_id)
+            continue
+        lines = []
+        for key, acct in (("cash", M.ACC_CASH), ("bank", M.ACC_BANK),
+                          ("wallet", M.ACC_DEFERRED)):
+            amt = round(float(split.get(key) or 0), 2)
+            if amt:
+                label = {"cash": "Cash takings", "bank": "Card / transfer / QR",
+                         "wallet": "Member wallet redeemed"}[key]
+                lines.append((acct, amt, 0, label))
+        for r in rows:
+            rtax = r.tax_amount or 0
+            lines.append((M.STREAM_ACCOUNT.get(r.stream, M.ACC_OTHER_INCOME),
+                          0, round(r.amount - rtax, 2), r.stream))
+        if tax_total:
+            lines.append((M.ACC_SST, 0, tax_total, "SST on takings"))
+        out[("Document", doc_id, "dailysales")] = {
+            "date": rows[0].date, "ref": doc.doc_no if doc else "SALES",
+            "month": rows[0].month,
+            "memo": f"Daily takings · {len(rows)} service line(s)"
+                    + (f" · {doc.doc_no}" if doc else ""),
+            "lines": lines,
+        }
+
+    for s in loose:
         cash_code = M.ACC_CASH if s.method == "Cash" else M.ACC_BANK
         tax = s.tax_amount or 0
         lines = [(cash_code, s.amount, 0, s.method)]
