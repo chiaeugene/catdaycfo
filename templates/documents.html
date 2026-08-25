@@ -22,6 +22,12 @@
 </div>
 {% endif %}
 
+{% if flash_reopen %}
+<div class="panel" style="background:var(--amber-bg);border-color:var(--amber)">
+  <div style="font-size:12.5px;color:var(--amber);font-weight:700">↩ {{ flash_reopen }}</div>
+</div>
+{% endif %}
+
 <div class="cards">
   <div class="card amber"><div class="label">Awaiting verification 待审核</div><div class="value">{{ pending|length }}</div></div>
   <div class="card"><div class="label">Processed 已处理</div><div class="value">{{ processed|length }}</div></div>
@@ -259,7 +265,7 @@
 <div class="tablewrap">
 <table>
   <tr><th>ID</th><th>Received</th><th>From</th><th>Section</th><th>Type</th><th>Supplier</th>
-      <th class="num">Amount</th><th>Month</th><th>Status</th><th>Verified by</th><th>Posted to</th></tr>
+      <th class="num">Amount</th><th>Month</th><th>Status</th><th>Verified by</th><th>Posted to</th><th></th></tr>
   {% for d in processed %}
   <tr>
     <td>{% if d.file_path %}<a href="/files/{{ d.file_path }}" target="_blank">{{ d.doc_no }}</a>{% else %}{{ d.doc_no }}{% endif %}</td>
@@ -273,6 +279,17 @@
     <td><span class="badge {{ d.status|lower }}">{{ d.status }}</span></td>
     <td>{{ d.verified_by }}</td>
     <td>{% if d.payment %}{{ d.payment.pay_no }}{% elif d.status == 'Rejected' %}{{ d.reject_reason[:30] }}{% else %}—{% endif %}</td>
+    <td>
+      {% if user.role == 'admin' and d.status == 'Verified' and not d.payment %}
+      {# Verified under the wrong section and posted nothing? Send it back rather
+         than leaving it stranded — re-uploading would duplicate the document. #}
+      <form method="post" action="/documents/{{ d.id }}/reopen" class="inline"
+            onsubmit="return confirm('Reopen {{ d.doc_no }} for re-verification?')">
+        <button class="small secondary" type="submit"
+                title="Send back to the queue to verify under a different section">↩ Reopen</button>
+      </form>
+      {% endif %}
+    </td>
   </tr>
   {% else %}
   <tr><td colspan="11" class="empty">Nothing processed yet.</td></tr>

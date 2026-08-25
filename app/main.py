@@ -405,6 +405,7 @@ def documents(request: Request, view: str = "pending", db: Session = Depends(get
     return render(request, db, "documents.html", "documents",
                   pending=pending, processed=processed, view=view, payloads=payloads,
                   months=month_options(), dup_warnings=dup_warnings, flash=flash,
+                  flash_reopen=request.session.pop("flash_reopen", None),
                   category_account=M.CATEGORY_ACCOUNT, acct_names=acct_names,
                   open_invoices=open_invoices,
                   supplier_names=[s.name for s in db.query(M.Supplier)
@@ -670,6 +671,36 @@ async def verify_document(doc_id: int, request: Request, db: Session = Depends(g
         "made": made, "links": links,
     }
     return RedirectResponse("/documents", status_code=302)
+
+
+@app.post("/documents/{doc_id}/reopen")
+def reopen_document(doc_id: int, request: Request, db: Session = Depends(get_db)):
+    """Send a verified document back to Pending so it can be posted correctly.
+
+    Verification used to be one-way, so a document filed under the wrong
+    section was stuck forever — exactly what happened to a customer transfer
+    that was verified as a Sales Report and posted nothing. Reopening is only
+    allowed while nothing downstream depends on it: if verifying created a
+    payment record, that has to be voided first, otherwise reopening would
+    orphan it and the books would disagree with the document.
+    """
+    user = current_user(request, db)
+    if not user or user.role != "admin":
+        return RedirectResponse("/", status_code=302)
+    doc = db.get(M.Document, doc_id)
+    if not doc or doc.status != "Verified":
+        return RedirectResponse("/documents", status_code=303)
+    if doc.payment_id:
+        request.session["flash_reopen"] = (
+            f"{doc.doc_no} created payment record #{doc.payment_id}. Void that payment "
+            "first, then reopen — otherwise the payment would be left orphaned.")
+        return RedirectResponse("/documents", status_code=303)
+    doc.status, doc.verified_by, doc.verified_at = "Pending", "", None
+    db.commit()
+    request.session["flash_reopen"] = (
+        f"{doc.doc_no} reopened — it is back in the queue below, ready to verify "
+        "under the correct section.")
+    return RedirectResponse("/documents", status_code=303)
 
 
 @app.post("/documents/{doc_id}/reject")

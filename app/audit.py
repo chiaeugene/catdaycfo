@@ -30,6 +30,7 @@ ACTION_PATTERNS = [
     (r"^POST /documents/upload$", "Uploaded document"),
     (r"^POST /documents/\d+/verify$", "Verified document"),
     (r"^POST /documents/\d+/reject$", "Rejected document"),
+    (r"^POST /documents/\d+/reopen$", "Reopened document for re-verification"),
     (r"^POST /payments/new$", "Added payment"),
     (r"^POST /payments/\d+/update$", "Updated payment"),
     (r"^POST /suppliers/new$", "Added supplier"),
