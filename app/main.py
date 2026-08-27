@@ -451,6 +451,8 @@ def documents(request: Request, view: str = "pending", db: Session = Depends(get
                      .order_by(M.ARInvoice.date.desc()).all() if i.outstanding > 0.005]
 
     return render(request, db, "documents.html", "documents",
+                  flash_dup=request.session.pop("flash_dup", None),
+                  flash_appr=request.session.pop("flash_appr", None),
                   pending=pending, processed=processed, view=view, payloads=payloads,
                   months=month_options(), dup_warnings=dup_warnings, flash=flash,
                   flash_reopen=request.session.pop("flash_reopen", None),
@@ -555,6 +557,11 @@ async def verify_document(doc_id: int, request: Request, db: Session = Depends(g
         return RedirectResponse("/documents", status_code=302)
 
     if section in ("Purchase", "Expense", "Staff Claim"):
+        blocking = [d for d in find_duplicate_payments(db, supplier, invoice_no, amount)
+                    if d[2]]
+        if blocking and not str(f.get("allow_duplicate") or ""):
+            request.session["flash_dup"] = _dup_block_message(blocking)
+            return RedirectResponse("/documents", status_code=303)
         pay_no = telegram_bot.next_counter(db, "PAY", "PAY-")
         if section == "Staff Claim":
             grp, category = "OPEX", "Staff Claim"
@@ -853,6 +860,8 @@ def payments(request: Request, status: str = "", error: str = "", db: Session = 
     supplier_names = [s.name for s in db.query(M.Supplier)
                       .filter(M.Supplier.active == True).order_by(M.Supplier.name).all()]  # noqa: E712
     return render(request, db, "payments.html", "payments",
+                  flash_dup=request.session.pop("flash_dup", None),
+                  flash_appr=request.session.pop("flash_appr", None),
                   flash_del=request.session.pop("flash_del", None),
                   payments=q.limit(300).all(), flt=status, open_total=open_total,
                   supplier_names=supplier_names, error=ERRORS.get(error, ""))
@@ -862,8 +871,13 @@ def payments(request: Request, status: str = "", error: str = "", db: Session = 
 def new_payment(request: Request, supplier: str = Form(""), description: str = Form(...),
                 category: str = Form(""), grp: str = Form(""), amount: float = Form(...),
                 invoice_no: str = Form(""), tax_type: str = Form("None"),
-                pdate: str = Form(""), db: Session = Depends(get_db)):
+                pdate: str = Form(""), allow_duplicate: str = Form(""),
+                db: Session = Depends(get_db)):
     d = parse_date(pdate)
+    blocking = [x for x in find_duplicate_payments(db, supplier, invoice_no, amount) if x[2]]
+    if blocking and not allow_duplicate:
+        request.session["flash_dup"] = _dup_block_message(blocking)
+        return RedirectResponse("/payments", status_code=303)
     pay_no = telegram_bot.next_counter(db, "PAY", "PAY-")
     grp = grp or M.group_for(category)   # derive rather than ask twice
     db.add(M.Payment(pay_no=pay_no, date=d, supplier=supplier, description=description,
@@ -1001,6 +1015,8 @@ def vouchers(request: Request, q: str = "", status: str = "", db: Session = Depe
     pvs = query.limit(300).all()
     banks = supplier_map(db, [v.payee for v in pvs])
     return render(request, db, "vouchers.html", "vouchers",
+                  flash_dup=request.session.pop("flash_dup", None),
+                  flash_appr=request.session.pop("flash_appr", None),
                   flash_del=request.session.pop("flash_del", None), vouchers=pvs, banks=banks,
                   q=q, flt=status, pv_status=M.PV_STATUS)
 
@@ -1059,9 +1075,26 @@ def voucher_action(vid: int, request: Request, action: str = Form(...),
         return RedirectResponse("/", status_code=302)
     v = db.get(M.Voucher, vid)
     if v:
+        limit = _approval_limit(db)
+        needs_approval = limit >= 0 and v.total >= limit
         if action == "approve" and v.status == "Draft":
+            # Segregation of duties: whoever raised the voucher can't also be the
+            # one who approves it once real money is involved.
+            if needs_approval and (v.created_by or "").strip() == user.display_name.strip():
+                request.session["flash_appr"] = (
+                    f"{v.pv_no} is RM {v.total:,.2f}, at or above the RM {limit:,.2f} "
+                    "approval limit — it needs a second person to approve it, not the "
+                    "person who created it.")
+                return RedirectResponse("/vouchers", status_code=303)
             v.status, v.approved_by = "Approved", user.display_name
         elif action == "paid" and v.status in ("Draft", "Approved"):
+            # Paying straight from Draft used to be allowed at any amount, so
+            # approval could be skipped entirely.
+            if needs_approval and v.status != "Approved":
+                request.session["flash_appr"] = (
+                    f"{v.pv_no} is RM {v.total:,.2f}, at or above the RM {limit:,.2f} "
+                    "approval limit — it must be approved before it can be marked paid.")
+                return RedirectResponse("/vouchers", status_code=303)
             v.status = "Paid"
             for p in v.payments:
                 p.status = "Paid"
@@ -1072,6 +1105,62 @@ def voucher_action(vid: int, request: Request, action: str = Form(...),
         db.commit()
     return RedirectResponse("/vouchers", status_code=302)
 
+
+
+
+
+def _approval_limit(db) -> float:
+    """RM at or above which a voucher needs a second person's approval before it
+    can be paid. Blank or negative disables the rule; 0 means always require."""
+    st = db.get(M.Setting, "VOUCHER_APPROVAL_LIMIT")
+    try:
+        return float((st.value if st else "").strip())
+    except (ValueError, AttributeError):
+        return 1000.0
+
+
+# ─────────────────── DUPLICATE-PAYMENT PROTECTION ───────────────────
+# The verify screen already warned about duplicate DOCUMENTS, but only while
+# both were still pending. Once one was verified the guard went quiet — so the
+# same bill could be captured twice (a proforma then its tax invoice, or the
+# same invoice resent) and paid twice. This checks the PAYMENTS themselves,
+# which is what money actually goes out against.
+def find_duplicate_payments(db, supplier: str, invoice_no: str, amount: float,
+                            exclude_id: int | None = None):
+    """[(payment, reason, blocking)] for payments that look like this one.
+
+    Same supplier + same invoice number is treated as blocking: an invoice
+    number identifies one bill, so a second payment against it is a double
+    payment unless someone deliberately says otherwise. Same supplier + same
+    amount close in time is only a warning — legitimately repeated amounts
+    (a fixed monthly fee) are common.
+    """
+    sup = (supplier or "").strip().lower()
+    inv = (invoice_no or "").strip().lower()
+    if not sup:
+        return []
+    out = []
+    q = db.query(M.Payment).filter(M.Payment.status != "Void")
+    if exclude_id:
+        q = q.filter(M.Payment.id != exclude_id)
+    for p in q.all():
+        if (p.supplier or "").strip().lower() != sup:
+            continue
+        pinv = (p.invoice_no or "").strip().lower()
+        if inv and pinv and pinv == inv:
+            out.append((p, f"same supplier and invoice no. {p.invoice_no}", True))
+        elif amount and abs((p.amount or 0) - amount) < 0.01:
+            gap = abs((p.date - date.today()).days) if p.date else 999
+            if gap <= 45:
+                out.append((p, f"same supplier and amount RM {p.amount:,.2f} "
+                               f"on {p.date:%d/%m/%Y}", False))
+    return out
+
+
+def _dup_block_message(dups) -> str:
+    lines = "; ".join(f"{p.pay_no} ({why})" for p, why, _ in dups)
+    return ("Looks like this is already recorded — " + lines +
+            ". Tick 'record anyway' on the form if it really is a separate bill.")
 
 
 # ─────────────────────────── DELETES ───────────────────────────
@@ -3328,6 +3417,7 @@ async def settings_save(request: Request, db: Session = Depends(get_db)):
     form = await request.form()
     for key in ("COMPANY_NAME", "COMPANY_ADDRESS", "TELEGRAM_WHITELIST", "PETTY_CASH_FLOAT",
                 "SST_REGISTERED", "SST_NUMBER", "COMPANY_ROC", "COMPANY_BANK",
+                "VOUCHER_APPROVAL_LIMIT",
                 "COMPANY_BANK_ACCOUNT", "COMPANY_TIN", "COMPANY_MSIC",
                 "PREFIX_DOC", "PREFIX_PAY", "PREFIX_PV", "PREFIX_PL",
                 "CF_WEEKS", "CF_WEEKLY_SALES", "CF_MONTHLY_OPEX"):

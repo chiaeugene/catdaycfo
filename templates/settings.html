@@ -90,6 +90,15 @@
       </select>
       <label>SST number SST编号</label>
       <input name="SST_NUMBER" value="{{ settings.get('SST_NUMBER','') }}" style="width:100%;margin-bottom:14px">
+
+      <label>Voucher approval limit RM 凭单审批限额</label>
+      <input name="VOUCHER_APPROVAL_LIMIT" value="{{ settings.get('VOUCHER_APPROVAL_LIMIT','1000') }}" style="width:100%">
+      <div style="font-size:11px;color:var(--muted);margin:4px 0 14px">
+        Vouchers at or above this amount must be approved before they can be paid,
+        and the approver must be someone other than the person who created it.
+        Set <b>0</b> to require approval on every voucher, or <b>-1</b> to switch the rule off.
+      </div>
+
       <button type="submit">Save 保存</button>
     </form>
   </div>

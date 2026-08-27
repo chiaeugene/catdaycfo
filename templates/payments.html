@@ -1,6 +1,16 @@
 {% extends "base.html" %}
 {% from "icons.html" import icon %}
 {% block content %}
+{% if flash_dup %}
+<div class="panel" style="background:var(--red-bg);border-color:rgba(208,54,42,.35)">
+  <div style="font-size:12.5px;color:var(--red);font-weight:700">⛔ {{ flash_dup }}</div>
+</div>
+{% endif %}
+{% if flash_appr %}
+<div class="panel" style="background:var(--amber-bg);border-color:var(--amber)">
+  <div style="font-size:12.5px;color:var(--amber);font-weight:700">🔒 {{ flash_appr }}</div>
+</div>
+{% endif %}
 {% if flash_del %}
 <div class="panel" style="background:var(--amber-bg);border-color:var(--amber)">
   <div style="font-size:12.5px;color:var(--amber);font-weight:700">{{ flash_del }}</div>
@@ -39,6 +49,10 @@
       <div><label>Amount RM 金额</label><input type="number" step="0.01" name="amount" required></div>
       <div class="f-btn"><button type="submit">＋ Add</button></div>
     </div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--muted);text-transform:none;letter-spacing:0">
+      <input type="checkbox" name="allow_duplicate" value="1" style="width:auto;height:auto">
+      Record anyway if this looks like a duplicate — a separate bill from the same supplier
+    </label>
   </form>
 </div>
 
