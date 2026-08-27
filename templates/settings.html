@@ -119,6 +119,22 @@
     one and hide the other.<br>
     <span style="color:var(--muted)">删除最新单据会自动退回编号；此处只用于修补旧的缺号。</span>
   </div>
+  <form method="post" action="/settings/save">
+    <input type="hidden" name="next" value="/settings">
+    <label>Gap handling 缺号处理</label>
+    <select name="NUMBERING_FILL_GAPS" onchange="this.form.submit()">
+      <option value="no" {% if settings.get('NUMBERING_FILL_GAPS','no') != 'yes' %}selected{% endif %}>
+        Keep gaps — carry on from the highest number (standard practice)</option>
+      <option value="yes" {% if settings.get('NUMBERING_FILL_GAPS','no') == 'yes' %}selected{% endif %}>
+        Fill gaps — always issue the lowest free number 自动补缺号</option>
+    </select>
+    <div style="font-size:11px;color:var(--muted);margin:4px 0 14px">
+      With <b>Fill gaps</b> on, a number freed by a deleted document is handed to the
+      next document instead of being skipped, so the series stays unbroken. A number
+      already held by a document is never reused either way.
+    </div>
+  </form>
+
   <form method="post" action="/settings/counters">
     <div class="formrow" style="grid-template-columns:repeat(3,1fr)">
       <div><label>Next Document DOC 文件</label>

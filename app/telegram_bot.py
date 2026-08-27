@@ -107,6 +107,37 @@ def tg_get_file(file_id: str) -> tuple[bytes, str]:
     return data, path
 
 
+def used_numbers(db: Session, name: str, month: str = "") -> set:
+    """Numbers a series has already issued, read from the documents themselves
+    rather than the counter — the counter says what comes next, the documents
+    say what is actually taken."""
+    from .models import Document, Payment, Voucher, Listing, ARInvoice
+    field = {"DOC": (Document, "doc_no"), "PAY": (Payment, "pay_no"),
+             "PV": (Voucher, "pv_no"), "PL": (Listing, "pl_no"),
+             "ARINV": (ARInvoice, "inv_no")}.get(name)
+    if not field:
+        return set()
+    model, attr = field
+    out = set()
+    for row in db.query(model).all():
+        ref = getattr(row, attr, "") or ""
+        parts = ref.split("-")
+        if month:                       # monthly series: PL-2608-003
+            if len(parts) != 3 or parts[1] != month:
+                continue
+        tail = parts[-1]
+        if tail.isdigit():
+            out.add(int(tail))
+    return out
+
+
+def _fill_gaps(db: Session) -> bool:
+    """Whether numbering should reuse gaps left by deleted documents."""
+    from .models import Setting
+    st = db.get(Setting, "NUMBERING_FILL_GAPS")
+    return bool(st and st.value.strip().lower() in ("yes", "1", "true", "on"))
+
+
 def next_counter(db: Session, name: str, prefix: str) -> str:
     from .models import Counter, Setting
     # Prefix override from Settings, e.g. PREFIX_PV = "CD-PV-"
@@ -117,8 +148,14 @@ def next_counter(db: Session, name: str, prefix: str) -> str:
     if not c:
         c = Counter(name=name, value=1)
         db.add(c)
-    n = c.value
-    c.value = n + 1
+    used = used_numbers(db, name)
+    # Start from 1 when filling gaps, otherwise from wherever the counter is.
+    n = 1 if _fill_gaps(db) else c.value
+    # Never hand out a number a document already holds — two documents sharing
+    # one reference is the one outcome worse than a gap.
+    while n in used:
+        n += 1
+    c.value = max(c.value, n + 1)
     db.flush()
     return f"{prefix}{n:04d}"
 
@@ -137,8 +174,11 @@ def next_monthly_counter(db: Session, name: str, prefix: str, d=None) -> str:
     if not c:
         c = Counter(name=f"{name}{yymm}", value=1)
         db.add(c)
-    n = c.value
-    c.value = n + 1
+    used = used_numbers(db, name, month=yymm)
+    n = 1 if _fill_gaps(db) else c.value
+    while n in used:
+        n += 1
+    c.value = max(c.value, n + 1)
     db.flush()
     return f"{prefix}{yymm}-{n:03d}"
 

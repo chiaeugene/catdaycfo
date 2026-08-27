@@ -3665,7 +3665,7 @@ async def settings_save(request: Request, db: Session = Depends(get_db)):
     form = await request.form()
     for key in ("COMPANY_NAME", "COMPANY_ADDRESS", "TELEGRAM_WHITELIST", "PETTY_CASH_FLOAT",
                 "SST_REGISTERED", "SST_NUMBER", "COMPANY_ROC", "COMPANY_BANK",
-                "VOUCHER_APPROVAL_LIMIT",
+                "VOUCHER_APPROVAL_LIMIT", "NUMBERING_FILL_GAPS",
                 "COMPANY_BANK_ACCOUNT", "COMPANY_TIN", "COMPANY_MSIC",
                 "PREFIX_DOC", "PREFIX_PAY", "PREFIX_PV", "PREFIX_PL",
                 "CF_WEEKS", "CF_WEEKLY_SALES", "CF_MONTHLY_OPEX"):
