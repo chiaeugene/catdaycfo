@@ -948,6 +948,133 @@ def update_payment(pid: int, request: Request, supplier: str = Form(""),
 
 
 
+
+# ─────────────────────────── UNDO ───────────────────────────
+# Everything a person can post, a person can take back. Marking a voucher paid
+# by mistake used to be permanent — it could not be voided, deleted or
+# reversed — and the same was true of sales, petty cash, receipts and stock.
+# Bookkeeping is correction work: a system that only moves forwards forces
+# people to leave known-wrong figures in the books. Every reversal here is
+# admin-only and recorded in the audit log by the middleware.
+@app.post("/vouchers/{vid}/unpay")
+def voucher_unpay(vid: int, request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user or user.role != "admin":
+        return RedirectResponse("/", status_code=302)
+    v = db.get(M.Voucher, vid)
+    if v and v.status == "Paid":
+        v.status = "Approved"
+        for p in v.payments:
+            p.status = "On Voucher"
+        db.commit()
+        ledger.sync_ledger(db)   # removes the Dr AP / Cr Bank posting
+        request.session["flash_del"] = (
+            f"{v.pv_no} is no longer marked paid — back to Approved, and its "
+            "bank posting has been removed. Mark it paid again once the real "
+            "payment is confirmed.")
+    return RedirectResponse("/vouchers", status_code=303)
+
+
+@app.post("/listings/{lid}/revert")
+def listing_revert(lid: int, request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user or user.role != "admin":
+        return RedirectResponse("/", status_code=302)
+    l = db.get(M.Listing, lid)
+    if l and l.status == "Processed":
+        l.status = "Draft"
+        db.commit()
+        request.session["flash_del"] = (
+            f"{l.pl_no} set back to Draft — it can be edited or deleted again.")
+    return RedirectResponse("/listings", status_code=303)
+
+
+@app.post("/sales/{sid}/delete")
+def sales_delete(sid: int, request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user or user.role != "admin":
+        return RedirectResponse("/", status_code=302)
+    e = db.get(M.SalesEntry, sid)
+    if e:
+        what = f"{e.stream} RM {e.amount:,.2f} on {e.date:%d/%m/%Y}"
+        db.delete(e)
+        db.commit()
+        ledger.sync_ledger(db)
+        request.session["flash_del"] = f"Sales entry removed: {what} — its journal entry too."
+    return RedirectResponse("/sales", status_code=303)
+
+
+@app.post("/pettycash/{eid}/delete")
+def pettycash_delete(eid: int, request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user or user.role != "admin":
+        return RedirectResponse("/", status_code=302)
+    e = db.get(M.PettyCashEntry, eid)
+    if e:
+        what = f"RM {(e.amount_out or e.amount_in):,.2f} on {e.date:%d/%m/%Y}"
+        db.delete(e)
+        db.commit()
+        ledger.sync_ledger(db)
+        request.session["flash_del"] = f"Petty cash entry removed: {what}."
+    return RedirectResponse("/pettycash", status_code=303)
+
+
+@app.post("/boarding/{bid}/delete")
+def boarding_delete(bid: int, request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user or user.role != "admin":
+        return RedirectResponse("/", status_code=302)
+    b = db.get(M.BoardingLog, bid)
+    if b:
+        d = b.date
+        db.delete(b)
+        db.commit()
+        request.session["flash_del"] = f"Boarding log for {d:%d/%m/%Y} removed."
+    return RedirectResponse("/boarding", status_code=303)
+
+
+@app.post("/receivables/receipt/{rid}/delete")
+def ar_receipt_delete(rid: int, request: Request, db: Session = Depends(get_db)):
+    """Undo a customer receipt recorded in error — the invoice goes back to
+    Open with the money owing again."""
+    user = current_user(request, db)
+    if not user or user.role != "admin":
+        return RedirectResponse("/", status_code=302)
+    r = db.get(M.ARReceipt, rid)
+    if r:
+        inv = db.get(M.ARInvoice, r.invoice_id)
+        amt = r.amount
+        db.delete(r)
+        db.flush()
+        if inv:
+            if inv.outstanding > 0.005 and inv.status == "Paid":
+                inv.status = "Open"
+            try:
+                inv.pdf_path = _build_invoice_pdf(db, inv)
+            except Exception:
+                pass
+        db.commit()
+        ledger.sync_ledger(db)
+        request.session["flash_ar"] = (
+            f"Receipt of RM {amt:,.2f} removed"
+            + (f" — {inv.inv_no} now shows RM {inv.outstanding:,.2f} outstanding." if inv else "."))
+    return RedirectResponse("/receivables", status_code=303)
+
+
+@app.post("/stock/move/{mid}/delete")
+def stock_move_delete(mid: int, request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user or user.role != "admin":
+        return RedirectResponse("/", status_code=302)
+    m = db.get(M.StockMovement, mid)
+    if m:
+        what = f"{m.kind} {m.qty:+g} of {m.item.name}"
+        db.delete(m)
+        db.commit()
+        request.session["flash_stock"] = f"Removed: {what} — stock on hand recalculated."
+    return RedirectResponse("/stock", status_code=303)
+
+
 # ─────────────────── BANK DETAIL SANITY CHECKS ───────────────────
 # Paying to a wrong account number is the most expensive mistake this system
 # can help cause, and it is invisible on screen — an account field holding a
@@ -1149,6 +1276,9 @@ def voucher_action(vid: int, request: Request, action: str = Form(...),
             for p in v.payments:
                 p.status, p.voucher_id = "Categorized" if p.category else "Unsorted", None
         db.commit()
+        # Derive immediately so the books match the screen the moment the status
+        # changes, rather than whenever an accounting page next happens to sync.
+        ledger.sync_ledger(db)
     return RedirectResponse("/vouchers", status_code=302)
 
 

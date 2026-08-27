@@ -70,6 +70,10 @@
         {% if user.role == 'admin' and v.status != 'Paid' and not v.listing_id %}
         <button form="vdel-{{ v.id }}" class="small danger" type="submit">Delete</button>
         {% endif %}
+        {% if user.role == 'admin' and v.status == 'Paid' %}
+        <button form="vunpay-{{ v.id }}" class="small secondary" type="submit"
+                title="Marked paid by mistake? Put it back to Approved and remove the bank posting">↩ Undo paid</button>
+        {% endif %}
       </div>
     </td>
   </tr>
@@ -136,6 +140,10 @@
 {% if user.role == 'admin' and v.status != 'Paid' and not v.listing_id %}
 <form id="vdel-{{ v.id }}" method="post" action="/vouchers/{{ v.id }}/delete"
       onsubmit="return confirm('Delete {{ v.pv_no }}? Its payments return to the queue and can be re-vouchered.')"></form>
+{% endif %}
+{% if user.role == 'admin' and v.status == 'Paid' %}
+<form id="vunpay-{{ v.id }}" method="post" action="/vouchers/{{ v.id }}/unpay"
+      onsubmit="return confirm('Undo the payment on {{ v.pv_no }}? It goes back to Approved and its bank posting is removed.')"></form>
 {% endif %}
 {% endfor %}
 

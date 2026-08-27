@@ -43,6 +43,12 @@
         {% if l.status in ['Submitted','Processed'] %}
         <button class="small secondary" onclick="document.getElementById('dlg-bank-{{ l.id }}').showModal()">{{ icon('landmark', 12) }} Bank file</button>
         {% endif %}
+        {% if user.role == 'admin' and l.status == 'Processed' %}
+        <form method="post" action="/listings/{{ l.id }}/revert" class="inline"
+              onsubmit="return confirm('Put {{ l.pl_no }} back to Draft?')">
+          <button class="small secondary" type="submit" title="Marked processed by mistake?">↩ Undo processed</button>
+        </form>
+        {% endif %}
         {% if user.role == 'admin' and l.status != 'Processed' %}
         <form method="post" action="/listings/{{ l.id }}/delete" class="inline"
               onsubmit="return confirm('Delete {{ l.pl_no }}? Its vouchers become unlisted and can be re-listed.')">
