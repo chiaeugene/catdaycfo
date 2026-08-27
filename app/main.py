@@ -947,12 +947,48 @@ def update_payment(pid: int, request: Request, supplier: str = Form(""),
     return RedirectResponse("/payments", status_code=302)
 
 
+
+# ─────────────────── BANK DETAIL SANITY CHECKS ───────────────────
+# Paying to a wrong account number is the most expensive mistake this system
+# can help cause, and it is invisible on screen — an account field holding a
+# company name, or two suppliers sharing one account, both look fine until the
+# money leaves. These are surfaced, never auto-corrected: which account is
+# right is a question for a human with the invoice in hand.
+def bank_detail_issues(db, sup) -> list[str]:
+    import re as _re
+    issues = []
+    acct = (sup.account_no or "").strip()
+    if not acct:
+        return issues
+    digits = _re.sub(r"\D", "", acct)
+    if _re.search(r"[A-Za-z]{3,}", acct):
+        issues.append("the account number field contains words, not an account number")
+    elif len(digits) < 6:
+        issues.append(f"“{acct}” is too short to be a bank account number")
+    if digits:
+        for other in db.query(M.Supplier).filter(M.Supplier.id != sup.id).all():
+            if _re.sub(r"\D", "", other.account_no or "") == digits and digits:
+                issues.append(f"same account number as {other.name} — one of them is wrong")
+                break
+    return issues
+
+
+def suppliers_with_bank_issues(db) -> dict:
+    out = {}
+    for sup in db.query(M.Supplier).all():
+        found = bank_detail_issues(db, sup)
+        if found:
+            out[sup.id] = found
+    return out
+
+
 # ─────────────────────────── SUPPLIERS ───────────────────────────
 @app.get("/suppliers", response_class=HTMLResponse)
 def suppliers(request: Request, db: Session = Depends(get_db)):
     sups = db.query(M.Supplier).order_by(M.Supplier.name).all()
     return render(request, db, "suppliers.html", "suppliers",
-                  flash_del=request.session.pop("flash_del", None), suppliers=sups)
+                  flash_del=request.session.pop("flash_del", None), suppliers=sups,
+                  bank_issues=suppliers_with_bank_issues(db))
 
 
 @app.get("/suppliers/{sid}", response_class=HTMLResponse)
@@ -1027,6 +1063,7 @@ def vouchers(request: Request, q: str = "", status: str = "", db: Session = Depe
                   flash_dup=request.session.pop("flash_dup", None),
                   flash_appr=request.session.pop("flash_appr", None),
                   flash_del=request.session.pop("flash_del", None), vouchers=pvs, banks=banks,
+                  bank_issues=suppliers_with_bank_issues(db),
                   q=q, flt=status, pv_status=M.PV_STATUS)
 
 

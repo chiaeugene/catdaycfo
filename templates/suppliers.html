@@ -25,7 +25,13 @@
         <th>Contact</th><th>Status</th><th></th></tr>
     {% for s in suppliers %}
     <tr {% if not s.active %}style="opacity:.45"{% endif %}>
-      <td><a href="/suppliers/{{ s.id }}"><b>{{ s.name }}</b></a></td>
+      <td><a href="/suppliers/{{ s.id }}"><b>{{ s.name }}</b></a>
+        {% if bank_issues.get(s.id) %}
+        <div style="color:var(--red);font-size:11px;font-weight:700;margin-top:2px">
+          ⚠️ {% for msg in bank_issues[s.id] %}{{ msg }}{% if not loop.last %}; {% endif %}{% endfor %}
+        </div>
+        {% endif %}
+      </td>
       <td><span class="badge draft">{{ s.sup_type }}</span></td>
       <td>{{ s.bank_name or '—' }}</td>
       <td class="mono">{{ s.account_no or '—' }}</td>

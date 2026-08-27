@@ -42,6 +42,13 @@
     <td class="checkbox-cell">
       {% if not v.listing_id and v.status in ["Draft","Approved"] %}
       <input type="checkbox" name="pv_ids" value="{{ v.id }}" data-amt="{{ v.total }}" onchange="updateBar()">
+      {% elif v.listing_id %}
+      {# Silently omitting the box read as a bug. Say why it can't be selected. #}
+      <span title="Already on a payment listing — a voucher can only be listed once, otherwise it would be paid twice"
+            style="color:var(--muted);font-size:13px">🔒</span>
+      {% else %}
+      <span title="{{ v.status }} vouchers can't be added to a payment listing"
+            style="color:var(--muted);font-size:13px">—</span>
       {% endif %}
     </td>
     <td class="mono"><a href="/vouchers/{{ v.id }}"><b>{{ v.pv_no }}</b></a></td>
@@ -74,6 +81,13 @@
         {{ icon('landmark', 12) }}
         {% if sup and (sup.bank_name or sup.account_no) %}
         {{ sup.bank_name }} · <span class="mono" style="letter-spacing:.5px">{{ sup.account_no }}</span> · {{ sup.account_holder or v.payee }}
+        {% if bank_issues.get(sup.id) %}
+        <div style="color:var(--red);font-weight:700;font-size:11.5px;margin-top:3px">
+          ⚠️ Check before paying:
+          {% for msg in bank_issues[sup.id] %}{{ msg }}{% if not loop.last %}; {% endif %}{% endfor %}
+          — <a href="/suppliers">fix in Suppliers</a>
+        </div>
+        {% endif %}
         {% else %}
         No bank details on file — <a href="/suppliers">add {{ v.payee }} to Suppliers</a>
         {% endif %}
