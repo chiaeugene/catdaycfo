@@ -507,7 +507,7 @@ async def verify_document(doc_id: int, request: Request, db: Session = Depends(g
 
     import json as _json
     f = await request.form()
-    section = str(f.get("section", doc.section))
+    section = str(f.get("section", doc.section)).strip()
     supplier = str(f.get("supplier", "")).strip()
     amount = float(f.get("amount") or 0)
     month = str(f.get("month", "")).strip()
@@ -540,19 +540,28 @@ async def verify_document(doc_id: int, request: Request, db: Session = Depends(g
             made.append(f"Linked to {prior.doc_no} ({prior.doc_type}) — same order, "
                         "kept together so it isn't paid twice")
 
-    # A proforma or quotation is a request for payment, not a bill. Booking one
-    # as a purchase invents a creditor, and the real invoice then doubles it.
+    # A proforma or quotation isn't a tax invoice, but that doesn't make it
+    # unpayable: most suppliers here bill Cash Before Delivery, so the proforma
+    # IS what you pay against and blocking it stops real work. The verifier
+    # chooses — default posts a proforma (you pay to get the goods) and files a
+    # quotation (a price, not a bill). Double-counting is prevented by the
+    # duplicate check and by linking the final invoice, not by refusing to post.
+    default_action = "file" if doc.doc_type == "Quotation" else "post"
+    provisional_action = str(f.get("provisional_action") or default_action)
     if (doc.doc_type in M.PROVISIONAL_DOC_TYPES
             and section in ("Purchase", "Expense")
-            and not str(f.get("force_provisional") or "")):
+            and provisional_action == "file"):
         doc.status, doc.section = "Verified", "Filing Only"
         db.commit()
         request.session["flash"] = {
             "doc": doc.doc_no, "section": "Filing Only",
-            "made": [f"{doc.doc_type} filed — no payable created.",
+            "made": [f"{doc.doc_type} filed — no payable created, and the section was "
+                     f"set back to Filing Only (you had chosen {section}).",
                      "A proforma/quotation is a request for payment, not a bill: the "
                      "creditor only exists once the real tax invoice arrives.",
-                     "Upload the final invoice when it comes and link it to this document."],
+                     "If this really IS the bill: reopen it, then either change Type to "
+                     "Invoice or tick “This really is the bill” before verifying.",
+                     "Otherwise upload the final invoice when it comes and link it here."],
             "links": [("Documents", "/documents")]}
         return RedirectResponse("/documents", status_code=302)
 

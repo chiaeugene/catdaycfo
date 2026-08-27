@@ -208,7 +208,7 @@
       <div><label>Section 分区 (routing)</label>
         <select name="section" class="js-section">{% for s in M.DOC_SECTIONS %}<option {% if d.section==s %}selected{% endif %}>{{ s }}</option>{% endfor %}</select></div>
       <div><label>Type 类型</label>
-        <select name="doc_type">{% for t in M.DOC_TYPES %}<option {% if d.doc_type==t %}selected{% endif %}>{{ t }}</option>{% endfor %}</select></div>
+        <select name="doc_type" class="js-doctype">{% for t in M.DOC_TYPES %}<option {% if d.doc_type==t %}selected{% endif %}>{{ t }}</option>{% endfor %}</select></div>
       <div><label>Supplier / Claimant 供应商/申请人</label>
         <input name="supplier" value="{{ d.supplier }}" list="suplist"></div>
       <div><label>Invoice No. 发票号</label><input name="invoice_no" value="{{ d.invoice_no }}"></div>
@@ -292,24 +292,32 @@
     </div>
     {% endif %}
 
-    {% if d.doc_type in M.PROVISIONAL_DOC_TYPES %}
-    <div class="panel" style="margin:10px 0;padding:12px 14px;background:var(--amber-bg);border-color:var(--amber)">
+    <div class="panel js-prov-panel" style="margin:10px 0;padding:12px 14px;background:var(--amber-bg);border-color:var(--amber){% if d.doc_type not in M.PROVISIONAL_DOC_TYPES %};display:none{% endif %}">
       <div style="font-size:12.5px;color:var(--amber);font-weight:700;margin-bottom:4px">
-        ⚠️ This is a {{ d.doc_type }} — not a bill
+        ⚠️ This is a <span class="js-prov-type">{{ d.doc_type }}</span> — not a bill
       </div>
       <div style="font-size:12px;line-height:1.6">
-        A proforma/quotation asks for payment; it doesn’t create a creditor. Verifying
-        under Purchase or Expense would invent a payable, and the real tax invoice would
-        then double it. It will be <b>filed</b> instead — upload the final invoice when it
-        arrives and link it back to this one.<br>
-        <span style="color:var(--muted)">形式发票/报价单不是账单，不会产生应付账款。</span>
+        This isn’t a tax invoice, so choose what should happen. Many suppliers here bill
+        <b>Cash Before Delivery</b> — then the proforma IS what you pay against, and there
+        is no invoice until after payment. Link the final invoice when it arrives so the
+        same order can’t be paid twice.<br>
+        <span style="color:var(--muted)">形式发票/报价单不是正式发票，请选择处理方式。</span>
       </div>
-      <label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:12px;text-transform:none;letter-spacing:0">
-        <input type="checkbox" name="force_provisional" value="1" style="width:auto;height:auto">
-        We already paid against this document — post it anyway
-      </label>
+      <div style="margin-top:10px;display:flex;flex-direction:column;gap:7px">
+        <label style="display:flex;align-items:flex-start;gap:8px;font-size:12px;text-transform:none;letter-spacing:0;font-weight:600">
+          <input type="radio" name="provisional_action" value="post" class="js-prov-action"
+                 {% if d.doc_type != 'Quotation' %}checked{% endif %} style="width:auto;height:auto;margin-top:2px">
+          <span>We pay against this document — create the payment now<br>
+            <span style="font-weight:400;color:var(--muted)">Cash Before Delivery / prepaid orders 需要先付款</span></span>
+        </label>
+        <label style="display:flex;align-items:flex-start;gap:8px;font-size:12px;text-transform:none;letter-spacing:0;font-weight:600">
+          <input type="radio" name="provisional_action" value="file" class="js-prov-action"
+                 {% if d.doc_type == 'Quotation' %}checked{% endif %} style="width:auto;height:auto;margin-top:2px">
+          <span>File only — wait for the real invoice<br>
+            <span style="font-weight:400;color:var(--muted)">Nothing owed yet; the payable starts when the invoice arrives 先归档</span></span>
+        </label>
+      </div>
     </div>
-    {% endif %}
 
     {% set pfm = proforma_matches.get(d.id) %}
     {% if pfm %}
@@ -411,6 +419,19 @@ const AC = {cash: {{ M.ACC_CASH | tojson }}, bank: {{ M.ACC_BANK | tojson }},
             equip: {{ M.ACC_EQUIPMENT | tojson }}, misc: {{ M.ACC_MISC | tojson }},
             ar: {{ M.ACC_AR | tojson }}};
 const a = c => c + " " + (ACCT[c] || "");
+// The server refuses to raise a payable from a proforma/quotation (main.py,
+// verify_document). The preview has to know the same rule: it used to promise
+// "→ Payment record ... Cr Accounts Payable" and then nothing was created,
+// which reads as a broken system rather than a deliberate refusal.
+const PROVISIONAL = {{ M.PROVISIONAL_DOC_TYPES | tojson }};
+function provisionalBlock(card, sec) {
+  const t = card.querySelector(".js-doctype")?.value || "";
+  if (PROVISIONAL.indexOf(t) < 0) return null;
+  if (sec !== "Purchase" && sec !== "Expense") return null;
+  const act = card.querySelector(".js-prov-action:checked")?.value || "post";
+  if (act === "post") return null;
+  return t;
+}
 
 function previewFor(card) {
   const sec = card.querySelector(".js-section")?.value;
@@ -418,6 +439,12 @@ function previewFor(card) {
   const tax = card.querySelector(".js-tax")?.value || "None";
   const bankin = card.querySelector(".js-bankin")?.value || AC.cash;
   if (!sec) return null;
+
+  const blockedBy = provisionalBlock(card, sec);
+  if (blockedBy) {
+    return `→ <b>Filed only — no payment record, no payable.</b> A ${blockedBy} is not a `
+         + `bill. To post it, tick "This really is the bill" below, or change Type to Invoice.`;
+  }
 
   if (sec === "Purchase" || sec === "Expense" || sec === "Staff Claim") {
     const useCat = sec === "Staff Claim" ? "Staff Claim" : cat;
@@ -465,9 +492,19 @@ document.querySelectorAll(".verify-card").forEach(card => {
       el.style.display = sec === "Petty Cash" ? "" : "none"; });
     card.querySelectorAll(".js-only-bankin").forEach(el => {
       el.style.display = sec === "Bank-in Slip" ? "" : "none"; });
+    // Proforma warning follows the Type dropdown as it is edited, and calls out
+    // the override only once the chosen section would actually be refused.
+    const dt = card.querySelector(".js-doctype")?.value || "";
+    const prov = card.querySelector(".js-prov-panel");
+    if (prov) {
+      prov.style.display = PROVISIONAL.indexOf(dt) >= 0 ? "" : "none";
+      const lbl = prov.querySelector(".js-prov-type"); if (lbl) lbl.textContent = dt;
+
+    }
     const p = previewFor(card); if (p) box.innerHTML = p;
   };
-  card.querySelectorAll(".js-section, .js-category, .js-tax, .js-bankin, .js-ar-inv, [name=ar_method]")
+  card.querySelectorAll(".js-section, .js-category, .js-tax, .js-bankin, .js-ar-inv, "
+                      + ".js-doctype, .js-prov-action, [name=ar_method]")
       .forEach(el => el.addEventListener("change", update));
   update();
 });
