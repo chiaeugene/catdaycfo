@@ -165,6 +165,32 @@ def looks_like_report(text: str) -> bool:
     return bool(REPORT_HINTS.search(text))
 
 
+
+def rollback_counter(db: Session, name: str, doc_no: str) -> bool:
+    """Give a number back if the document being deleted was the last one issued.
+
+    Deleting a voucher created by mistake used to leave a permanent hole in the
+    sequence — PV-0001 gone, so the next one is PV-0002 and the books start at
+    two. Rolling the counter back only when the deleted number IS the most
+    recent one issued keeps the sequence tidy without ever re-using a number
+    that a later document already sits above.
+    """
+    from .models import Counter
+    tail = (doc_no or "").rsplit("-", 1)[-1]
+    if not tail.isdigit():
+        return False
+    n = int(tail)
+    # Monthly numbers (PL-2608-003) live under a per-month counter key.
+    parts = (doc_no or "").split("-")
+    key = f"{name}{parts[1]}" if len(parts) == 3 and len(parts[1]) == 4 else name
+    c = db.get(Counter, key)
+    if c and c.value == n + 1:      # nothing has been issued after this one
+        c.value = n
+        db.flush()
+        return True
+    return False
+
+
 def handle_update(update: dict, db: Session):
     msg = update.get("message") or update.get("edited_message")
     if not msg:

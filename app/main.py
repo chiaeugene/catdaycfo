@@ -1363,9 +1363,12 @@ def payment_delete(pid: int, request: Request, db: Session = Depends(get_db)):
         d.payment_id = None
     no = p.pay_no
     db.delete(p)
+    gave_back = telegram_bot.rollback_counter(db, "PAY", no)
     db.commit()
     ledger.sync_ledger(db)             # its derived journal entry goes with it
-    request.session["flash_del"] = f"{no} deleted — its journal entry was removed too."
+    request.session["flash_del"] = (
+        f"{no} deleted — its journal entry was removed too."
+        + (f" {no} is free again, so the next payment reuses it." if gave_back else ""))
     return RedirectResponse("/payments", status_code=303)
 
 
@@ -1391,10 +1394,12 @@ def voucher_delete(vid: int, request: Request, db: Session = Depends(get_db)):
         p.status = "Categorized" if p.category else "Unsorted"
     no = v.pv_no
     db.delete(v)
+    gave_back = telegram_bot.rollback_counter(db, "PV", no)
     db.commit()
     ledger.sync_ledger(db)
     request.session["flash_del"] = (
-        f"{no} deleted — its payments are back in the queue, ready to re-voucher.")
+        f"{no} deleted — its payments are back in the queue, ready to re-voucher."
+        + (f" {no} is free again, so the next voucher reuses it — no gap." if gave_back else ""))
     return RedirectResponse("/vouchers", status_code=303)
 
 
@@ -1415,8 +1420,11 @@ def listing_delete(lid: int, request: Request, db: Session = Depends(get_db)):
         v.listing_id = None
     no = l.pl_no
     db.delete(l)
+    gave_back = telegram_bot.rollback_counter(db, "PL", no)
     db.commit()
-    request.session["flash_del"] = f"{no} deleted — its vouchers are unlisted again."
+    request.session["flash_del"] = (
+        f"{no} deleted — its vouchers are unlisted again."
+        + (f" {no} is free again, so the next listing reuses it — no gap." if gave_back else ""))
     return RedirectResponse("/listings", status_code=303)
 
 
@@ -3541,8 +3549,13 @@ def backups_download_full(request: Request, db: Session = Depends(get_db)):
 def settings_page(request: Request, db: Session = Depends(get_db)):
     users = db.query(M.User).order_by(M.User.id).all()
     settings = {s.key: s.value for s in db.query(M.Setting).all()}
+    # What each series will issue next, so a gap can be seen and closed
+    counters = {c.name: c.value for c in db.query(M.Counter).all()}
+    this_month = f"{date.today():%y%m}"
     return render(request, db, "settings.html", "settings",
-                  users=users, settings=settings,
+                  users=users, settings=settings, counters=counters,
+                  this_month=this_month,
+                  flash_counter=request.session.pop("flash_counter", None),
                   bot_configured=bool(os.environ.get("TELEGRAM_BOT_TOKEN")),
                   ai_configured=bool(os.environ.get("ANTHROPIC_API_KEY")))
 
@@ -3583,6 +3596,65 @@ def user_password(uid: int, request: Request, password: str = Form(...),
         u.password_hash = hash_password(password)
         db.commit()
     return RedirectResponse("/settings", status_code=302)
+
+
+
+@app.post("/settings/counters")
+async def settings_counters(request: Request, db: Session = Depends(get_db)):
+    """Set the next number a document series will issue.
+
+    Only ever moves a counter to a number nothing has used yet — reusing a
+    number that already exists would give two documents the same reference,
+    which is far worse than a gap: a report could then show one and hide the
+    other. A gap is explainable; a duplicate reference is not.
+    """
+    user = current_user(request, db)
+    if not user or user.role != "admin":
+        return RedirectResponse("/", status_code=302)
+    form = await request.form()
+    used = {
+        "DOC": {d.doc_no for d in db.query(M.Document).all()},
+        "PAY": {p.pay_no for p in db.query(M.Payment).all()},
+        "PV": {v.pv_no for v in db.query(M.Voucher).all()},
+    }
+    msgs = []
+    for key in ("DOC", "PAY", "PV"):
+        raw = str(form.get(f"counter_{key}") or "").strip()
+        if not raw.isdigit():
+            continue
+        want = int(raw)
+        ps = db.get(M.Setting, f"PREFIX_{key}")
+        prefix = (ps.value.strip() if ps and ps.value.strip() else f"{key}-")
+        candidate = f"{prefix}{want:04d}"
+        if candidate in used[key]:
+            msgs.append(f"{key}: {candidate} already exists — left unchanged.")
+            continue
+        c = db.get(M.Counter, key) or M.Counter(name=key, value=want)
+        c.value = want
+        db.add(c)
+        msgs.append(f"{key}: next number will be {candidate}.")
+    # Monthly series (PL / customer invoices) are keyed per month
+    for key, pref in (("PL", "PL-"), ("ARINV", "INV-")):
+        raw = str(form.get(f"counter_{key}") or "").strip()
+        mon = str(form.get(f"counter_{key}_month") or "").strip()
+        if not raw.isdigit() or len(mon) != 4 or not mon.isdigit():
+            continue
+        want = int(raw)
+        ps = db.get(M.Setting, f"PREFIX_{key}")
+        prefix = (ps.value.strip() if ps and ps.value.strip() else pref)
+        candidate = f"{prefix}{mon}-{want:03d}"
+        existing = ({l.pl_no for l in db.query(M.Listing).all()} if key == "PL"
+                    else {i.inv_no for i in db.query(M.ARInvoice).all()})
+        if candidate in existing:
+            msgs.append(f"{key}: {candidate} already exists — left unchanged.")
+            continue
+        c = db.get(M.Counter, f"{key}{mon}") or M.Counter(name=f"{key}{mon}", value=want)
+        c.value = want
+        db.add(c)
+        msgs.append(f"{key}: next number will be {candidate}.")
+    db.commit()
+    request.session["flash_counter"] = " ".join(msgs) or "Nothing changed."
+    return RedirectResponse("/settings", status_code=303)
 
 
 @app.post("/settings/save")

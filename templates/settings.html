@@ -103,4 +103,46 @@
     </form>
   </div>
 </div>
+
+<div class="panel">
+  <h2>Document numbering 单据编号</h2>
+  {% if flash_counter %}
+  <div style="background:var(--amber-bg);border:1px solid var(--amber);border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:12px;color:var(--amber);font-weight:700">
+    {{ flash_counter }}
+  </div>
+  {% endif %}
+  <div style="font-size:12px;color:var(--muted);line-height:1.7;margin-bottom:10px">
+    Deleting the most recent document now gives its number straight back, so
+    correcting a mistake leaves no gap. Use this only to close a gap that already
+    exists. A number already used by a document will be refused — two documents
+    sharing one reference is far worse than a gap, because a report can then show
+    one and hide the other.<br>
+    <span style="color:var(--muted)">删除最新单据会自动退回编号；此处只用于修补旧的缺号。</span>
+  </div>
+  <form method="post" action="/settings/counters">
+    <div class="formrow" style="grid-template-columns:repeat(3,1fr)">
+      <div><label>Next Document DOC 文件</label>
+        <input name="counter_DOC" type="number" min="1" placeholder="{{ counters.get('DOC', 1) }}"></div>
+      <div><label>Next Payment PAY 付款</label>
+        <input name="counter_PAY" type="number" min="1" placeholder="{{ counters.get('PAY', 1) }}"></div>
+      <div><label>Next Voucher PV 凭单</label>
+        <input name="counter_PV" type="number" min="1" placeholder="{{ counters.get('PV', 1) }}"></div>
+    </div>
+    <div class="formrow" style="grid-template-columns:repeat(4,1fr);margin-top:6px">
+      <div><label>Next Listing PL 付款清单</label>
+        <input name="counter_PL" type="number" min="1" placeholder="{{ counters.get('PL' ~ this_month, 1) }}"></div>
+      <div><label>PL month (yymm)</label>
+        <input name="counter_PL_month" value="{{ this_month }}" maxlength="4"></div>
+      <div><label>Next Invoice INV 发票</label>
+        <input name="counter_ARINV" type="number" min="1" placeholder="{{ counters.get('ARINV' ~ this_month, 1) }}"></div>
+      <div><label>INV month (yymm)</label>
+        <input name="counter_ARINV_month" value="{{ this_month }}" maxlength="4"></div>
+    </div>
+    <div style="font-size:11px;color:var(--muted);margin:6px 0 10px">
+      Leave a box blank to keep it as it is. PL and INV restart each month, so they need the month too.
+    </div>
+    <button type="submit">Set next numbers 设定</button>
+  </form>
+</div>
+
 {% endblock %}
