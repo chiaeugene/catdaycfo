@@ -54,17 +54,14 @@
     <td>
       <div class="actions">
         {% if v.status == 'Draft' %}
-        <form method="post" action="/vouchers/{{ v.id }}/action"><input type="hidden" name="action" value="approve"><button class="small success" type="submit">{{ icon('check', 12) }} Approve</button></form>
+        <button form="vact-approve-{{ v.id }}" class="small success" type="submit">{{ icon('check', 12) }} Approve</button>
         {% endif %}
         {% if v.status in ['Draft','Approved'] %}
-        <form method="post" action="/vouchers/{{ v.id }}/action"><input type="hidden" name="action" value="paid"><button class="small" type="submit">Mark Paid</button></form>
-        <form method="post" action="/vouchers/{{ v.id }}/action"><input type="hidden" name="action" value="void"><button class="small danger" type="submit">{{ icon('x', 11) }} Void</button></form>
+        <button form="vact-paid-{{ v.id }}" class="small" type="submit">Mark Paid</button>
+        <button form="vact-void-{{ v.id }}" class="small danger" type="submit">{{ icon('x', 11) }} Void</button>
         {% endif %}
         {% if user.role == 'admin' and v.status != 'Paid' and not v.listing_id %}
-        <form method="post" action="/vouchers/{{ v.id }}/delete" class="inline"
-              onsubmit="return confirm('Delete {{ v.pv_no }}? Its payments return to the queue and can be re-vouchered.')">
-          <button class="small danger" type="submit">Delete</button>
-        </form>
+        <button form="vdel-{{ v.id }}" class="small danger" type="submit">Delete</button>
         {% endif %}
       </div>
     </td>
@@ -106,6 +103,28 @@
   <button type="submit">Create Payment Listing →</button>
 </div>
 </form>
+
+{% for v in vouchers %}
+{# Rendered outside the listing-create form above — a form inside a form is
+   invalid HTML and the browser drops the inner one, which silently disabled
+   every one of these buttons in the real UI. #}
+{% if v.status == 'Draft' %}
+<form id="vact-approve-{{ v.id }}" method="post" action="/vouchers/{{ v.id }}/action">
+  <input type="hidden" name="action" value="approve"></form>
+{% endif %}
+{% if v.status in ['Draft','Approved'] %}
+<form id="vact-paid-{{ v.id }}" method="post" action="/vouchers/{{ v.id }}/action">
+  <input type="hidden" name="action" value="paid"></form>
+<form id="vact-void-{{ v.id }}" method="post" action="/vouchers/{{ v.id }}/action"
+      onsubmit="return confirm('Void {{ v.pv_no }}?')">
+  <input type="hidden" name="action" value="void"></form>
+{% endif %}
+{% if user.role == 'admin' and v.status != 'Paid' and not v.listing_id %}
+<form id="vdel-{{ v.id }}" method="post" action="/vouchers/{{ v.id }}/delete"
+      onsubmit="return confirm('Delete {{ v.pv_no }}? Its payments return to the queue and can be re-vouchered.')"></form>
+{% endif %}
+{% endfor %}
+
 {% endblock %}
 
 {% block scripts %}

@@ -88,13 +88,16 @@
       {% if p.status in ["Unsorted","Categorized"] %}
       <details class="rowedit">
         <summary>edit</summary>
-        <form method="post" action="/payments/{{ p.id }}/update" class="inline" style="margin-top:8px">
-          <input name="supplier" value="{{ p.supplier }}" placeholder="supplier" style="width:120px" class="slim">
-          <select name="category" class="slim"><option value=""></option>{% for c in M.CATEGORIES %}<option {% if p.category==c %}selected{% endif %}>{{ c }}</option>{% endfor %}</select>
-          <select name="grp" class="slim"><option value=""></option>{% for g in M.GROUPS %}<option {% if p.grp==g %}selected{% endif %}>{{ g }}</option>{% endfor %}</select>
-          <input type="number" step="0.01" name="amount" value="{{ p.amount }}" style="width:100px" class="slim">
-          <button class="small" type="submit">Save</button>
-        </form>
+        {# Bound to a form rendered AFTER the outer voucher-create form. Nested
+           forms are invalid HTML: the browser discards the inner one, so Save
+           used to submit the voucher form and the edit silently did nothing. #}
+        <div class="inline" style="margin-top:8px">
+          <input form="payedit-{{ p.id }}" name="supplier" value="{{ p.supplier }}" placeholder="supplier" style="width:120px" class="slim">
+          <select form="payedit-{{ p.id }}" name="category" class="slim"><option value=""></option>{% for c in M.CATEGORIES %}<option {% if p.category==c %}selected{% endif %}>{{ c }}</option>{% endfor %}</select>
+          <select form="payedit-{{ p.id }}" name="grp" class="slim"><option value=""></option>{% for g in M.GROUPS %}<option {% if p.grp==g %}selected{% endif %}>{{ g }}</option>{% endfor %}</select>
+          <input form="payedit-{{ p.id }}" type="number" step="0.01" name="amount" value="{{ p.amount }}" style="width:100px" class="slim">
+          <button form="payedit-{{ p.id }}" class="small" type="submit">Save</button>
+        </div>
       </details>
       {% endif %}
     </td>
@@ -112,6 +115,12 @@
   <button type="submit">Create Payment Voucher →</button>
 </div>
 </form>
+
+{% for p in payments %}
+{% if p.status in ['Unsorted','Categorized'] %}
+<form id="payedit-{{ p.id }}" method="post" action="/payments/{{ p.id }}/update"></form>
+{% endif %}
+{% endfor %}
 
 <datalist id="suplist">
   {% for n in supplier_names %}<option value="{{ n }}">{% endfor %}
