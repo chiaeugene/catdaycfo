@@ -1,6 +1,11 @@
 {% extends "base.html" %}
 {% from "icons.html" import icon %}
 {% block content %}
+{% if flash_del %}
+<div class="panel" style="background:var(--amber-bg);border-color:var(--amber)">
+  <div style="font-size:12.5px;color:var(--amber);font-weight:700">{{ flash_del }}</div>
+</div>
+{% endif %}
 <div class="pagehead"><h1>Payment Listings 付款清单</h1></div>
 <div class="sub">Voucher batches for approval and bank processing — every voucher expands to its payments and original documents, so the person making the bank transaction can verify each line.</div>
 
@@ -37,6 +42,12 @@
         {% endif %}
         {% if l.status in ['Submitted','Processed'] %}
         <button class="small secondary" onclick="document.getElementById('dlg-bank-{{ l.id }}').showModal()">{{ icon('landmark', 12) }} Bank file</button>
+        {% endif %}
+        {% if user.role == 'admin' and l.status != 'Processed' %}
+        <form method="post" action="/listings/{{ l.id }}/delete" class="inline"
+              onsubmit="return confirm('Delete {{ l.pl_no }}? Its vouchers become unlisted and can be re-listed.')">
+          <button class="small danger" type="submit">Delete</button>
+        </form>
         {% endif %}
       </div>
     </td>

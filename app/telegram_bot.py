@@ -261,7 +261,8 @@ def handle_update(update: dict, db: Session):
         month=month, description=cls.get("description") or caption or filename,
         category=cls.get("category", ""), invoice_no=cls.get("invoice_no", ""),
         doc_date=doc_date,
-        payload_json=json.dumps({"tax_type": cls.get("tax_type", "None")}),
+        payload_json=json.dumps({"tax_type": cls.get("tax_type", "None"),
+                                 "supplier_bank": cls.get("supplier_bank") or {}}),
         file_path=rel_path, mime=mime, ai_classified=cls.get("ai", False),
         status="Pending",
     )

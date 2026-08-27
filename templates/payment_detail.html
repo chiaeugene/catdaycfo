@@ -1,9 +1,22 @@
 {% extends "base.html" %}
 {% from "icons.html" import icon %}
 {% block content %}
+{% if flash_del %}
+<div class="panel" style="background:var(--amber-bg);border-color:var(--amber)">
+  <div style="font-size:12.5px;color:var(--amber);font-weight:700">{{ flash_del }}</div>
+</div>
+{% endif %}
 <div class="pagehead">
   <h1><span class="mono">{{ p.pay_no }}</span> {{ p.supplier or 'No supplier' }}</h1>
-  <a class="btn secondary" href="/payments">← All payments</a>
+  <div class="actions">
+    {% if user.role == 'admin' %}
+    <form method="post" action="/payments/{{ p.id }}/delete" class="inline"
+          onsubmit="return confirm('Delete {{ p.pay_no }}? Its journal entry is removed too. This cannot be undone.')">
+      <button class="danger" type="submit">{{ icon('x', 14) }} Delete 删除</button>
+    </form>
+    {% endif %}
+    <a class="btn secondary" href="/payments">← All payments</a>
+  </div>
 </div>
 <div class="sub">{{ p.description }}</div>
 
@@ -48,7 +61,10 @@
         <b>{% if l.debit %}Dr {{ l.debit|rm }}{% else %}Cr {{ l.credit|rm }}{% endif %}</b></div>
       {% endfor %}
     {% else %}
-    <div style="color:var(--muted);font-size:13px">No journal entry (voided payments don't post).</div>
+    <div style="color:var(--muted);font-size:13px">
+      {% if p.status == 'Void' %}No journal entry — voided payments don’t post.
+      {% else %}No journal entry yet — this payment has no amount to post.{% endif %}
+    </div>
     {% endfor %}
   </div>
 </div>

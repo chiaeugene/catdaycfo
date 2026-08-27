@@ -30,7 +30,13 @@ def group_for(category: str, section: str = "") -> str:
     if category in CATEGORY_GROUP:
         return CATEGORY_GROUP[category]
     return "CAPEX" if section == "Purchase" else "OPEX"
-DOC_TYPES = ["Invoice", "Receipt", "Quotation", "Statement", "Bank-in Slip", "Payslip", "Other"]
+DOC_TYPES = ["Invoice", "Proforma Invoice", "Receipt", "Quotation", "Statement",
+             "Bank-in Slip", "Payslip", "Other"]
+# Document types that are a REQUEST for payment, not a bill. They create no
+# liability: the payable only exists once the real tax invoice arrives. Posting
+# one as a purchase invents a creditor and then double-counts when the final
+# invoice follows.
+PROVISIONAL_DOC_TYPES = ("Proforma Invoice", "Quotation")
 # Section = where a verified submission is routed
 DOC_SECTIONS = ["Purchase", "Expense", "Staff Claim", "Petty Cash", "Sales Report",
                 "Customer Receipt", "Boarding Log", "Bank-in Slip", "Payroll", "Filing Only"]
@@ -124,6 +130,10 @@ class Document(Base):
     category: Mapped[str] = mapped_column(String(50), default="")
     invoice_no: Mapped[str] = mapped_column(String(60), default="")
     doc_date: Mapped[date | None] = mapped_column(Date, nullable=True)   # invoice/receipt date read off the document
+    # Final tax invoice → the proforma/quotation it replaces, so the pair stays
+    # together and the same order can't be paid twice.
+    related_doc_id: Mapped[int | None] = mapped_column(
+        ForeignKey("documents.id"), nullable=True)
     intake_type: Mapped[str] = mapped_column(String(30), default="Document")
     payload_json: Mapped[str] = mapped_column(Text, default="")     # structured data for reports
     raw_text: Mapped[str] = mapped_column(Text, default="")         # original message text

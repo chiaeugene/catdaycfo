@@ -431,6 +431,21 @@ def documents(request: Request, view: str = "pending", db: Session = Depends(get
     acct_names = {code: name for code, name, _typ in M.COA_SEED}
     flash = request.session.pop("flash", None)
     # Open customer invoices, so a receipt can be applied to what it settles
+    # A final tax invoice usually follows a proforma for the same amount. Offer
+    # the match so the pair is linked and the earlier document can't be paid too.
+    proforma_matches = {}
+    earlier = db.query(M.Document).filter(
+        M.Document.doc_type.in_(M.PROVISIONAL_DOC_TYPES)).all()
+    for d in pending:
+        if d.doc_type in M.PROVISIONAL_DOC_TYPES or not d.amount:
+            continue
+        hits = [o for o in earlier
+                if o.id != d.id
+                and (o.supplier or "").strip().lower() == (d.supplier or "").strip().lower()
+                and abs((o.amount or 0) - d.amount) <= max(1.0, d.amount * 0.02)]
+        if hits:
+            proforma_matches[d.id] = hits
+
     open_invoices = [i for i in db.query(M.ARInvoice)
                      .filter(M.ARInvoice.status == "Open")
                      .order_by(M.ARInvoice.date.desc()).all() if i.outstanding > 0.005]
@@ -440,7 +455,7 @@ def documents(request: Request, view: str = "pending", db: Session = Depends(get
                   months=month_options(), dup_warnings=dup_warnings, flash=flash,
                   flash_reopen=request.session.pop("flash_reopen", None),
                   category_account=M.CATEGORY_ACCOUNT, acct_names=acct_names,
-                  open_invoices=open_invoices,
+                  open_invoices=open_invoices, proforma_matches=proforma_matches,
                   supplier_names=[s.name for s in db.query(M.Supplier)
                                   .filter(M.Supplier.active == True).order_by(M.Supplier.name).all()],  # noqa: E712
                   pc_accounts=db.query(M.PettyCashAccount)
@@ -451,6 +466,7 @@ def documents(request: Request, view: str = "pending", db: Session = Depends(get
 @app.post("/documents/upload")
 async def upload_document(request: Request, file: UploadFile = File(...),
                           description: str = Form(""), db: Session = Depends(get_db)):
+    import json as _json
     user = current_user(request, db)
     if not user:
         return RedirectResponse("/login", status_code=302)
@@ -471,7 +487,9 @@ async def upload_document(request: Request, file: UploadFile = File(...),
         doc_type=cls.get("doc_type", "Other"), supplier=cls.get("supplier", ""),
         amount=cls.get("amount", 0), month=cls.get("month") or month_str(),
         description=cls.get("description") or description, category=cls.get("category", ""),
-        file_path=rel, mime=mime, ai_classified=cls.get("ai", False), status="Pending"))
+        file_path=rel, mime=mime, ai_classified=cls.get("ai", False), status="Pending",
+        payload_json=_json.dumps({"tax_type": cls.get("tax_type", "None"),
+                                  "supplier_bank": cls.get("supplier_bank") or {}})))
     db.commit()
     return RedirectResponse("/documents", status_code=302)
 
@@ -512,6 +530,30 @@ async def verify_document(doc_id: int, request: Request, db: Session = Depends(g
     made: list[str] = []
     links: list[tuple[str, str]] = []
 
+    rel = int(f.get("related_doc_id") or 0)
+    if rel and rel != doc.id:
+        doc.related_doc_id = rel
+        prior = db.get(M.Document, rel)
+        if prior:
+            made.append(f"Linked to {prior.doc_no} ({prior.doc_type}) — same order, "
+                        "kept together so it isn't paid twice")
+
+    # A proforma or quotation is a request for payment, not a bill. Booking one
+    # as a purchase invents a creditor, and the real invoice then doubles it.
+    if (doc.doc_type in M.PROVISIONAL_DOC_TYPES
+            and section in ("Purchase", "Expense")
+            and not str(f.get("force_provisional") or "")):
+        doc.status, doc.section = "Verified", "Filing Only"
+        db.commit()
+        request.session["flash"] = {
+            "doc": doc.doc_no, "section": "Filing Only",
+            "made": [f"{doc.doc_type} filed — no payable created.",
+                     "A proforma/quotation is a request for payment, not a bill: the "
+                     "creditor only exists once the real tax invoice arrives.",
+                     "Upload the final invoice when it comes and link it to this document."],
+            "links": [("Documents", "/documents")]}
+        return RedirectResponse("/documents", status_code=302)
+
     if section in ("Purchase", "Expense", "Staff Claim"):
         pay_no = telegram_bot.next_counter(db, "PAY", "PAY-")
         if section == "Staff Claim":
@@ -537,6 +579,18 @@ async def verify_document(doc_id: int, request: Request, db: Session = Depends(g
                               notes=f"Auto-created from {doc.doc_no} — add bank details "
                                     f"before putting this supplier on a voucher."))
             made.append(f"New supplier record: {supplier} (add bank details in Suppliers)")
+        # Bank details read off the document — saved on request, because a voucher
+        # can only print payment instructions if the supplier record carries them.
+        if str(f.get("save_supplier_bank") or "") and supplier:
+            sup_rec = db.query(M.Supplier).filter(
+                func.lower(M.Supplier.name) == supplier.lower()).first()
+            if sup_rec:
+                sup_rec.bank_name = str(f.get("sb_bank_name", "")).strip() or sup_rec.bank_name
+                sup_rec.account_no = str(f.get("sb_account_no", "")).strip() or sup_rec.account_no
+                sup_rec.account_holder = (str(f.get("sb_account_holder", "")).strip()
+                                          or sup_rec.account_holder or supplier)
+                made.append(f"Saved bank details on {supplier}: "
+                            f"{sup_rec.bank_name} {sup_rec.account_no}")
         dr = ledger._expense_account_code(category or "", "Purchase" if grp == "CAPEX" else "")
         made.insert(0, f"{pay_no} · RM {amount:,.2f} · {grp}"
                        + (f" · incl. {tax_type} RM {p.tax_amount:,.2f}" if p.tax_amount else ""))
@@ -799,6 +853,7 @@ def payments(request: Request, status: str = "", error: str = "", db: Session = 
     supplier_names = [s.name for s in db.query(M.Supplier)
                       .filter(M.Supplier.active == True).order_by(M.Supplier.name).all()]  # noqa: E712
     return render(request, db, "payments.html", "payments",
+                  flash_del=request.session.pop("flash_del", None),
                   payments=q.limit(300).all(), flt=status, open_total=open_total,
                   supplier_names=supplier_names, error=ERRORS.get(error, ""))
 
@@ -828,9 +883,14 @@ def payment_detail(pid: int, request: Request, db: Session = Depends(get_db)):
         return RedirectResponse("/payments", status_code=302)
     supplier = db.query(M.Supplier).filter(
         func.lower(M.Supplier.name) == (p.supplier or "").lower()).first()
+    # Journal entries are derived on demand. Without this sync a payment created
+    # outside the verify flow shows "no journal entry" until some accounting page
+    # happens to run the sync — which reads as though it never posted.
+    ledger.sync_ledger(db)
     journal = db.query(M.JournalEntry).filter(
         M.JournalEntry.source_type == "Payment", M.JournalEntry.source_id == p.id).all()
     return render(request, db, "payment_detail.html", "payments",
+                  flash_del=request.session.pop("flash_del", None),
                   p=p, supplier=supplier, journal=journal)
 
 
@@ -841,6 +901,7 @@ def voucher_detail(vid: int, request: Request, db: Session = Depends(get_db)):
         return RedirectResponse("/vouchers", status_code=302)
     supplier = db.query(M.Supplier).filter(
         func.lower(M.Supplier.name) == (v.payee or "").lower()).first()
+    ledger.sync_ledger(db)
     journal = db.query(M.JournalEntry).filter(
         M.JournalEntry.source_type == "Voucher", M.JournalEntry.source_id == v.id).all()
     bank_line = db.query(M.BankStatementLine).filter(
@@ -867,7 +928,8 @@ def update_payment(pid: int, request: Request, supplier: str = Form(""),
 @app.get("/suppliers", response_class=HTMLResponse)
 def suppliers(request: Request, db: Session = Depends(get_db)):
     sups = db.query(M.Supplier).order_by(M.Supplier.name).all()
-    return render(request, db, "suppliers.html", "suppliers", suppliers=sups)
+    return render(request, db, "suppliers.html", "suppliers",
+                  flash_del=request.session.pop("flash_del", None), suppliers=sups)
 
 
 @app.get("/suppliers/{sid}", response_class=HTMLResponse)
@@ -938,7 +1000,8 @@ def vouchers(request: Request, q: str = "", status: str = "", db: Session = Depe
         query = query.filter((M.Voucher.pv_no.ilike(like)) | (M.Voucher.payee.ilike(like)))
     pvs = query.limit(300).all()
     banks = supplier_map(db, [v.payee for v in pvs])
-    return render(request, db, "vouchers.html", "vouchers", vouchers=pvs, banks=banks,
+    return render(request, db, "vouchers.html", "vouchers",
+                  flash_del=request.session.pop("flash_del", None), vouchers=pvs, banks=banks,
                   q=q, flt=status, pv_status=M.PV_STATUS)
 
 
@@ -1010,6 +1073,117 @@ def voucher_action(vid: int, request: Request, action: str = Form(...),
     return RedirectResponse("/vouchers", status_code=302)
 
 
+
+# ─────────────────────────── DELETES ───────────────────────────
+# Deleting accounting records is guarded, never cascading. The rule everywhere:
+# if something downstream depends on the record, refuse and say what to undo
+# first. A silent cascade would leave the ledger disagreeing with the screens,
+# which is far harder to notice than an error message.
+@app.post("/payments/{pid}/delete")
+def payment_delete(pid: int, request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user or user.role != "admin":
+        return RedirectResponse("/", status_code=302)
+    p = db.get(M.Payment, pid)
+    if not p:
+        return RedirectResponse("/payments", status_code=303)
+    if p.voucher_id:
+        v = db.get(M.Voucher, p.voucher_id)
+        request.session["flash_del"] = (
+            f"{p.pay_no} is on voucher {v.pv_no if v else p.voucher_id}. "
+            "Void or delete that voucher first — deleting the payment would leave "
+            "the voucher claiming money that no longer exists.")
+        return RedirectResponse("/payments", status_code=303)
+    for d in list(p.documents):        # keep the source document, just unlink it
+        d.payment_id = None
+    no = p.pay_no
+    db.delete(p)
+    db.commit()
+    ledger.sync_ledger(db)             # its derived journal entry goes with it
+    request.session["flash_del"] = f"{no} deleted — its journal entry was removed too."
+    return RedirectResponse("/payments", status_code=303)
+
+
+@app.post("/vouchers/{vid}/delete")
+def voucher_delete(vid: int, request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user or user.role != "admin":
+        return RedirectResponse("/", status_code=302)
+    v = db.get(M.Voucher, vid)
+    if not v:
+        return RedirectResponse("/vouchers", status_code=303)
+    if v.status == "Paid":
+        request.session["flash_del"] = (
+            f"{v.pv_no} is marked Paid — money has gone out against it. Void it "
+            "instead, so the payment stays on record.")
+        return RedirectResponse("/vouchers", status_code=303)
+    if v.listing_id:
+        request.session["flash_del"] = (
+            f"{v.pv_no} is on a payment listing. Remove it from the listing first.")
+        return RedirectResponse("/vouchers", status_code=303)
+    for p in list(v.payments):         # payments return to the pool, not deleted
+        p.voucher_id = None
+        p.status = "Categorized" if p.category else "Unsorted"
+    no = v.pv_no
+    db.delete(v)
+    db.commit()
+    ledger.sync_ledger(db)
+    request.session["flash_del"] = (
+        f"{no} deleted — its payments are back in the queue, ready to re-voucher.")
+    return RedirectResponse("/vouchers", status_code=303)
+
+
+@app.post("/listings/{lid}/delete")
+def listing_delete(lid: int, request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user or user.role != "admin":
+        return RedirectResponse("/", status_code=302)
+    l = db.get(M.Listing, lid)
+    if not l:
+        return RedirectResponse("/listings", status_code=303)
+    if l.status == "Processed":
+        request.session["flash_del"] = (
+            f"{l.pl_no} is marked Processed — the bank run has already gone out. "
+            "Keep it as the record of what was paid.")
+        return RedirectResponse("/listings", status_code=303)
+    for v in list(l.vouchers):         # vouchers survive, just come off the listing
+        v.listing_id = None
+    no = l.pl_no
+    db.delete(l)
+    db.commit()
+    request.session["flash_del"] = f"{no} deleted — its vouchers are unlisted again."
+    return RedirectResponse("/listings", status_code=303)
+
+
+@app.post("/suppliers/{sid}/delete")
+def supplier_delete(sid: int, request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user or user.role != "admin":
+        return RedirectResponse("/", status_code=302)
+    sup = db.get(M.Supplier, sid)
+    if not sup:
+        return RedirectResponse("/suppliers", status_code=303)
+    # Payments and vouchers reference a supplier by NAME, so deleting the record
+    # wouldn't corrupt them — but it would strip the bank details a voucher needs
+    # to print, and lose the history. Deactivating keeps both.
+    used = db.query(M.Payment).filter(func.lower(M.Payment.supplier) ==
+                                      sup.name.strip().lower()).count()
+    used += db.query(M.Voucher).filter(func.lower(M.Voucher.payee) ==
+                                       sup.name.strip().lower()).count()
+    if used:
+        sup.active = False
+        db.commit()
+        request.session["flash_del"] = (
+            f"{sup.name} has {used} payment/voucher record(s), so it was hidden "
+            "rather than deleted — the history and its bank details stay intact.")
+        return RedirectResponse("/suppliers", status_code=303)
+    name = sup.name
+    db.delete(sup)
+    db.commit()
+    request.session["flash_del"] = f"{name} deleted."
+    return RedirectResponse("/suppliers", status_code=303)
+
+
 # ─────────────────────────── LISTINGS ───────────────────────────
 @app.get("/listings", response_class=HTMLResponse)
 def listings(request: Request, q: str = "", status: str = "", db: Session = Depends(get_db)):
@@ -1021,7 +1195,8 @@ def listings(request: Request, q: str = "", status: str = "", db: Session = Depe
     pls = query.limit(300).all()
     names = [v.payee for pl in pls for v in pl.vouchers]
     banks = supplier_map(db, names)
-    return render(request, db, "listings.html", "listings", listings=pls, banks=banks,
+    return render(request, db, "listings.html", "listings",
+                  flash_del=request.session.pop("flash_del", None), listings=pls, banks=banks,
                   q=q, flt=status, pl_status=M.PL_STATUS)
 
 

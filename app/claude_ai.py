@@ -26,6 +26,11 @@ PE_RULE = (
     'the supplier field should be the PAYER (the customer who sent it), never our own '
     'company name. A deposit or part payment for a kitten, boarding or package is a '
     'Customer Receipt.\n'
+    '- A PROFORMA INVOICE or QUOTATION is a request for payment / a price offer, NOT a bill. '
+    'Set doc_type to "Proforma Invoice" or "Quotation" and section to "Filing Only" — never '
+    '"Purchase" or "Expense" — because it creates no liability until the real tax invoice '
+    'arrives. Look for the words Proforma, Pro-forma, Quotation, Quote, or a "Payment Term: '
+    'Cash Before Delivery" with no invoice number.\n'
     '- "Bank-in Slip" = depositing our OWN takings into our bank (cash/cheque banked in), '
     'not money from a customer. "Payroll" = salary document. '
     '"Filing Only" = quotation/statement/anything not creating a transaction.'
@@ -45,7 +50,11 @@ PROMPT = (
     'on the document and pick the matching rate; "None" if no tax line is shown,\n'
     '"month": billing month as "MMM yyyy" (e.g. "Jul 2026") or "",\n'
     '"description": one short line describing what this payment is for,\n'
-    f'"category": best guess from {CATEGORIES} (use "Staff Claim" for staff reimbursements) or ""\n'
+    f'"category": best guess from {CATEGORIES} (use "Staff Claim" for staff reimbursements) or "",\n'
+    '"supplier_bank": the SUPPLIER\'s own bank account printed on the document for us to pay '
+    'into — usually near "Please make payment to", an "Account no." line, or a bank footer — as '
+    '{"bank_name": str, "account_no": str, "account_holder": str}, all "" if not shown. '
+    'This is the payee\'s account so we can pay them; never our own company\'s account.\n'
 )
 
 
@@ -90,6 +99,7 @@ def _classify_claude(data: bytes, mime: str, caption: str, key: str,
     out["ai"] = True
     out["amount"] = float(out.get("amount") or 0)
     out.setdefault("date", "")
+    out.setdefault("supplier_bank", {})
     if out.get("tax_type") not in TAX_TYPES:
         out["tax_type"] = "None"
     return out

@@ -1,6 +1,11 @@
 {% extends "base.html" %}
 {% from "icons.html" import icon %}
 {% block content %}
+{% if flash_del %}
+<div class="panel" style="background:var(--amber-bg);border-color:var(--amber)">
+  <div style="font-size:12.5px;color:var(--amber);font-weight:700">{{ flash_del }}</div>
+</div>
+{% endif %}
 <div class="pagehead"><h1>Payment Vouchers 付款凭单</h1></div>
 <div class="sub">Each voucher shows its payments with links to the original supporting documents — verify before approving or paying. Tick unlisted vouchers to batch them into a Payment Listing.</div>
 
@@ -44,6 +49,12 @@
         {% if v.status in ['Draft','Approved'] %}
         <form method="post" action="/vouchers/{{ v.id }}/action"><input type="hidden" name="action" value="paid"><button class="small" type="submit">Mark Paid</button></form>
         <form method="post" action="/vouchers/{{ v.id }}/action"><input type="hidden" name="action" value="void"><button class="small danger" type="submit">{{ icon('x', 11) }} Void</button></form>
+        {% endif %}
+        {% if user.role == 'admin' and v.status != 'Paid' and not v.listing_id %}
+        <form method="post" action="/vouchers/{{ v.id }}/delete" class="inline"
+              onsubmit="return confirm('Delete {{ v.pv_no }}? Its payments return to the queue and can be re-vouchered.')">
+          <button class="small danger" type="submit">Delete</button>
+        </form>
         {% endif %}
       </div>
     </td>

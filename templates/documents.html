@@ -213,11 +213,11 @@
         </select></div>
       <div><label>Category 类别</label>
         <select name="category" class="js-category"><option value=""></option>{% for c in M.CATEGORIES %}<option {% if d.category==c %}selected{% endif %}>{{ c }}</option>{% endfor %}</select></div>
-      <div><label>Petty cash tin 零用金账户 <span style="text-transform:none;font-weight:500">(only if section = Petty Cash)</span></label>
+      <div class="js-only-petty"><label>Petty cash tin 零用金账户</label>
         <select name="pc_account_id">
           {% for a in pc_accounts %}<option value="{{ a.id }}">{{ a.name }}</option>{% endfor %}
         </select></div>
-      <div><label>Bank-in: money came from 存入来源 <span style="text-transform:none;font-weight:500">(only if section = Bank-in Slip)</span></label>
+      <div class="js-only-bankin"><label>Bank-in: money came from 存入来源</label>
         <select name="bankin_credit" class="js-bankin">
           <option value="{{ M.ACC_CASH }}">Cash in hand — daily takings 门店现金</option>
           <option value="{{ M.ACC_TNG_CLEARING }}">Cash &amp; TNG clearing — pre-31 Jul opening 期初结转</option>
@@ -260,6 +260,64 @@
         </div>
       </div>
     </div>
+
+    {% set sb = pl.get('supplier_bank') or {} %}
+    {% if sb.get('account_no') or sb.get('bank_name') %}
+    {# Bank details printed on the document. A voucher can only show payment
+       instructions if the SUPPLIER record carries them, so offer to save them
+       here rather than making someone retype them in Suppliers later. #}
+    <div class="panel" style="margin:10px 0;padding:10px 14px;background:var(--bg)">
+      <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;text-transform:none;letter-spacing:0">
+        <input type="checkbox" name="save_supplier_bank" value="1" checked style="width:auto;height:auto">
+        Save the payee bank details found on this document to the supplier
+      </label>
+      <div class="vc-grid" style="margin-top:6px">
+        <div><label>Bank 银行</label><input name="sb_bank_name" value="{{ sb.get('bank_name','') }}"></div>
+        <div><label>Account no. 账号</label><input name="sb_account_no" value="{{ sb.get('account_no','') }}"></div>
+        <div><label>Account holder 户名</label><input name="sb_account_holder" value="{{ sb.get('account_holder','') }}"></div>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-top:4px">
+        Without this the payment listing shows “No bank details on file” and the bank file can’t be generated.
+      </div>
+    </div>
+    {% endif %}
+
+    {% if d.doc_type in M.PROVISIONAL_DOC_TYPES %}
+    <div class="panel" style="margin:10px 0;padding:12px 14px;background:var(--amber-bg);border-color:var(--amber)">
+      <div style="font-size:12.5px;color:var(--amber);font-weight:700;margin-bottom:4px">
+        ⚠️ This is a {{ d.doc_type }} — not a bill
+      </div>
+      <div style="font-size:12px;line-height:1.6">
+        A proforma/quotation asks for payment; it doesn’t create a creditor. Verifying
+        under Purchase or Expense would invent a payable, and the real tax invoice would
+        then double it. It will be <b>filed</b> instead — upload the final invoice when it
+        arrives and link it back to this one.<br>
+        <span style="color:var(--muted)">形式发票/报价单不是账单，不会产生应付账款。</span>
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:12px;text-transform:none;letter-spacing:0">
+        <input type="checkbox" name="force_provisional" value="1" style="width:auto;height:auto">
+        We already paid against this document — post it anyway
+      </label>
+    </div>
+    {% endif %}
+
+    {% set pfm = proforma_matches.get(d.id) %}
+    {% if pfm %}
+    <div class="panel" style="margin:10px 0;padding:10px 14px;background:var(--bg)">
+      <div style="font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">
+        Looks like the final invoice for an earlier document
+      </div>
+      <select name="related_doc_id">
+        <option value="">Not related — this is a separate purchase</option>
+        {% for o in pfm %}
+        <option value="{{ o.id }}" selected>{{ o.doc_no }} · {{ o.doc_type }} · {{ o.supplier }} · RM {{ o.amount|rm }}</option>
+        {% endfor %}
+      </select>
+      <div style="font-size:11px;color:var(--muted);margin-top:4px">
+        Linking keeps the pair together so the same order isn’t paid twice.
+      </div>
+    </div>
+    {% endif %}
 
     <div class="posting-preview js-preview" data-doc="{{ d.id }}">
       <span style="opacity:.7">Posting preview…</span>
@@ -388,6 +446,11 @@ document.querySelectorAll(".verify-card").forEach(card => {
     if (arBlock) arBlock.style.display = sec === "Customer Receipt" ? "" : "none";
     // "New sale" fields only matter when the receipt isn't settling an existing invoice
     if (arNew) arNew.style.display = (arInv && arInv.value) ? "none" : "";
+    // Only show the fields that belong to the chosen section
+    card.querySelectorAll(".js-only-petty").forEach(el => {
+      el.style.display = sec === "Petty Cash" ? "" : "none"; });
+    card.querySelectorAll(".js-only-bankin").forEach(el => {
+      el.style.display = sec === "Bank-in Slip" ? "" : "none"; });
     const p = previewFor(card); if (p) box.innerHTML = p;
   };
   card.querySelectorAll(".js-section, .js-category, .js-tax, .js-bankin, .js-ar-inv, [name=ar_method]")
