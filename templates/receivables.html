@@ -80,6 +80,26 @@
         {% endif %}
       </td>
     </tr>
+    {% if i.receipts %}
+    {# Receipts listed so a wrongly recorded one can be reversed — otherwise the
+       invoice shows as paid and there is no way back to the money owing. #}
+    <tr class="subrow">
+      <td></td>
+      <td colspan="10" style="padding-bottom:10px">
+        {% for r in i.receipts %}
+        <span class="badge paid" style="margin-right:6px">
+          {{ r.date.strftime('%d/%m/%y') }} · {{ r.method }} · RM {{ r.amount|rm }}
+        </span>
+        {% if user.role == 'admin' %}
+        <form method="post" action="/receivables/receipt/{{ r.id }}/delete" class="inline"
+              onsubmit="return confirm('Undo this RM {{ r.amount|rm }} receipt? {{ i.inv_no }} goes back to owing that amount.')">
+          <button class="small danger" type="submit" title="Recorded in error? Undo it 撤销收款">↩ Undo</button>
+        </form>
+        {% endif %}
+        {% endfor %}
+      </td>
+    </tr>
+    {% endif %}
     {% else %}
     <tr><td colspan="11" class="empty">No customer invoices yet — use ＋ New invoice for boarding packages, kitten sales, memberships, or corporate billing.<br>还没有客户发票。</td></tr>
     {% endfor %}

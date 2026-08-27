@@ -63,7 +63,7 @@
 <div class="tablewrap">
   <table>
     <tr><th>Date</th><th>Description</th><th>Category</th>
-        <th class="num">Out 支出</th><th class="num">In 补充</th><th class="num">Balance 余额</th><th>By</th></tr>
+        <th class="num">Out 支出</th><th class="num">In 补充</th><th class="num">Balance 余额</th><th>By</th><th></th></tr>
     {% for e, bal in rows %}
     <tr>
       <td>{{ e.date.strftime('%d/%m/%y') }}</td>
@@ -73,9 +73,15 @@
       <td class="num" style="color:var(--green);font-weight:700">{{ '+' + (e.amount_in|rm) if e.amount_in else '' }}</td>
       <td class="num"><b>{{ bal|rm }}</b></td>
       <td>{{ e.recorded_by }}</td>
+      <td>{% if user.role == 'admin' %}
+      <form method="post" action="/pettycash/{{ e.id }}/delete" class="inline"
+            onsubmit="return confirm('Delete this petty cash entry? Its journal entry is removed too.')">
+        <button class="small danger" type="submit" title="Remove this entry 删除">✕</button>
+      </form>
+      {% endif %}</td>
     </tr>
     {% else %}
-    <tr><td colspan="7" class="empty">No entries {% if month_filtered %}for {{ month }}{% endif %} yet.</td></tr>
+    <tr><td colspan="8" class="empty">No entries {% if month_filtered %}for {{ month }}{% endif %} yet.</td></tr>
     {% endfor %}
   </table>
 </div>

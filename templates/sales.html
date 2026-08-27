@@ -34,7 +34,7 @@
 
 <div class="tablewrap">
 <table>
-  <tr><th>Date</th><th>Stream</th><th>Description</th><th class="num">Amount</th><th>Method</th><th>By</th></tr>
+  <tr><th>Date</th><th>Stream</th><th>Description</th><th class="num">Amount</th><th>Method</th><th>By</th><th></th></tr>
   {% for s in entries %}
   <tr>
     <td>{{ s.date.strftime('%d/%m/%y') }}</td>
@@ -43,9 +43,15 @@
     <td class="num">{{ s.amount|rm }}</td>
     <td>{{ s.method }}</td>
     <td>{{ s.recorded_by }}</td>
+    <td>{% if user.role == 'admin' %}
+      <form method="post" action="/sales/{{ s.id }}/delete" class="inline"
+            onsubmit="return confirm('Delete this sales entry? Its journal entry is removed too.')">
+        <button class="small danger" type="submit" title="Remove this entry 删除">✕</button>
+      </form>
+      {% endif %}</td>
   </tr>
   {% else %}
-  <tr><td colspan="6" class="empty">No sales recorded yet.</td></tr>
+  <tr><td colspan="7" class="empty">No sales recorded yet.</td></tr>
   {% endfor %}
 </table>
 </div>

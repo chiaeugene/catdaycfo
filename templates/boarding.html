@@ -28,7 +28,7 @@
 <div class="tablewrap">
   <table>
     <tr><th>Date</th><th class="num">Checked in</th><th class="num">Checked out</th>
-        <th class="num">In-house</th><th>Note</th><th>By</th></tr>
+        <th class="num">In-house</th><th>Note</th><th>By</th><th></th></tr>
     {% for l in logs %}
     <tr>
       <td>{{ l.date.strftime('%d/%m/%y') }}</td>
@@ -37,9 +37,15 @@
       <td class="num"><b>{{ l.occupancy }}</b></td>
       <td>{{ l.notes }}</td>
       <td>{{ l.recorded_by }}</td>
+      <td>{% if user.role == 'admin' %}
+      <form method="post" action="/boarding/{{ l.id }}/delete" class="inline"
+            onsubmit="return confirm('Delete this boarding log?')">
+        <button class="small danger" type="submit" title="Remove this entry 删除">✕</button>
+      </form>
+      {% endif %}</td>
     </tr>
     {% else %}
-    <tr><td colspan="6" class="empty">No boarding logs yet — staff can type e.g. “check in 3, check out 1, now 22 cats” to the bot.</td></tr>
+    <tr><td colspan="7" class="empty">No boarding logs yet — staff can type e.g. “check in 3, check out 1, now 22 cats” to the bot.</td></tr>
     {% endfor %}
   </table>
 </div>
