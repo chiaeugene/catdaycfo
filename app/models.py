@@ -194,6 +194,43 @@ class Listing(Base):
     vouchers = relationship("Voucher", backref="listing", foreign_keys="Voucher.listing_id")
 
 
+class ListingShare(Base):
+    """A read-only public link to one payment listing, for the authoriser.
+
+    The authoriser is usually a director who has no login and no reason to want
+    one — they need to see the vouchers, the supplier bank details and the
+    original invoices, once, on their phone. A long random token is the whole
+    credential, so it is generated with secrets.token_urlsafe and can be revoked
+    or rotated at any time; every view is stamped so the preparer can tell
+    whether it was actually opened.
+    """
+    __tablename__ = "listing_shares"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    listing_id: Mapped[int] = mapped_column(ForeignKey("listings.id"))
+    token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    created_by: Mapped[str] = mapped_column(String(100), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False)
+    views: Mapped[int] = mapped_column(Integer, default=0)
+    last_viewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    listing = relationship("Listing", backref="shares")
+
+    @property
+    def live(self) -> bool:
+        if self.revoked:
+            return False
+        return not (self.expires_at and self.expires_at < datetime.utcnow())
+
+    @property
+    def state(self) -> str:
+        if self.revoked:
+            return "Revoked"
+        if self.expires_at and self.expires_at < datetime.utcnow():
+            return "Expired"
+        return "Live"
+
+
 class PettyCashAccount(Base):
     """A company may run several petty-cash tins/floats (e.g. Front Desk, Grooming)."""
     __tablename__ = "petty_cash_accounts"

@@ -40,13 +40,22 @@
         {% if l.status in ['Draft','Submitted'] %}
         <form method="post" action="/listings/{{ l.id }}/action"><input type="hidden" name="action" value="processed"><button class="small success" type="submit">{{ icon('check', 12) }} Processed</button></form>
         {% endif %}
+        {% set locked = locked_reason(l) %}
+        {% if locked %}
+        <button class="small secondary" type="button" disabled title="{{ locked }}">{{ icon('edit', 12) }} Edit</button>
+        {% else %}
+        <button class="small secondary" onclick="document.getElementById('dlg-add-{{ l.id }}').showModal()"
+                title="Add vouchers to this listing">{{ icon('edit', 12) }} Edit</button>
+        {% endif %}
+        <button class="small secondary" onclick="document.getElementById('dlg-share-{{ l.id }}').showModal()"
+                title="Send a read-only link to the authoriser">{{ icon('send', 12) }} Approver link{% if live_share.get(l.id) %} ✓{% endif %}</button>
         {% if l.status in ['Submitted','Processed'] %}
         <button class="small secondary" onclick="document.getElementById('dlg-bank-{{ l.id }}').showModal()">{{ icon('landmark', 12) }} Bank file</button>
         {% endif %}
-        {% if user.role == 'admin' and l.status == 'Processed' %}
+        {% if user.role == 'admin' and l.status in ['Processed','Submitted'] %}
         <form method="post" action="/listings/{{ l.id }}/revert" class="inline"
-              onsubmit="return confirm('Put {{ l.pl_no }} back to Draft?')">
-          <button class="small secondary" type="submit" title="Marked processed by mistake?">↩ Undo processed</button>
+              onsubmit="return confirm('Put {{ l.pl_no }} back to Draft? It becomes editable again.')">
+          <button class="small secondary" type="submit" title="Reopen for editing">↩ Undo {{ l.status|lower }}</button>
         </form>
         {% endif %}
         {% if user.role == 'admin' and l.status != 'Processed' %}
@@ -60,11 +69,26 @@
   </tr>
   <tr class="subrow">
     <td colspan="7" style="padding-bottom:14px">
+      {% set locked = locked_reason(l) %}
       {% for v in l.vouchers %}
       <div style="margin:4px 0 8px">
         <div style="font-size:11.5px;font-weight:800;color:var(--brand-deep);margin-bottom:3px">
           {{ v.pv_no }} — {{ v.payee }} · RM {{ v.total|rm }}
           <a class="docchip" style="margin-left:6px" href="/files/{{ v.pdf_path }}" target="_blank">{{ icon('file', 12) }} PV PDF</a>
+          {% if user.role in ['admin','manager'] %}
+            {% if locked %}
+            <button class="small ghost" type="button" disabled style="margin-left:4px"
+                    title="{{ locked }}">Remove</button>
+            {% else %}
+            <form method="post" action="/listings/{{ l.id }}/remove/{{ v.id }}" class="inline"
+                  style="margin-left:4px"
+                  onsubmit="return confirm('Take {{ v.pv_no }} off {{ l.pl_no }}?
+
+The voucher itself is kept — it just becomes unlisted and can go on another listing.')">
+              <button class="small ghost" type="submit" title="Take this voucher off the listing 移出清单">Remove</button>
+            </form>
+            {% endif %}
+          {% endif %}
         </div>
         {% set sup = banks.get(v.payee.strip().lower()) %}
         <div style="font-size:11.5px;font-weight:600;margin-bottom:5px;color:{{ 'var(--ink-2)' if sup and sup.account_no else 'var(--muted)' }}">
@@ -87,6 +111,10 @@
           {% endfor %}
         </div>
       </div>
+      {% else %}
+      <div style="font-size:11.5px;font-weight:600;color:var(--amber)">
+        No vouchers on this listing — use <b>Edit</b> to add some, or delete it.
+      </div>
       {% endfor %}
     </td>
   </tr>
@@ -95,6 +123,113 @@
   {% endfor %}
 </table>
 </div>
+
+{# ── Edit: add unlisted vouchers to an open listing ── #}
+{% for l in listings %}{% if not locked_reason(l) %}
+<dialog id="dlg-add-{{ l.id }}">
+  <form method="post" action="/listings/{{ l.id }}/add">
+    <div class="dlg-head"><b>{{ icon('edit', 15) }} Add vouchers to {{ l.pl_no }}</b>
+      <button type="button" class="x" onclick="this.closest('dialog').close()">✕</button></div>
+    <div class="dlg-body">
+      <p style="font-size:12.5px;color:var(--muted);margin-bottom:12px">
+        Currently {{ l.vouchers|length }} voucher{{ 's' if l.vouchers|length != 1 }},
+        total <b>RM {{ l.total|rm }}</b>. Adding re-issues the listing PDF with the new total.
+        To take one off, use <b>Remove</b> next to it in the list below.
+      </p>
+      {% if unlisted %}
+      <div style="display:flex;flex-direction:column;gap:2px;max-height:46vh;overflow:auto">
+        {% for v in unlisted %}
+        <label style="display:flex;gap:10px;align-items:center;padding:8px 10px;border-radius:8px;
+                      font-size:12.5px;cursor:pointer" onmouseover="this.style.background='rgba(0,0,0,.04)'"
+               onmouseout="this.style.background=''">
+          <input type="checkbox" name="pv_ids" value="{{ v.id }}">
+          <span style="flex:1">
+            <b class="mono">{{ v.pv_no }}</b> · {{ v.payee }}
+            <span style="color:var(--muted)"> · {{ v.date.strftime('%d/%m/%y') }} · {{ v.status }}</span>
+          </span>
+          <b style="font-variant-numeric:tabular-nums">RM {{ v.total|rm }}</b>
+        </label>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="empty" style="padding:26px 0">
+        No unlisted vouchers. Every Draft/Approved voucher is already on a listing —
+        create more from the <a href="/vouchers">Vouchers</a> page.
+      </div>
+      {% endif %}
+    </div>
+    <div class="dlg-foot">
+      <button type="button" class="ghost" onclick="this.closest('dialog').close()">Cancel</button>
+      <button type="submit" {% if not unlisted %}disabled{% endif %}>Add to {{ l.pl_no }}</button>
+    </div>
+  </form>
+</dialog>
+{% endif %}{% endfor %}
+
+{# ── Approver link: read-only public URL for the authoriser ── #}
+{% for l in listings %}
+<dialog id="dlg-share-{{ l.id }}" data-open="{{ 1 if share_open == l.id else 0 }}">
+  <div class="dlg-head"><b>{{ icon('send', 15) }} Approver link — {{ l.pl_no }}</b>
+    <button type="button" class="x" onclick="this.closest('dialog').close()">✕</button></div>
+  <div class="dlg-body">
+    {% set sh = live_share.get(l.id) %}
+    <p style="font-size:12.5px;color:var(--muted);margin-bottom:14px">
+      A read-only web page showing all {{ l.vouchers|length }} voucher(s), the bank account
+      each payment goes to, and the original invoices — for someone who has no login.
+      Send it on WhatsApp. Nothing on that page can be changed.
+    </p>
+    {% if sh %}
+    <label>Link 链接</label>
+    <div style="display:flex;gap:8px;align-items:stretch;margin-bottom:8px">
+      <input readonly id="shareurl-{{ l.id }}" class="mono" style="flex:1;font-size:11.5px"
+             value="{{ base_url }}/approve/{{ sh.token }}">
+      <button type="button" class="btn secondary small"
+              onclick="var i=document.getElementById('shareurl-{{ l.id }}');i.select();
+                       navigator.clipboard.writeText(i.value);this.textContent='Copied ✓'">Copy</button>
+    </div>
+    <div style="font-size:11.5px;color:var(--muted);line-height:1.8;margin-bottom:16px">
+      Issued by {{ sh.created_by }}{% if sh.expires_at %} · expires {{ sh.expires_at.strftime('%d %b %Y') }}{% endif %}<br>
+      {% if sh.views %}
+      <b style="color:var(--green)">Opened {{ sh.views }} time{{ 's' if sh.views != 1 }}</b>
+      — last {{ sh.last_viewed_at.strftime('%d %b %Y, %H:%M') }} UTC
+      {% else %}
+      <b style="color:var(--amber)">Not opened yet</b> — you will see the time here once it is.
+      {% endif %}
+    </div>
+    <div class="actions">
+      <a class="btn secondary small" href="/approve/{{ sh.token }}" target="_blank">Preview</a>
+      <form method="post" action="/listings/{{ l.id }}/share/revoke" class="inline"
+            onsubmit="return confirm('Revoke the link for {{ l.pl_no }}? Anyone still holding the URL loses access immediately.')">
+        <button class="small danger" type="submit">Revoke</button>
+      </form>
+      <form method="post" action="/listings/{{ l.id }}/share" class="inline"
+            onsubmit="return confirm('Issue a NEW link? The current one stops working.')">
+        <input type="hidden" name="days" value="14">
+        <button class="small secondary" type="submit">Re-issue</button>
+      </form>
+    </div>
+    {% else %}
+    <form method="post" action="/listings/{{ l.id }}/share">
+      <div class="formrow" style="grid-template-columns:160px auto">
+        <div><label>Valid for 有效期</label>
+          <select name="days">
+            <option value="7">7 days</option>
+            <option value="14" selected>14 days</option>
+            <option value="30">30 days</option>
+            <option value="90">90 days</option>
+          </select></div>
+        <div class="f-btn"><button type="submit">Create link</button></div>
+      </div>
+    </form>
+    <div style="background:var(--amber-bg);color:var(--amber);border-radius:8px;padding:9px 12px;
+                font-size:11px;font-weight:600;margin-top:14px">
+      ⚠️ Anyone with the URL can view this listing and its invoices — treat it like the
+      listing PDF itself. Revoke it once the run has been authorised.
+    </div>
+    {% endif %}
+  </div>
+</dialog>
+{% endfor %}
 
 {# ── Bank bulk-transfer export dialogs ── #}
 {% for l in listings %}{% if l.status in ['Submitted','Processed'] %}
@@ -130,4 +265,9 @@
   </div>
 </dialog>
 {% endif %}{% endfor %}
+<script>
+  // Coming back from "Create link" — reopen that listing's dialog so the URL is
+  // in front of the preparer instead of one click away.
+  document.querySelectorAll('dialog[data-open="1"]').forEach(function (d) { d.showModal(); });
+</script>
 {% endblock %}

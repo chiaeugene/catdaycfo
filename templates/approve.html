@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>{{ pl.pl_no }} — Payment approval</title>
+<link rel="stylesheet" href="/static/style.css?v={{ asset_v }}">
+<style>
+  /* Standalone page: no sidebar, no session. Reads on a phone first, because
+     that is where a director actually opens a WhatsApp link. */
+  body { background: var(--bg, #faf7f2); }
+  .ap-wrap { max-width: 860px; margin: 0 auto; padding: 18px 16px 60px; }
+  .ap-head { display:flex; flex-wrap:wrap; gap:12px; align-items:flex-start;
+             justify-content:space-between; padding:20px 0 16px;
+             border-bottom:2px solid var(--brand-deep, #2D1907); }
+  .ap-co { font-size:15px; font-weight:800; color:var(--brand-deep,#2D1907); letter-spacing:.2px }
+  .ap-reg { font-size:11px; color:var(--muted,#8a7f70); font-weight:600 }
+  .ap-pl { font-size:26px; font-weight:800; color:var(--brand-deep,#2D1907); line-height:1.1 }
+  .ap-total { font-size:26px; font-weight:800; text-align:right; font-variant-numeric:tabular-nums }
+  .ap-note { background:var(--amber-bg,#fdf3e0); border-radius:10px; padding:12px 14px;
+             font-size:12.5px; line-height:1.6; margin:16px 0 22px; font-weight:600;
+             color:var(--amber,#8a5a12) }
+  .pv { border:1px solid rgba(45,25,7,.14); border-radius:12px; padding:14px 16px; margin-bottom:14px;
+        background:#fff }
+  .pv-top { display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; align-items:baseline }
+  .pv-no { font-size:13.5px; font-weight:800; color:var(--brand-deep,#2D1907) }
+  .pv-amt { font-size:15px; font-weight:800; font-variant-numeric:tabular-nums }
+  .pv-bank { font-size:12px; font-weight:600; margin:8px 0 10px; padding:8px 10px;
+             background:rgba(114,144,148,.12); border-radius:8px; line-height:1.6 }
+  .pv-bank .acct { font-family:ui-monospace,"SFMono-Regular",Menlo,monospace; letter-spacing:.6px }
+  .pv-bank.warn { background:var(--red-bg,#fdeceb); color:var(--red,#b3261e) }
+  .lines { display:flex; flex-direction:column; gap:6px }
+  .line { display:flex; flex-wrap:wrap; gap:8px; align-items:baseline;
+          font-size:12px; padding:6px 0; border-top:1px dashed rgba(45,25,7,.14) }
+  .line .desc { flex:1 1 200px }
+  .line .amt { font-variant-numeric:tabular-nums; font-weight:700 }
+  .ap-foot { margin-top:26px; padding-top:16px; border-top:1px solid rgba(45,25,7,.14);
+             font-size:11.5px; color:var(--muted,#8a7f70); line-height:1.7 }
+  @media print { .noprint { display:none } .pv { break-inside:avoid } }
+</style>
+</head>
+<body>
+<div class="ap-wrap">
+
+  <div class="ap-head">
+    <div>
+      <div class="ap-co">{{ company }}</div>
+      {% if reg_no %}<div class="ap-reg">{{ reg_no }}</div>{% endif %}
+      <div class="ap-pl" style="margin-top:10px">{{ pl.pl_no }}</div>
+      <div style="font-size:12px;color:var(--muted,#8a7f70);font-weight:600">
+        Payment listing · {{ pl.date.strftime('%d %B %Y') }} ·
+        prepared by {{ pl.prepared_by or '—' }}
+      </div>
+    </div>
+    <div>
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:.8px;
+                  color:var(--muted,#8a7f70);font-weight:700;text-align:right">Total to pay</div>
+      <div class="ap-total">RM {{ pl.total|rm }}</div>
+      <div style="font-size:11.5px;color:var(--muted,#8a7f70);font-weight:600;text-align:right">
+        {{ pl.vouchers|length }} voucher{{ 's' if pl.vouchers|length != 1 }} ·
+        <span class="badge {{ pl.status|lower }}">{{ pl.status }}</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="ap-note">
+    For approval. Check each payee’s bank account against the invoice before authorising —
+    the account number shown is the one the payment will actually go to.
+    请核对每一笔的银行账号与发票是否相符。
+    {% if files.get('pl' ~ pl.id) %}
+    <div style="margin-top:8px" class="noprint">
+      <a class="btn secondary small" href="/approve/{{ token }}/f/pl{{ pl.id }}" target="_blank">
+        ↓ Full listing PDF</a>
+    </div>
+    {% endif %}
+  </div>
+
+  {% for v in pl.vouchers %}
+  {% set sup = banks.get(v.payee.strip().lower()) %}
+  <div class="pv">
+    <div class="pv-top">
+      <div>
+        <div class="pv-no">{{ v.pv_no }}</div>
+        <div style="font-size:13px;font-weight:700">{{ v.payee }}</div>
+      </div>
+      <div style="text-align:right">
+        <div class="pv-amt">RM {{ v.total|rm }}</div>
+        {% if files.get('pv' ~ v.id) %}
+        <a class="docchip noprint" href="/approve/{{ token }}/f/pv{{ v.id }}" target="_blank">
+          Voucher PDF</a>
+        {% endif %}
+      </div>
+    </div>
+
+    {% if sup and (sup.bank_name or sup.account_no) %}
+    <div class="pv-bank">
+      <b>{{ sup.bank_name or 'Bank not named' }}</b><br>
+      <span class="acct">{{ sup.account_no or 'No account number' }}</span><br>
+      {{ sup.account_holder or v.payee }}
+    </div>
+    {% else %}
+    <div class="pv-bank warn">
+      ⛔ No bank details on file for this payee — do not authorise until they are added
+      and checked against the supplier’s own invoice.
+    </div>
+    {% endif %}
+
+    <div class="lines">
+      {% for p in v.payments %}
+      <div class="line">
+        <div class="desc">
+          {% if p.invoice_no %}<b>{{ p.invoice_no }}</b> · {% endif %}{{ p.description }}
+          {% if p.documents %}
+            {% for d in p.documents %}{% if files.get('doc' ~ d.id) %}
+            <a class="docchip noprint" href="/approve/{{ token }}/f/doc{{ d.id }}" target="_blank">
+              Invoice</a>
+            {% endif %}{% endfor %}
+          {% else %}
+            <span class="docchip none">no document attached</span>
+          {% endif %}
+        </div>
+        <div class="amt">RM {{ p.amount|rm }}</div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% else %}
+  <div class="empty" style="padding:40px 0;text-align:center">
+    This listing has no vouchers on it.
+  </div>
+  {% endfor %}
+
+  <div class="ap-foot">
+    View-only link issued by {{ share.created_by or 'the preparer' }}
+    {% if share.expires_at %}· expires {{ share.expires_at.strftime('%d %B %Y') }}{% endif %}.
+    Nothing on this page can be changed from here. To approve or query, reply to the
+    person who sent you this link.
+  </div>
+
+</div>
+</body>
+</html>

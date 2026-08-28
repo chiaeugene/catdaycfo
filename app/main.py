@@ -1,4 +1,5 @@
 import os
+import secrets
 from datetime import date, datetime, timedelta
 
 from dotenv import load_dotenv
@@ -981,11 +982,13 @@ def listing_revert(lid: int, request: Request, db: Session = Depends(get_db)):
     if not user or user.role != "admin":
         return RedirectResponse("/", status_code=302)
     l = db.get(M.Listing, lid)
-    if l and l.status == "Processed":
+    if l and l.status in ("Processed", "Submitted"):
+        was = l.status
         l.status = "Draft"
         db.commit()
         request.session["flash_del"] = (
-            f"{l.pl_no} set back to Draft — it can be edited or deleted again.")
+            f"{l.pl_no} set back to Draft from {was} — vouchers can be added or "
+            "removed again, and it can be deleted.")
     return RedirectResponse("/listings", status_code=303)
 
 
@@ -1468,8 +1471,22 @@ def listings(request: Request, q: str = "", status: str = "", db: Session = Depe
     pls = query.limit(300).all()
     names = [v.payee for pl in pls for v in pl.vouchers]
     banks = supplier_map(db, names)
+    # Vouchers still free to join a listing — the picker for editing an open batch.
+    unlisted = db.query(M.Voucher).filter(
+        M.Voucher.listing_id.is_(None),
+        M.Voucher.status.in_(["Draft", "Approved"])).order_by(M.Voucher.pv_no).all()
+    live_share = {}
+    for pl in pls:
+        sh = next((x for x in sorted(pl.shares, key=lambda z: z.id, reverse=True)
+                   if x.live), None)
+        if sh:
+            live_share[pl.id] = sh
     return render(request, db, "listings.html", "listings",
                   flash_del=request.session.pop("flash_del", None), listings=pls, banks=banks,
+                  unlisted=unlisted, live_share=live_share,
+                  share_open=request.session.pop("share_open", None),
+                  base_url=str(request.base_url).rstrip("/"),
+                  locked_reason=listing_locked_reason,
                   q=q, flt=status, pl_status=M.PL_STATUS)
 
 
@@ -1484,27 +1501,111 @@ async def create_listing(request: Request, db: Session = Depends(get_db)):
     if not pvs:
         return RedirectResponse("/vouchers", status_code=302)
     pl_no = telegram_bot.next_monthly_counter(db, "PL", "PL-")
-    total = sum(v.total for v in pvs)
-    banks = supplier_map(db, [v.payee for v in pvs])
-    def bank_line(payee):
-        s = banks.get(payee.strip().lower())
-        return f"{s.bank_name} {s.account_no}" if s and (s.bank_name or s.account_no) else ""
-    vdata = [{"pv_no": v.pv_no, "date": f"{v.date:%d/%m/%y}", "payee": v.payee,
-              "total": v.total, "bank": bank_line(v.payee)}
-             for v in pvs]
-    settings = {s.key: s.value for s in db.query(M.Setting).all()}
-    rel = pdfgen.listing_pdf(pl_no, vdata, total,
-                             company=settings.get("COMPANY_NAME", "CATDAY SDN BHD"),
-                             address=settings.get("COMPANY_ADDRESS", "Uptown PJ"),
-                             reg_no=settings.get("COMPANY_ROC", ""))
-    pl = M.Listing(pl_no=pl_no, total=total, pdf_path=rel,
+    pl = M.Listing(pl_no=pl_no, total=0.0,
                    prepared_by=user.display_name if user else "")
     db.add(pl)
     db.flush()
     for v in pvs:
         v.listing_id = pl.id
+    db.flush()
+    _refresh_listing(db, pl)
     db.commit()
     return RedirectResponse("/listings", status_code=302)
+
+
+def _refresh_listing(db: Session, pl: M.Listing) -> None:
+    """Recompute a listing's total and re-issue its PDF from whatever vouchers
+    are on it right now. Called on create and after every add/remove, so the
+    printed listing can never disagree with the rows on screen."""
+    pvs = sorted(pl.vouchers, key=lambda v: v.pv_no)
+    pl.total = sum(v.total for v in pvs)
+    banks = supplier_map(db, [v.payee for v in pvs])
+
+    def bank_line(payee):
+        s = banks.get(payee.strip().lower())
+        return f"{s.bank_name} {s.account_no}" if s and (s.bank_name or s.account_no) else ""
+
+    vdata = [{"pv_no": v.pv_no, "date": f"{v.date:%d/%m/%y}", "payee": v.payee,
+              "total": v.total, "bank": bank_line(v.payee)}
+             for v in pvs]
+    settings = {s.key: s.value for s in db.query(M.Setting).all()}
+    pl.pdf_path = pdfgen.listing_pdf(
+        pl.pl_no, vdata, pl.total,
+        company=settings.get("COMPANY_NAME", "CATDAY SDN BHD"),
+        address=settings.get("COMPANY_ADDRESS", "Uptown PJ"),
+        reg_no=settings.get("COMPANY_ROC", ""))
+
+
+# A listing is only open for editing before the bank run goes out. Kept as one
+# function so the routes and the template agree on the answer -- a button that
+# is shown must work, and a button that is hidden must say why (see /listings).
+def listing_locked_reason(pl: M.Listing) -> str:
+    if pl.status == "Processed":
+        return ("Already processed — the bank run has gone out. "
+                "Use ↩ Undo processed first if it really needs changing.")
+    return ""
+
+
+@app.post("/listings/{lid}/add")
+async def listing_add(lid: int, request: Request, db: Session = Depends(get_db)):
+    """Add unlisted vouchers to an existing listing."""
+    user = current_user(request, db)
+    if not user or user.role not in ("admin", "manager"):
+        return RedirectResponse("/", status_code=302)
+    pl = db.get(M.Listing, lid)
+    if not pl:
+        return RedirectResponse("/listings", status_code=303)
+    locked = listing_locked_reason(pl)
+    if locked:
+        request.session["flash_del"] = f"{pl.pl_no}: {locked}"
+        return RedirectResponse("/listings", status_code=303)
+    form = await request.form()
+    ids = [int(x) for v in form.getlist("pv_ids") for x in str(v).split(",") if x.strip()]
+    pvs = db.query(M.Voucher).filter(M.Voucher.id.in_(ids),
+                                     M.Voucher.listing_id.is_(None),
+                                     M.Voucher.status.in_(["Draft", "Approved"])).all()
+    if not pvs:
+        request.session["flash_del"] = (
+            "Nothing added — those vouchers are already on a listing, or are not "
+            "Draft/Approved. 没有可加入的凭单。")
+        return RedirectResponse("/listings", status_code=303)
+    for v in pvs:
+        v.listing_id = pl.id
+    db.flush()
+    _refresh_listing(db, pl)
+    db.commit()
+    request.session["flash_del"] = (
+        f"Added {len(pvs)} voucher{'s' if len(pvs) != 1 else ''} to {pl.pl_no} "
+        f"— new total RM {pl.total:,.2f}. The listing PDF has been re-issued.")
+    return RedirectResponse("/listings", status_code=303)
+
+
+@app.post("/listings/{lid}/remove/{vid}")
+def listing_remove(lid: int, vid: int, request: Request, db: Session = Depends(get_db)):
+    """Take one voucher off a listing. The voucher itself survives, unlisted,
+    ready to go on a different run -- removing it from the batch is not the same
+    as cancelling the payment."""
+    user = current_user(request, db)
+    if not user or user.role not in ("admin", "manager"):
+        return RedirectResponse("/", status_code=302)
+    pl = db.get(M.Listing, lid)
+    v = db.get(M.Voucher, vid)
+    if not pl or not v or v.listing_id != pl.id:
+        return RedirectResponse("/listings", status_code=303)
+    locked = listing_locked_reason(pl)
+    if locked:
+        request.session["flash_del"] = f"{pl.pl_no}: {locked}"
+        return RedirectResponse("/listings", status_code=303)
+    v.listing_id = None
+    db.flush()
+    _refresh_listing(db, pl)
+    db.commit()
+    request.session["flash_del"] = (
+        f"{v.pv_no} removed from {pl.pl_no} — new total RM {pl.total:,.2f}. "
+        f"{v.pv_no} is unlisted again and can go on another listing."
+        + ("  This listing is now empty — add vouchers or delete it."
+           if not pl.vouchers else ""))
+    return RedirectResponse("/listings", status_code=303)
 
 
 @app.get("/listings/{lid}/bank-file")
@@ -1578,6 +1679,122 @@ def listing_action(lid: int, request: Request, action: str = Form(...),
             pl.status = "Processed"
         db.commit()
     return RedirectResponse("/listings", status_code=302)
+
+
+# ───────────────────── APPROVER LINK (public, read-only) ─────────────────────
+# The authoriser is usually a director with no login. Rather than screenshot the
+# vouchers into WhatsApp, the preparer generates one long random URL that shows
+# the whole listing: every PV, the supplier bank details being paid to, and the
+# original invoice behind each line. Read-only, revocable, expiring, and every
+# view is stamped so the preparer knows it was actually opened.
+
+SHARE_DEFAULT_DAYS = 14
+
+
+def _share_files(pl: M.Listing) -> dict:
+    """The exact set of files this token may serve, keyed by a short id.
+
+    An allow-list built from the listing itself, not a path the visitor supplies
+    — so the public route cannot be walked into the rest of /data/uploads no
+    matter what is put in the URL."""
+    out = {}
+    if pl.pdf_path:
+        out[f"pl{pl.id}"] = (pl.pdf_path, f"{pl.pl_no}.pdf")
+    for v in pl.vouchers:
+        if v.pdf_path:
+            out[f"pv{v.id}"] = (v.pdf_path, f"{v.pv_no}.pdf")
+        for pay in v.payments:
+            for d in pay.documents:
+                if d.file_path:
+                    out[f"doc{d.id}"] = (d.file_path, os.path.basename(d.file_path))
+    return out
+
+
+def _live_share(db: Session, token: str):
+    sh = db.query(M.ListingShare).filter(M.ListingShare.token == token).first()
+    if not sh or not sh.live:
+        return None
+    return sh
+
+
+@app.post("/listings/{lid}/share")
+def listing_share(lid: int, request: Request, days: int = Form(SHARE_DEFAULT_DAYS),
+                  db: Session = Depends(get_db)):
+    """Issue a fresh approver link. Any earlier link for this listing is revoked
+    in the same breath — two live links to the same money is not something the
+    preparer should have to reason about."""
+    user = current_user(request, db)
+    if not user or user.role not in ("admin", "manager"):
+        return RedirectResponse("/", status_code=302)
+    pl = db.get(M.Listing, lid)
+    if not pl:
+        return RedirectResponse("/listings", status_code=303)
+    for old in pl.shares:
+        old.revoked = True
+    days = max(1, min(int(days or SHARE_DEFAULT_DAYS), 90))
+    sh = M.ListingShare(
+        listing_id=pl.id, token=secrets.token_urlsafe(24),
+        created_by=user.display_name,
+        expires_at=datetime.utcnow() + timedelta(days=days))
+    db.add(sh)
+    db.commit()
+    request.session["share_open"] = pl.id
+    return RedirectResponse("/listings", status_code=303)
+
+
+@app.post("/listings/{lid}/share/revoke")
+def listing_share_revoke(lid: int, request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user or user.role not in ("admin", "manager"):
+        return RedirectResponse("/", status_code=302)
+    pl = db.get(M.Listing, lid)
+    if pl:
+        for sh in pl.shares:
+            sh.revoked = True
+        db.commit()
+        request.session["flash_del"] = (
+            f"Approver link for {pl.pl_no} revoked — the URL now shows "
+            "“link no longer active” to anyone who still has it.")
+    return RedirectResponse("/listings", status_code=303)
+
+
+@app.get("/approve/{token}", response_class=HTMLResponse)
+def approve_view(token: str, request: Request, db: Session = Depends(get_db)):
+    """The authoriser's page. No login, no session, no mutation."""
+    sh = db.query(M.ListingShare).filter(M.ListingShare.token == token).first()
+    if not sh or not sh.live:
+        return templates.TemplateResponse(
+            request, "approve_gone.html",
+            {"state": sh.state if sh else "Not found"}, status_code=404)
+    pl = sh.listing
+    sh.views += 1
+    sh.last_viewed_at = datetime.utcnow()
+    db.commit()
+    banks = supplier_map(db, [v.payee for v in pl.vouchers])
+    settings = {x.key: x.value for x in db.query(M.Setting).all()}
+    return templates.TemplateResponse(request, "approve.html", {
+        "pl": pl, "banks": banks, "token": token, "share": sh,
+        "files": _share_files(pl),
+        "company": settings.get("COMPANY_NAME", "CATDAY"),
+        "reg_no": settings.get("COMPANY_ROC", ""),
+        "asset_v": ASSET_V,
+    })
+
+
+@app.get("/approve/{token}/f/{key}")
+def approve_file(token: str, key: str, db: Session = Depends(get_db)):
+    """Serve one file that belongs to this listing, by allow-list key."""
+    sh = _live_share(db, token)
+    if not sh:
+        raise HTTPException(404)
+    entry = _share_files(sh.listing).get(key)
+    if not entry:
+        raise HTTPException(404)
+    rel, name = entry
+    full = os.path.join(UPLOAD_DIR, rel)
+    if not os.path.isfile(full):
+        raise HTTPException(404)
+    return FileResponse(full, filename=name, content_disposition_type="inline")
 
 
 # ─────────────────────────── PETTY CASH (multi-account) ───────────────────────────
