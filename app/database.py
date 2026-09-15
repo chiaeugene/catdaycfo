@@ -39,6 +39,8 @@ MIGRATIONS = [
     "ALTER TABLE sales ADD COLUMN document_id INTEGER",
     "ALTER TABLE bank_statement_lines ADD COLUMN post_account_id INTEGER",
     "ALTER TABLE documents ADD COLUMN related_doc_id INTEGER",
+    "ALTER TABLE users ADD COLUMN can_approve BOOLEAN DEFAULT 0",
+    "ALTER TABLE payments ADD COLUMN request_id INTEGER",
 ]
 
 

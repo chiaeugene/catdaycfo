@@ -19,6 +19,14 @@ from .database import SessionLocal
 from . import models as M
 
 MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+# A requester raises purchase requests and sees nothing else. Enforced here,
+# not per-route, for the same reason viewer is: a route added next month that
+# only checks "logged in?" must still be closed to them.
+REQUESTER_PREFIXES = ("/requests", "/static", "/login", "/logout", "/files/requests/", "/health")
+# The one mutation a viewer may make: deciding a purchase request, and only
+# when can_approve is set. Jasmine changes nothing in the books; this isn't
+# the books.
+APPROVER_PATH = re.compile(r"^/requests/\d+/decide$")
 # Never block or log these — the Telegram bot has no user session, and
 # blocking /login itself would make it impossible to sign in.
 BLOCK_EXEMPT_PREFIXES = ("/telegram/webhook", "/login", "/logout")
@@ -40,6 +48,21 @@ ACTION_PATTERNS = [
     (r"^POST /vouchers/\d+/action$", "Voucher action"),
     (r"^POST /listings/create$", "Created listing"),
     (r"^POST /listings/\d+/action$", "Listing action"),
+    (r"^POST /listings/\d+/add$", "Added vouchers to listing"),
+    (r"^POST /listings/\d+/remove/\d+$", "Removed voucher from listing"),
+    (r"^POST /listings/\d+/share$", "Issued approver link"),
+    (r"^POST /listings/\d+/share/revoke$", "Revoked approver link"),
+    (r"^POST /requests/new$", "Created purchase request"),
+    (r"^POST /requests/\d+/update$", "Edited purchase request"),
+    (r"^POST /requests/\d+/submit$", "Submitted purchase request"),
+    (r"^POST /requests/\d+/decide$", "Decided purchase request"),
+    (r"^POST /requests/\d+/withdraw$", "Withdrew purchase request"),
+    (r"^POST /requests/\d+/cancel$", "Cancelled approved request"),
+    (r"^POST /requests/\d+/reopen$", "Reopened purchase request"),
+    (r"^POST /requests/\d+/fulfilled$", "Marked purchase request fulfilled"),
+    (r"^POST /requests/\d+/delete$", "Deleted draft purchase request"),
+    (r"^POST /payments/\d+/link-request$", "Linked payment to purchase request"),
+    (r"^POST /settings/users/\d+/approver$", "Toggled approver rights"),
     (r"^POST /listings/\d+/add$", "Added vouchers to a listing"),
     (r"^POST /listings/\d+/remove/\d+$", "Removed a voucher from a listing"),
     (r"^POST /listings/\d+/share$", "Issued an approver link"),
@@ -127,14 +150,21 @@ class AccessControlMiddleware(BaseHTTPMiddleware):
 
         uid_before = request.session.get("uid")
         blocked = False
-        if should_block_check and uid_before:
+        confined = False     # requester wandering outside /requests
+        if uid_before and (should_block_check or not path.startswith(REQUESTER_PREFIXES)):
             db = SessionLocal()
             try:
                 u = db.get(M.User, uid_before)
-                if u and u.role == "viewer":
-                    blocked = True
+                if u and u.role == "viewer" and should_block_check:
+                    blocked = not (u.can_approve and APPROVER_PATH.match(path))
+                if u and u.role == "requester" and not path.startswith(REQUESTER_PREFIXES) \
+                        and path != "/":
+                    confined = True
             finally:
                 db.close()
+
+        if confined:
+            return RedirectResponse("/requests", status_code=303)
 
         if blocked:
             # Send them back where they came from, not to `path` itself — most

@@ -223,6 +223,15 @@
         </select></div>
       <div><label>Category 类别</label>
         <select name="category" class="js-category"><option value=""></option>{% for c in M.CATEGORIES %}<option {% if d.category==c %}selected{% endif %}>{{ c }}</option>{% endfor %}</select></div>
+      {% if approved_prs %}
+      <div><label>Approved request 已批准申请 <span style="text-transform:none;font-weight:500">(optional)</span></label>
+        <select name="request_id">
+          <option value="">— none / not requested —</option>
+          {% for r in approved_prs %}
+          <option value="{{ r.id }}" {% if d.supplier and r.supplier and d.supplier.strip().lower() == r.supplier.strip().lower() and loop.first %}selected{% endif %}>{{ r.pr_no }} · {{ r.supplier or '—' }} · RM {{ r.total|rm }}{% if d.supplier and r.supplier and d.supplier.strip().lower() == r.supplier.strip().lower() %} ← same supplier{% endif %}</option>
+          {% endfor %}
+        </select></div>
+      {% endif %}
       <div class="js-only-petty"><label>Petty cash tin 零用金账户</label>
         <select name="pc_account_id">
           {% for a in pc_accounts %}<option value="{{ a.id }}">{{ a.name }}</option>{% endfor %}

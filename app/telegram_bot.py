@@ -93,6 +93,67 @@ def tg_send(chat_id, text: str, buttons=None):
                json=payload, timeout=30)
 
 
+def tg_answer_callback(cq_id: str, text: str = "", alert: bool = False):
+    """Acknowledge a button tap. Without this Telegram shows a spinner on the
+    button for a minute and the approver assumes it didn't work."""
+    token = bot_token()
+    if not token:
+        return
+    httpx.post(f"https://api.telegram.org/bot{token}/answerCallbackQuery",
+               json={"callback_query_id": cq_id, "text": text[:200], "show_alert": alert},
+               timeout=30)
+
+
+def tg_edit(chat_id, message_id, text: str, buttons=None):
+    """Rewrite the message the buttons were on, so the group sees the decision
+    where the request was, and the buttons go away once one is pressed."""
+    token = bot_token()
+    if not token:
+        return
+    payload = {"chat_id": str(chat_id), "message_id": message_id, "text": text,
+               "parse_mode": "Markdown",
+               "reply_markup": {"inline_keyboard": buttons or []}}
+    httpx.post(f"https://api.telegram.org/bot{token}/editMessageText", json=payload, timeout=30)
+
+
+def request_buttons(pr_id: int):
+    """Approve is one tap. Return and Reject need a reason, so they open the
+    web page where there is somewhere to type it."""
+    return [[{"text": "✅ Approve 批准", "callback_data": f"pr:approve:{pr_id}"}],
+            [{"text": "↩ Return / ⛔ Reject (needs a reason)",
+              "url": f"{BASE_URL}/requests/{pr_id}"}]]
+
+
+def handle_callback(cq: dict, db: Session):
+    """A button tap. Only purchase-request approvals so far."""
+    data = cq.get("data") or ""
+    cq_id = cq.get("id", "")
+    frm = cq.get("from", {})
+    from_id = str(frm.get("id", ""))
+    msg = cq.get("message") or {}
+    chat_id = msg.get("chat", {}).get("id")
+    message_id = msg.get("message_id")
+
+    if not data.startswith("pr:"):
+        tg_answer_callback(cq_id)
+        return
+    _, action, pid = data.split(":", 2)
+    user = db.query(User).filter(User.telegram_id == from_id, User.active == True).first()  # noqa: E712
+    if not user or not user.can_approve:
+        tg_answer_callback(cq_id, f"⛔ Not an approver. Your Telegram ID: {from_id}", alert=True)
+        return
+    # The web app owns the rules (own request, wrong status, stale...). Import
+    # here to avoid a circular import at module load.
+    from .requests_logic import decide_request
+    ok, text = decide_request(db, int(pid), action, user, note="", channel="telegram")
+    tg_answer_callback(cq_id, text if not ok else "✅ Approved", alert=not ok)
+    if ok and chat_id and message_id:
+        original = msg.get("text") or ""
+        tg_edit(chat_id, message_id,
+                f"{original}\n\n✅ *Approved by {user.display_name}* via Telegram",
+                buttons=[[{"text": "🔗 Open request", "url": f"{BASE_URL}/requests/{pid}"}]])
+
+
 def verify_button():
     """Inline button that opens the Verification queue on the web app."""
     return [[{"text": "🔗 Open verification 打开审核", "url": f"{BASE_URL}/documents"}]]
@@ -232,6 +293,9 @@ def rollback_counter(db: Session, name: str, doc_no: str) -> bool:
 
 
 def handle_update(update: dict, db: Session):
+    if update.get("callback_query"):
+        handle_callback(update["callback_query"], db)
+        return
     msg = update.get("message") or update.get("edited_message")
     if not msg:
         return

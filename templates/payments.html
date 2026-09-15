@@ -82,7 +82,27 @@
     <td>{{ p.category }}</td>
     <td>{{ p.grp }}</td>
     <td class="num">{{ p.amount|rm }}</td>
-    <td><span class="badge {{ p.status.replace(' ','')|lower }}">{{ p.status }}</span></td>
+    <td><span class="badge {{ p.status.replace(' ','')|lower }}">{{ p.status }}</span>
+      {% set fl = pay_flags.get(p.id) %}
+      {% if p.request_id and p.request and not fl %}
+        <a class="badge approved" href="/requests/{{ p.request_id }}" title="Approved under {{ p.request.pr_no }}">{{ p.request.pr_no }}</a>
+      {% elif fl %}
+        {# Warning, not a block: rent is never requested, and a genuinely unapproved
+           spend still has to be paid. The flag is for the conversation afterwards. #}
+        <span class="badge pending" title="{{ fl }}">{{ '⚠ over' if fl.startswith('Over') else '⚠ no approval' }}</span>
+      {% endif %}
+      {% if user.role in ['admin','manager'] and approved_prs and p.status != 'Void' %}
+      <details class="rowedit" style="margin-top:3px"><summary style="font-size:10.5px">link approval</summary>
+        <div class="inline" style="margin-top:4px">
+          <select form="paylink-{{ p.id }}" name="request_id" class="slim" style="max-width:220px">
+            <option value="">— none —</option>
+            {% for r in approved_prs %}<option value="{{ r.id }}" {% if p.request_id == r.id %}selected{% endif %}>{{ r.pr_no }} · {{ r.supplier or '—' }} · RM {{ r.total|rm }}</option>{% endfor %}
+          </select>
+          <button form="paylink-{{ p.id }}" class="small" type="submit">Save</button>
+        </div>
+      </details>
+      {% endif %}
+    </td>
     <td class="mono">{% if p.voucher %}{{ p.voucher.pv_no }}{% endif %}</td>
     <td>
       {% if p.status in ["Unsorted","Categorized"] %}
@@ -121,6 +141,8 @@
 <form id="payedit-{{ p.id }}" method="post" action="/payments/{{ p.id }}/update"></form>
 {% endif %}
 {% endfor %}
+{# Approval link forms — outside the outer form for the same nested-form reason. #}
+{% for p in payments %}<form id="paylink-{{ p.id }}" method="post" action="/payments/{{ p.id }}/link-request"></form>{% endfor %}
 
 <datalist id="suplist">
   {% for n in supplier_names %}<option value="{{ n }}">{% endfor %}

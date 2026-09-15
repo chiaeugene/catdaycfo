@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block content %}
+<div class="pagehead">
+  <h1>{% if pr %}Edit {{ pr.pr_no or 'draft' }}{% else %}New purchase request 新采购申请{% endif %}</h1>
+  <div class="actions"><a class="btn secondary" href="{% if pr %}/requests/{{ pr.id }}{% else %}/requests{% endif %}">Cancel</a></div>
+</div>
+<div class="sub">What do you want to buy, from whom, and why. Prices are your best guess — the invoice is checked against them later.</div>
+
+{% if pr and pr.status == 'Approved' %}
+<div class="panel" style="background:var(--amber-bg);border-color:var(--amber)">
+  <div style="font-size:12.5px;color:var(--amber);font-weight:700">
+    ⚠️ {{ pr.pr_no }} is already approved. Saving any change cancels that approval and it must be approved again.</div>
+</div>
+{% endif %}
+
+<form method="post" enctype="multipart/form-data"
+      action="{% if pr %}/requests/{{ pr.id }}/update{% else %}/requests/new{% endif %}" id="prform">
+<div class="panel">
+  <h2>Request 申请</h2>
+  <div class="formrow" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr))">
+    <div><label>Supplier 供应商</label>
+      <input name="supplier" list="suplist" value="{{ pr.supplier if pr else '' }}" placeholder="Pick, or type a new one" autocomplete="off">
+      <datalist id="suplist">{% for s in suppliers %}<option value="{{ s }}">{% endfor %}</datalist></div>
+    <div><label>Purpose 用途</label>
+      <select name="purpose">{% for x in M.PR_PURPOSES %}<option {% if pr and pr.purpose == x %}selected{% endif %}>{{ x }}</option>{% endfor %}</select></div>
+    <div><label>Needed by 需要日期</label>
+      <input type="date" name="needed_by" value="{{ pr.needed_by.isoformat() if pr and pr.needed_by else '' }}"></div>
+    <div><label>How urgent 紧急程度</label>
+      <select name="urgency">{% for x in M.PR_URGENCY %}<option {% if pr and pr.urgency == x %}selected{% endif %}>{{ x }}</option>{% endfor %}</select></div>
+    <div><label>Payment terms 付款方式</label>
+      <select name="terms">{% for x in M.PR_TERMS %}<option {% if pr and pr.terms == x %}selected{% endif %}>{{ x }}</option>{% endfor %}</select></div>
+    <div><label>Photo (quotation / shelf) 照片</label>
+      <input type="file" name="photo" accept="image/*,.pdf" capture="environment">
+      {% if pr and pr.photo_path %}<div style="font-size:11px;color:var(--muted);margin-top:3px">Has a photo — choosing another replaces it</div>{% endif %}</div>
+  </div>
+  <div style="margin-top:12px">
+    <label>Why is it needed? 为什么需要 <span style="text-transform:none;font-weight:500;color:var(--muted)">(required — the approver reads this first)</span></label>
+    <input name="reason" required value="{{ pr.reason if pr else '' }}" placeholder="e.g. Kitten food down to 2 boxes, 6 boarders next week">
+  </div>
+</div>
+
+<div class="panel">
+  <h2>Items 项目</h2>
+  <div class="tablewrap">
+  <table id="lines">
+    <tr><th style="min-width:200px">Item 物品</th><th>Category 类别</th><th class="num">Qty</th><th>UOM 单位</th><th class="num">Est. unit RM</th><th class="num">Amount</th><th></th></tr>
+    {% set rows = pr.lines if pr and pr.lines else [none] %}
+    {% for l in rows %}
+    <tr class="line">
+      <td><input name="item" list="stocklist" value="{{ l.item if l else '' }}" placeholder="Type to search stock, or a new item" autocomplete="off" class="js-item" style="width:100%">
+          <input type="hidden" name="stock_item_id" value="{{ l.stock_item_id or '' if l else '' }}" class="js-sid"></td>
+      <td><select name="category" class="slim">{% for c in M.CATEGORIES %}<option {% if l and l.category == c %}selected{% endif %}>{{ c }}</option>{% endfor %}</select></td>
+      <td><input type="number" step="0.01" min="0" name="qty" value="{{ l.qty if l else 1 }}" class="slim num js-qty" style="width:80px"></td>
+      <td><select name="uom" class="slim js-uom">{% for u in M.UOMS %}<option {% if l and l.uom == u %}selected{% endif %}>{{ u }}</option>{% endfor %}</select></td>
+      <td><input type="number" step="0.01" min="0" name="unit_price" value="{{ l.unit_price if l else '' }}" class="slim num js-price" style="width:100px" placeholder="0.00"></td>
+      <td class="num js-amt" style="font-weight:700"></td>
+      <td><button type="button" class="small ghost js-del" title="Remove line">✕</button></td>
+    </tr>
+    {% endfor %}
+    <tr><td colspan="5" class="num" style="font-weight:800">Estimated total 预计总额</td><td class="num" id="total" style="font-weight:800;font-size:15px"></td><td></td></tr>
+  </table>
+  </div>
+  <datalist id="stocklist">
+    {% for s in stock %}<option value="{{ s.name }}" data-id="{{ s.id }}" data-uom="{{ s.unit }}" data-cost="{{ s.unit_cost }}" data-cat="{{ s.category }}">{% endfor %}
+  </datalist>
+  <div class="actions" style="margin-top:10px">
+    <button type="button" class="small secondary" id="addline">{{ icon('plus', 12) }} Add item</button>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="actions">
+    <button type="submit" class="secondary">{{ icon('save', 14) }} Save draft 保存草稿</button>
+    <button type="submit" name="submit_now" value="1">{{ icon('send', 14) }} Submit for approval 提交审批</button>
+  </div>
+  <div style="font-size:11.5px;color:var(--muted);margin-top:8px">A draft is yours alone. Submitting gives it a number and sends it to the approvers.</div>
+</div>
+</form>
+
+<script>
+(function(){
+  var table = document.getElementById('lines');
+  var stock = {};
+  document.querySelectorAll('#stocklist option').forEach(function(o){
+    stock[o.value.toLowerCase()] = o.dataset;
+  });
+  function fmt(n){ return n.toLocaleString('en-MY', {minimumFractionDigits:2, maximumFractionDigits:2}); }
+  function recalc(){
+    var total = 0;
+    table.querySelectorAll('tr.line').forEach(function(tr){
+      var q = parseFloat(tr.querySelector('.js-qty').value) || 0;
+      var p = parseFloat(tr.querySelector('.js-price').value) || 0;
+      var a = q * p; total += a;
+      tr.querySelector('.js-amt').textContent = a ? fmt(a) : '';
+    });
+    document.getElementById('total').textContent = 'RM ' + fmt(total);
+  }
+  function wire(tr){
+    tr.querySelector('.js-item').addEventListener('input', function(){
+      // Picking a stock item fills in its UOM, category and last unit cost.
+      var s = stock[this.value.toLowerCase()];
+      tr.querySelector('.js-sid').value = s ? s.id : '';
+      if (s) {
+        var uom = tr.querySelector('.js-uom');
+        for (var i = 0; i < uom.options.length; i++) if (uom.options[i].value === s.uom) uom.selectedIndex = i;
+        var cat = tr.querySelector('select[name=category]');
+        for (var j = 0; j < cat.options.length; j++) if (cat.options[j].value === s.cat) cat.selectedIndex = j;
+        var price = tr.querySelector('.js-price');
+        if (!price.value && parseFloat(s.cost) > 0) price.value = parseFloat(s.cost).toFixed(2);
+      }
+      recalc();
+    });
+    tr.querySelectorAll('.js-qty,.js-price').forEach(function(el){ el.addEventListener('input', recalc); });
+    tr.querySelector('.js-del').addEventListener('click', function(){
+      if (table.querySelectorAll('tr.line').length > 1) tr.remove(); else {
+        tr.querySelectorAll('input').forEach(function(i){ if (i.type !== 'hidden') i.value = ''; });
+      }
+      recalc();
+    });
+  }
+  table.querySelectorAll('tr.line').forEach(wire);
+  document.getElementById('addline').addEventListener('click', function(){
+    var first = table.querySelector('tr.line');
+    var tr = first.cloneNode(true);
+    tr.querySelectorAll('input').forEach(function(i){ i.value = i.name === 'qty' ? 1 : ''; });
+    tr.querySelector('.js-amt').textContent = '';
+    first.parentNode.insertBefore(tr, table.querySelector('tr:last-child'));
+    wire(tr);
+    tr.querySelector('.js-item').focus();
+  });
+  recalc();
+})();
+</script>
+{% endblock %}

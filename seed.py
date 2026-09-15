@@ -39,16 +39,19 @@ for username, passcode, name, role in USERS:
     u = db.query(User).filter(User.username == username).first()
     if u:
         u.password_hash, u.display_name, u.role, u.active = hash_password(passcode), name, role, True
+        u.can_approve = True          # all three sign off purchase requests
         print(f"User updated: {username} ({role})")
     else:
         db.add(User(username=username, password_hash=hash_password(passcode),
-                    display_name=name, role=role, active=True))
+                    display_name=name, role=role, active=True, can_approve=True))
         print(f"User created: {username} ({role})")
 
-# Only these 3 accounts should ever be able to log in — deactivate anything else.
+# Only these 3 accounts get into the books. Requester accounts (the shop
+# operator raising purchase requests) are made in Settings and must survive a
+# redeploy -- they can't see the books, so they're outside this rule.
 db.flush()
 for u in db.query(User).all():
-    if u.username not in allowed_usernames and u.active:
+    if u.username not in allowed_usernames and u.active and u.role != "requester":
         u.active = False
         print(f"User deactivated (not in allowed list): {u.username}")
 

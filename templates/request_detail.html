@@ -1,0 +1,174 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% set badge = {'Draft':'draft','Submitted':'submitted','Returned':'pending','Approved':'approved',
+                'Rejected':'rejected','Cancelled':'void','Fulfilled':'paid'} %}
+{% block content %}
+{% if flash %}
+<div class="panel" style="background:var(--green-bg);border-color:rgba(29,127,63,.3)">
+  <div style="font-size:13px;color:var(--green);font-weight:700">✓ {{ flash }}</div></div>
+{% endif %}
+{% if flash_err %}
+<div class="panel" style="background:var(--amber-bg);border-color:var(--amber)">
+  <div style="font-size:12.5px;color:var(--amber);font-weight:700">{{ flash_err }}</div></div>
+{% endif %}
+
+<div class="pagehead">
+  <h1><span class="mono">{{ pr.pr_no or 'Draft' }}</span>
+    <span class="badge {{ badge.get(pr.status, 'draft') }}" style="vertical-align:middle;margin-left:8px">{{ pr.status }}</span>
+    {% if pr.urgency == 'Urgent' %}<span class="badge rejected" style="vertical-align:middle">urgent</span>{% endif %}
+    {% if pr.stale %}<span class="badge void" style="vertical-align:middle" title="Older than {{ M.PR_APPROVAL_DAYS }} days">stale approval</span>{% endif %}
+  </h1>
+  <div class="actions">
+    <a class="btn secondary" href="/requests">← All requests</a>
+    {% if pr.pdf_path %}<a class="btn secondary" href="/files/{{ pr.pdf_path }}" target="_blank">{{ icon('file', 14) }} PDF</a>{% endif %}
+    <form method="post" action="/requests/{{ pr.id }}/pdf" class="inline"><button class="secondary" type="submit" title="Re-issue the PDF">↻ PDF</button></form>
+  </div>
+</div>
+
+{# ── Decision box: the thing an approver came here for ── #}
+{% if can_decide and pr.status == 'Submitted' %}
+<div class="panel" style="border:2px solid var(--brand);background:var(--amber-bg)">
+  <h2 style="margin-top:0">Your decision 您的决定</h2>
+  <form method="post" action="/requests/{{ pr.id }}/decide">
+    <div style="margin-bottom:10px"><label>Note to {{ pr.requester }} <span style="text-transform:none;font-weight:500;color:var(--muted)">(needed for Return / Reject)</span></label>
+      <input name="note" placeholder="e.g. Qty too high — 2 boxes is enough this month" style="width:100%"></div>
+    <div class="actions">
+      <button type="submit" name="action" value="approve" class="success">{{ icon('check', 14) }} Approve 批准 — RM {{ pr.total|rm }}</button>
+      <button type="submit" name="action" value="return" class="secondary">↩ Return for changes 退回修改</button>
+      <button type="submit" name="action" value="reject" class="danger">{{ icon('x', 14) }} Reject 拒绝</button>
+    </div>
+  </form>
+</div>
+{% elif user.can_approve and pr.requester_id == user.id and pr.status == 'Submitted' %}
+<div class="panel" style="background:var(--amber-bg);border-color:var(--amber)">
+  <div style="font-size:12.5px;color:var(--amber);font-weight:700">This is your own request — another approver has to decide it.</div></div>
+{% endif %}
+
+<div class="cards">
+  <div class="card"><div class="label">Requested by 申请人</div><div class="value" style="font-size:16px">{{ pr.requester }}</div></div>
+  <div class="card"><div class="label">Supplier 供应商</div><div class="value" style="font-size:16px">{{ pr.supplier or '—' }}
+    {% if pr.supplier_new %}<span class="badge pending" title="Not in Suppliers yet — check before paying">new supplier</span>{% endif %}</div></div>
+  <div class="card amber"><div class="label">Estimated total 预计总额</div><div class="value">RM {{ pr.total|rm }}</div></div>
+  {% if pr.status in ['Approved','Fulfilled'] %}
+  <div class="card"><div class="label">Invoiced so far 已开票</div>
+    <div class="value" style="font-size:16px{% if pr.invoiced > pr.total * 1.1 + 1 %};color:var(--red){% endif %}">RM {{ pr.invoiced|rm }}</div></div>
+  {% endif %}
+</div>
+
+<div class="panel">
+  <div class="formrow" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px">
+    <div><label>Purpose</label><div>{{ pr.purpose }}</div></div>
+    <div><label>Needed by</label><div>{{ pr.needed_by.strftime('%d/%m/%Y') if pr.needed_by else '—' }}</div></div>
+    <div><label>Payment terms</label><div>{{ pr.terms }}</div></div>
+    <div><label>Submitted</label><div>{{ pr.submitted_at.strftime('%d/%m/%Y %H:%M') if pr.submitted_at else '—' }}</div></div>
+    {% if pr.decided_by %}
+    <div><label>Decided</label><div>{{ pr.decided_by }} · {{ pr.decided_at.strftime('%d/%m/%Y %H:%M') }}</div></div>
+    {% endif %}
+    {% if pr.expires_at %}<div><label>Approval valid until</label><div>{{ pr.expires_at.strftime('%d/%m/%Y') }}</div></div>{% endif %}
+  </div>
+  <div style="margin-top:12px"><label>Why 原因</label><div style="font-size:13.5px">{{ pr.reason or '—' }}</div></div>
+  {% if pr.decision_note %}
+  <div style="margin-top:10px;padding:10px 12px;background:var(--amber-bg);border-radius:8px">
+    <label>{{ pr.decided_by }} said</label><div style="font-size:13px">{{ pr.decision_note }}</div></div>
+  {% endif %}
+  {% if pr.photo_path %}
+  <div style="margin-top:10px"><a class="docchip" href="/files/{{ pr.photo_path }}" target="_blank">{{ icon('paperclip', 12) }} Attached photo / quotation</a></div>
+  {% endif %}
+</div>
+
+<div class="panel">
+  <h2>Items 项目</h2>
+  <div class="tablewrap">
+  <table>
+    <tr><th>#</th><th>Item</th><th>Category</th><th class="num">Qty</th><th>UOM</th><th class="num">Est. unit</th><th class="num">Amount</th><th>Last paid</th></tr>
+    {% for l in pr.lines %}
+    <tr>
+      <td>{{ loop.index }}</td><td>{{ l.item }}</td><td>{{ l.category }}</td>
+      <td class="num">{{ l.qty|int if l.qty == l.qty|int else l.qty }}</td><td>{{ l.uom }}</td>
+      <td class="num">{{ l.unit_price|rm }}</td><td class="num" style="font-weight:700">{{ l.amount|rm }}</td>
+      <td style="font-size:11.5px;color:var(--muted)">
+        {% set lp = last_paid.get(l.id) %}
+        {% if lp %}RM {{ lp.amount|rm }} · {{ lp.supplier }} · {{ lp.date.strftime('%d/%m/%y') }}{% else %}—{% endif %}</td>
+    </tr>
+    {% endfor %}
+    <tr><td colspan="6" class="num" style="font-weight:800">Total</td><td class="num" style="font-weight:800">{{ pr.total|rm }}</td><td></td></tr>
+  </table>
+  </div>
+</div>
+
+{% if sup_hist or others %}
+<div class="panel">
+  <h2>Context for the approver 参考</h2>
+  {% if sup_hist %}
+  <div style="font-size:12px;font-weight:700;margin-bottom:4px">Paid to {{ pr.supplier }} before</div>
+  <div class="docchips" style="margin-bottom:10px">
+    {% for p in sup_hist %}<span class="docchip">{{ p.date.strftime('%d/%m/%y') }} · {{ p.description[:30] }} · RM {{ p.amount|rm }}</span>{% endfor %}
+  </div>
+  {% endif %}
+  {% if others %}
+  <div style="font-size:12px;font-weight:700;margin-bottom:4px">Other open requests from {{ pr.requester }}</div>
+  <div class="docchips">
+    {% for o in others %}<a class="docchip" href="/requests/{{ o.id }}">{{ o.pr_no }} · {{ o.status }} · {{ o.supplier or '—' }} · RM {{ o.total|rm }}</a>{% endfor %}
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+{# ── Actions for the requester / admin ── #}
+<div class="panel">
+  <h2>Actions</h2>
+  <div class="actions">
+    {% if can_edit and pr.status in ['Draft','Returned','Submitted','Approved'] %}
+    <a class="btn secondary" href="/requests/{{ pr.id }}/edit"
+       {% if pr.status == 'Approved' %}title="Editing cancels the approval"{% endif %}>{{ icon('edit', 14) }} Edit{% if pr.status == 'Approved' %} (cancels approval){% endif %}</a>
+    {% endif %}
+    {% if can_edit and pr.status in ['Draft','Returned'] %}
+    <form method="post" action="/requests/{{ pr.id }}/submit" class="inline"><button type="submit">{{ icon('send', 14) }} {{ 'Resubmit' if pr.status == 'Returned' else 'Submit for approval' }}</button></form>
+    {% endif %}
+    {% if can_edit and pr.status == 'Submitted' %}
+    <form method="post" action="/requests/{{ pr.id }}/withdraw" class="inline"><button type="submit" class="secondary">↩ Withdraw</button></form>
+    {% endif %}
+    {% if (can_edit or user.can_approve) and pr.status == 'Approved' %}
+    <form method="post" action="/requests/{{ pr.id }}/fulfilled" class="inline"
+          onsubmit="return confirm('Goods received and invoice in? Marks {{ pr.pr_no }} done.')">
+      <button type="submit" class="success">{{ icon('check', 14) }} Mark fulfilled</button></form>
+    <details class="rowedit" style="display:inline-block"><summary class="btn danger small">Cancel approval…</summary>
+      <form method="post" action="/requests/{{ pr.id }}/cancel" class="inline" style="margin-top:6px">
+        <input name="reason" required placeholder="Why it won't happen" style="width:240px" class="slim">
+        <button type="submit" class="small danger">Cancel {{ pr.pr_no }}</button></form></details>
+    {% endif %}
+    {% if user.role == 'admin' and pr.status in ['Rejected','Cancelled'] %}
+    <form method="post" action="/requests/{{ pr.id }}/reopen" class="inline"><button type="submit" class="secondary">↩ Reopen as draft</button></form>
+    {% endif %}
+    {% if can_edit and pr.status == 'Draft' and not pr.pr_no %}
+    <form method="post" action="/requests/{{ pr.id }}/delete" class="inline" onsubmit="return confirm('Delete this draft?')"><button type="submit" class="danger">{{ icon('trash', 14) }} Delete draft</button></form>
+    {% endif %}
+  </div>
+  {% if pr.status in ['Rejected','Cancelled','Fulfilled'] %}
+  <div style="font-size:11.5px;color:var(--muted);margin-top:8px">{{ pr.pr_no }} is closed. {% if user.role == 'admin' and pr.status != 'Fulfilled' %}Reopen it if that was a mistake — the trail keeps both.{% endif %}</div>
+  {% endif %}
+</div>
+
+{% if pr.payments %}
+<div class="panel">
+  <h2>Payments made under this approval</h2>
+  <div class="docchips">
+    {% for p in pr.payments %}<a class="docchip" href="/payments/{{ p.id }}">{{ p.pay_no }} · {{ p.invoice_no or 'no inv no' }} · RM {{ p.amount|rm }} · {{ p.status }}</a>{% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<div class="panel">
+  <h2>Trail 记录</h2>
+  <table>
+    {% for e in pr.events|reverse %}
+    <tr>
+      <td class="mono" style="white-space:nowrap;font-size:11.5px">{{ e.at.strftime('%d/%m/%y %H:%M') }}</td>
+      <td style="white-space:nowrap"><b>{{ e.who }}</b></td>
+      <td><span class="badge draft">{{ e.action }}</span>{% if e.channel == 'telegram' %} <span title="via Telegram">📱</span>{% endif %}</td>
+      <td style="font-size:12.5px">{{ e.detail }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endblock %}

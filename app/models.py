@@ -7,7 +7,23 @@ from .database import Base
 # "viewer" is read-only system-wide — enforced centrally in app/audit.py's
 # AccessControlMiddleware, not by individual routes (many older routes never
 # had their own role check, so a per-route approach would miss some).
-ROLES = ["admin", "manager", "staff", "viewer"]
+ROLES = ["admin", "manager", "staff", "viewer", "requester"]
+
+# ── Purchase requests ──────────────────────────────────────────────────────
+# Approval before spending. Deliberately outside the ledger: a request posts
+# nothing, it only records that someone with the authority said yes.
+PR_STATUS = ["Draft", "Submitted", "Returned", "Approved", "Rejected", "Cancelled", "Fulfilled"]
+PR_OPEN = ("Draft", "Submitted", "Returned")            # still being worked on
+PR_URGENCY = ["Normal", "Urgent"]
+PR_PURPOSES = ["Restock", "Replace broken", "New item", "Repair", "Event / marketing", "Other"]
+PR_TERMS = ["Credit", "Cash on delivery", "Cash before delivery"]
+UOMS = ["pcs", "box", "bottle", "pack", "carton", "bag", "kg", "g", "L", "ml",
+        "set", "pair", "roll", "service", "month", "hour"]
+# Regular commitments that never go through a purchase request — flagging
+# every rent and salary payment as "no approval" would train people to ignore
+# the flag on the ones that matter.
+APPROVAL_EXEMPT = {"Rental", "Utilities", "Salary", "Insurance", "Software", "Staff Claim"}
+PR_APPROVAL_DAYS = 30                                  # an approval goes stale after this
 
 CATEGORIES = [
     "Renovation", "Equipment", "Cat Supplies", "Grooming Supplies", "Utilities",
@@ -96,6 +112,9 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(20), default="staff")
     telegram_id: Mapped[str] = mapped_column(String(30), default="")
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Separate from role on purpose: Jasmine is a viewer who changes nothing in
+    # the books, and approving a purchase request is not a change to the books.
+    can_approve: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class AuditLog(Base):
@@ -164,6 +183,9 @@ class Payment(Base):
     status: Mapped[str] = mapped_column(String(30), default="Unsorted")
     voucher_id: Mapped[int | None] = mapped_column(ForeignKey("vouchers.id"), nullable=True)
     notes: Mapped[str] = mapped_column(Text, default="")
+    # The approval this spend was made under, if any. Nullable: rent is never
+    # requested, and a payment linked to nothing simply carries a flag.
+    request_id: Mapped[int | None] = mapped_column(ForeignKey("purchase_requests.id"), nullable=True)
     documents = relationship("Document", backref="payment", foreign_keys="Document.payment_id")
 
 
@@ -229,6 +251,91 @@ class ListingShare(Base):
         if self.expires_at and self.expires_at < datetime.utcnow():
             return "Expired"
         return "Live"
+
+
+class PurchaseRequest(Base):
+    """'May I buy this?' -- asked before the money moves.
+
+    The operator fills the form; anyone with can_approve says yes or no. Nothing
+    here touches the ledger. The value is the trail: what was asked, what was
+    approved, by whom, and whether the invoice that later arrives matches it.
+    """
+    __tablename__ = "purchase_requests"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    pr_no: Mapped[str] = mapped_column(String(20), default="")    # blank until submitted
+    status: Mapped[str] = mapped_column(String(20), default="Draft")
+    requester_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    requester: Mapped[str] = mapped_column(String(100), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    needed_by: Mapped[date | None] = mapped_column(Date, nullable=True)
+    urgency: Mapped[str] = mapped_column(String(10), default="Normal")
+    supplier: Mapped[str] = mapped_column(String(150), default="")
+    supplier_new: Mapped[bool] = mapped_column(Boolean, default=False)   # typed in, not on file
+    purpose: Mapped[str] = mapped_column(String(40), default="Restock")
+    reason: Mapped[str] = mapped_column(Text, default="")
+    terms: Mapped[str] = mapped_column(String(30), default="Credit")
+    total: Mapped[float] = mapped_column(Float, default=0.0)
+    photo_path: Mapped[str] = mapped_column(String(300), default="")
+    # Decision
+    decided_by: Mapped[str] = mapped_column(String(100), default="")
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    decision_note: Mapped[str] = mapped_column(Text, default="")
+    expires_at: Mapped[date | None] = mapped_column(Date, nullable=True)
+    pdf_path: Mapped[str] = mapped_column(String(300), default="")
+    # What exactly was approved, frozen at the moment of approval. Any later edit
+    # cancels the approval, so this and the live lines only differ in history.
+    approved_json: Mapped[str] = mapped_column(Text, default="")
+    lines = relationship("PurchaseRequestLine", backref="request",
+                         cascade="all, delete-orphan", order_by="PurchaseRequestLine.id")
+    events = relationship("PurchaseRequestEvent", backref="request",
+                          cascade="all, delete-orphan", order_by="PurchaseRequestEvent.id")
+    payments = relationship("Payment", backref="request", foreign_keys="Payment.request_id")
+
+    @property
+    def is_open(self) -> bool:
+        return self.status in PR_OPEN
+
+    @property
+    def editable(self) -> bool:
+        return self.status in ("Draft", "Returned")
+
+    @property
+    def stale(self) -> bool:
+        return (self.status == "Approved" and self.expires_at is not None
+                and self.expires_at < date.today())
+
+    @property
+    def invoiced(self) -> float:
+        return sum(p.amount for p in self.payments if p.status != "Void")
+
+
+class PurchaseRequestLine(Base):
+    __tablename__ = "purchase_request_lines"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    request_id: Mapped[int] = mapped_column(ForeignKey("purchase_requests.id"))
+    item: Mapped[str] = mapped_column(String(150), default="")
+    category: Mapped[str] = mapped_column(String(50), default="Misc")
+    qty: Mapped[float] = mapped_column(Float, default=1.0)
+    uom: Mapped[str] = mapped_column(String(20), default="pcs")
+    unit_price: Mapped[float] = mapped_column(Float, default=0.0)
+    stock_item_id: Mapped[int | None] = mapped_column(ForeignKey("stock_items.id"), nullable=True)
+
+    @property
+    def amount(self) -> float:
+        return round(self.qty * self.unit_price, 2)
+
+
+class PurchaseRequestEvent(Base):
+    """Append-only. Nothing here is ever edited or deleted -- it is the trail."""
+    __tablename__ = "purchase_request_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    request_id: Mapped[int] = mapped_column(ForeignKey("purchase_requests.id"))
+    at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    who: Mapped[str] = mapped_column(String(100), default="")
+    action: Mapped[str] = mapped_column(String(30), default="")     # created/submitted/approved/...
+    detail: Mapped[str] = mapped_column(Text, default="")
+    channel: Mapped[str] = mapped_column(String(10), default="web") # web / telegram
 
 
 class PettyCashAccount(Base):

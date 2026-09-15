@@ -18,15 +18,22 @@
   <div>
     <div class="panel">
       <h2>Users 用户</h2>
-      <div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Each person's passcode is their login — there's no shared system passcode anymore. <code>viewer</code> role can see everything but can't change anything. See the <a href="/reports/audit-log">Audit Log</a> for every action taken.</div>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Each person's passcode is their login — there's no shared system passcode anymore. <code>viewer</code> role can see everything but can't change anything. <code>requester</code> only raises purchase requests and sees nothing else — use it for shop staff. <b>Approver</b> is separate from role: a viewer who is an approver can decide requests and still change nothing in the books. See the <a href="/reports/audit-log">Audit Log</a> for every action taken.</div>
       <div class="tablewrap" style="box-shadow:none">
       <table>
-        <tr><th>Username</th><th>Name</th><th>Role</th><th>Telegram ID</th><th>Status</th><th></th></tr>
+        <tr><th>Username</th><th>Name</th><th>Role</th><th>Telegram ID</th><th>Approver</th><th>Status</th><th></th></tr>
         {% for u in users %}
         <tr>
           <td class="mono">{{ u.username }}</td><td>{{ u.display_name }}</td>
           <td><span class="badge draft">{{ u.role }}</span></td>
           <td class="mono">{{ u.telegram_id }}</td>
+          <td>
+            <form method="post" action="/settings/users/{{ u.id }}/approver" class="inline">
+              <button class="small {{ 'success' if u.can_approve else 'ghost' }}" type="submit"
+                      title="{{ 'Can approve purchase requests — click to remove' if u.can_approve else 'Click to allow approving purchase requests' }}">
+                {{ '✓ approver' if u.can_approve else 'not approver' }}</button>
+            </form>
+          </td>
           <td>{{ '✅' if u.active else '🚫' }}</td>
           <td>
             <div class="actions">
@@ -57,6 +64,7 @@
         <div><label>Display name</label><input name="display_name" required style="width:110px"></div>
         <div><label>Role</label><select name="role">{% for r in M.ROLES %}<option>{{ r }}</option>{% endfor %}</select></div>
         <div><label>Telegram ID</label><input name="telegram_id" style="width:100px"></div>
+        <div><label>Approver</label><input type="checkbox" name="can_approve" value="1" title="Can approve purchase requests"></div>
         <button type="submit">＋ Add</button>
       </form>
     </div>

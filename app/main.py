@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from .database import Base, engine, get_db, run_migrations
 from . import models as M
 from .auth import hash_password, verify_password, current_user
-from . import telegram_bot, pdfgen, claude_ai, ledger, backup, audit
+from . import telegram_bot, pdfgen, claude_ai, ledger, backup, audit, requests_logic as RQ
 from .audit import AccessControlMiddleware
 from .statutory import calc_statutory
 
@@ -103,6 +103,8 @@ NAV_GROUPS = [
     ]),
     ("Every day 每天", [
         ("documents", "/documents", "inbox", "Verify Inbox", ("admin", "manager", "viewer")),
+        ("requests", "/requests", "list", "Purchase Requests 采购申请",
+         ("admin", "manager", "staff", "viewer", "requester")),
         ("sales", "/sales", "cart", "Sales", ("admin", "manager", "staff", "viewer")),
         ("pettycash", "/pettycash", "coins", "Petty Cash", ("admin", "manager", "staff", "viewer")),
         ("boarding", "/boarding", "cat", "Boarding", ("admin", "manager", "staff", "viewer")),
@@ -339,6 +341,9 @@ def logout(request: Request):
 # ─────────────────────────── DASHBOARD ───────────────────────────
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request, db: Session = Depends(get_db)):
+    _u = current_user(request, db)
+    if _u and _u.role == "requester":
+        return RedirectResponse("/requests", status_code=302)
     mo = month_str()
     petty_bal = (db.query(func.coalesce(func.sum(M.PettyCashEntry.amount_in), 0)).scalar()
                  - db.query(func.coalesce(func.sum(M.PettyCashEntry.amount_out), 0)).scalar())
@@ -451,7 +456,9 @@ def documents(request: Request, view: str = "pending", db: Session = Depends(get
                      .filter(M.ARInvoice.status == "Open")
                      .order_by(M.ARInvoice.date.desc()).all() if i.outstanding > 0.005]
 
-    return render(request, db, "documents.html", "documents",
+    approved_prs = db.query(M.PurchaseRequest).filter(M.PurchaseRequest.status == "Approved") \
+        .order_by(M.PurchaseRequest.id.desc()).all()
+    return render(request, db, "documents.html", "documents", approved_prs=approved_prs,
                   flash_dup=request.session.pop("flash_dup", None),
                   flash_appr=request.session.pop("flash_appr", None),
                   pending=pending, processed=processed, view=view, payloads=payloads,
@@ -578,9 +585,11 @@ async def verify_document(doc_id: int, request: Request, db: Session = Depends(g
             supplier = supplier or doc.sender   # claimant is reimbursed
         else:
             grp = M.group_for(category, section)   # cat-hotel category → P&L group
+        _rid = str(f.get("request_id") or "").strip()
         p = M.Payment(pay_no=pay_no, date=doc_date, supplier=supplier, description=description,
                       category=category, grp=grp, amount=amount, month=doc.month,
                       invoice_no=invoice_no,
+                      request_id=int(_rid) if _rid.isdigit() else None,
                       tax_type=tax_type, tax_amount=tax_of(tax_type, amount),
                       status="Categorized" if category else "Unsorted",
                       notes=f"from {doc.doc_no} ({doc.sender})")
@@ -869,11 +878,16 @@ def payments(request: Request, status: str = "", error: str = "", db: Session = 
         .filter(M.Payment.status.in_(["Unsorted", "Categorized"])).scalar()
     supplier_names = [s.name for s in db.query(M.Supplier)
                       .filter(M.Supplier.active == True).order_by(M.Supplier.name).all()]  # noqa: E712
-    return render(request, db, "payments.html", "payments",
+    approved_prs = db.query(M.PurchaseRequest).filter(M.PurchaseRequest.status == "Approved") \
+        .order_by(M.PurchaseRequest.id.desc()).all()
+    pay_flags = {}
+    rows = q.limit(300).all()
+    pay_flags = {p.id: RQ.payment_flag(p) for p in rows}
+    return render(request, db, "payments.html", "payments", pay_flags=pay_flags, approved_prs=approved_prs,
                   flash_dup=request.session.pop("flash_dup", None),
                   flash_appr=request.session.pop("flash_appr", None),
                   flash_del=request.session.pop("flash_del", None),
-                  payments=q.limit(300).all(), flt=status, open_total=open_total,
+                  payments=rows, flt=status, open_total=open_total,
                   supplier_names=supplier_names, error=ERRORS.get(error, ""))
 
 
@@ -1795,6 +1809,368 @@ def approve_file(token: str, key: str, db: Session = Depends(get_db)):
     if not os.path.isfile(full):
         raise HTTPException(404)
     return FileResponse(full, filename=name, content_disposition_type="inline")
+
+
+
+# ─────────────────────────── PURCHASE REQUESTS ───────────────────────────
+# "May I buy this?" -- approval before the money moves. Outside the ledger.
+# Rules live in requests_logic so Telegram button taps obey the same ones.
+
+def _pr_or_404(db, rid: int) -> M.PurchaseRequest:
+    pr = db.get(M.PurchaseRequest, rid)
+    if not pr:
+        raise HTTPException(404)
+    return pr
+
+
+def _can_see_request(user, pr) -> bool:
+    return user.role != "requester" or pr.requester_id == user.id
+
+
+def _can_edit_request(user, pr) -> bool:
+    """The requester edits their own; admins can tidy anyone's."""
+    return pr.requester_id == user.id or user.role == "admin"
+
+
+def _read_lines(form) -> list[dict]:
+    items = form.getlist("item")
+    cats = form.getlist("category")
+    qtys = form.getlist("qty")
+    uoms = form.getlist("uom")
+    prices = form.getlist("unit_price")
+    sids = form.getlist("stock_item_id")
+    out = []
+    for i, item in enumerate(items):
+        item = str(item).strip()
+        if not item:
+            continue
+        def _f(lst, d=0.0):
+            try:
+                return float(str(lst[i]).replace(",", "") or d)
+            except (ValueError, IndexError):
+                return d
+        sid = str(sids[i]).strip() if i < len(sids) else ""
+        out.append({"item": item[:150],
+                    "category": (str(cats[i]) if i < len(cats) else "Misc") or "Misc",
+                    "qty": max(_f(qtys, 1.0), 0.0),
+                    "uom": (str(uoms[i]) if i < len(uoms) else "pcs") or "pcs",
+                    "unit_price": max(_f(prices), 0.0),
+                    "stock_item_id": int(sid) if sid.isdigit() else None})
+    return out
+
+
+def _apply_header(pr, form, db):
+    pr.supplier = str(form.get("supplier") or "").strip()[:150]
+    pr.supplier_new = bool(pr.supplier) and not db.query(M.Supplier).filter(
+        func.lower(M.Supplier.name) == pr.supplier.lower()).first()
+    pr.purpose = str(form.get("purpose") or "Restock")
+    pr.reason = str(form.get("reason") or "").strip()
+    pr.terms = str(form.get("terms") or "Credit")
+    pr.urgency = "Urgent" if str(form.get("urgency") or "") == "Urgent" else "Normal"
+    nb = str(form.get("needed_by") or "").strip()
+    pr.needed_by = date.fromisoformat(nb) if nb else None
+
+
+async def _save_photo(pr, form):
+    up = form.get("photo")
+    if up is None or not getattr(up, "filename", ""):
+        return
+    data = await up.read()
+    if not data:
+        return
+    subdir = f"requests/{date.today():%Y-%m}"
+    os.makedirs(os.path.join(UPLOAD_DIR, subdir), exist_ok=True)
+    ext = os.path.splitext(up.filename)[1].lower() or ".jpg"
+    rel = f"{subdir}/req{pr.id}_{datetime.now():%H%M%S}{ext}"
+    with open(os.path.join(UPLOAD_DIR, rel), "wb") as fh:
+        fh.write(data)
+    pr.photo_path = rel
+
+
+@app.get("/requests", response_class=HTMLResponse)
+def requests_list(request: Request, status: str = "", mine: str = "",
+                  db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    q = db.query(M.PurchaseRequest).order_by(M.PurchaseRequest.id.desc())
+    if user.role == "requester" or mine:
+        q = q.filter(M.PurchaseRequest.requester_id == user.id)
+    if status:
+        q = q.filter(M.PurchaseRequest.status == status)
+    prs = q.limit(300).all()
+    waiting = [p for p in prs if p.status == "Submitted" and p.requester_id != user.id] \
+        if user.can_approve else []
+    return render(request, db, "requests.html", "requests",
+                  requests=prs, flt=status, mine=bool(mine), waiting=waiting,
+                  flash=request.session.pop("flash_pr", None),
+                  flash_err=request.session.pop("flash_pr_err", None))
+
+
+@app.get("/requests/new", response_class=HTMLResponse)
+def request_new(request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    suppliers = [x.name for x in db.query(M.Supplier).filter(M.Supplier.active == True)  # noqa: E712
+                 .order_by(M.Supplier.name).all()]
+    stock = db.query(M.StockItem).filter(M.StockItem.active == True).order_by(M.StockItem.name).all()  # noqa: E712
+    return render(request, db, "request_form.html", "requests",
+                  pr=None, suppliers=suppliers, stock=stock, today_iso=date.today().isoformat())
+
+
+@app.post("/requests/new")
+async def request_create(request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    form = await request.form()
+    pr = M.PurchaseRequest(requester_id=user.id, requester=user.display_name)
+    _apply_header(pr, form, db)
+    db.add(pr)
+    db.flush()
+    for ln in _read_lines(form):
+        db.add(M.PurchaseRequestLine(request_id=pr.id, **ln))
+    db.flush()
+    await _save_photo(pr, form)
+    RQ.recompute(pr)
+    RQ.log_event(db, pr, user.display_name, "created", f"RM {pr.total:,.2f}")
+    db.commit()
+    if str(form.get("submit_now") or ""):
+        ok, msg = RQ.submit_request(db, pr, user)
+        request.session["flash_pr" if ok else "flash_pr_err"] = msg
+    else:
+        request.session["flash_pr"] = "Saved as draft — nobody sees it until you submit."
+    return RedirectResponse(f"/requests/{pr.id}", status_code=303)
+
+
+@app.get("/requests/{rid}", response_class=HTMLResponse)
+def request_detail(rid: int, request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    pr = _pr_or_404(db, rid)
+    if not _can_see_request(user, pr):
+        return RedirectResponse("/requests", status_code=302)
+    # Context the approver actually needs: last price paid for each item, and
+    # what this supplier has cost before.
+    last_paid = {}
+    for ln in pr.lines:
+        hit = db.query(M.Payment).filter(M.Payment.description.ilike(f"%{ln.item[:25]}%"),
+                                         M.Payment.status != "Void") \
+            .order_by(M.Payment.date.desc()).first()
+        if hit:
+            last_paid[ln.id] = hit
+    sup_hist = []
+    if pr.supplier:
+        sup_hist = db.query(M.Payment).filter(func.lower(M.Payment.supplier) == pr.supplier.lower(),
+                                              M.Payment.status != "Void") \
+            .order_by(M.Payment.date.desc()).limit(5).all()
+    others = db.query(M.PurchaseRequest).filter(
+        M.PurchaseRequest.requester_id == pr.requester_id,
+        M.PurchaseRequest.id != pr.id,
+        M.PurchaseRequest.status.in_(["Submitted", "Approved"])).order_by(M.PurchaseRequest.id.desc()).all()
+    return render(request, db, "request_detail.html", "requests",
+                  pr=pr, last_paid=last_paid, sup_hist=sup_hist, others=others,
+                  can_edit=_can_edit_request(user, pr),
+                  can_decide=(user.can_approve and pr.requester_id != user.id),
+                  flash=request.session.pop("flash_pr", None),
+                  flash_err=request.session.pop("flash_pr_err", None))
+
+
+@app.get("/requests/{rid}/edit", response_class=HTMLResponse)
+def request_edit(rid: int, request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    pr = _pr_or_404(db, rid)
+    if not _can_see_request(user, pr) or not _can_edit_request(user, pr):
+        return RedirectResponse(f"/requests/{rid}", status_code=302)
+    suppliers = [x.name for x in db.query(M.Supplier).filter(M.Supplier.active == True)  # noqa: E712
+                 .order_by(M.Supplier.name).all()]
+    stock = db.query(M.StockItem).filter(M.StockItem.active == True).order_by(M.StockItem.name).all()  # noqa: E712
+    return render(request, db, "request_form.html", "requests",
+                  pr=pr, suppliers=suppliers, stock=stock, today_iso=date.today().isoformat())
+
+
+@app.post("/requests/{rid}/update")
+async def request_update(rid: int, request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    pr = _pr_or_404(db, rid)
+    if not _can_edit_request(user, pr):
+        return RedirectResponse(f"/requests/{rid}", status_code=302)
+    if pr.status in ("Rejected", "Cancelled", "Fulfilled"):
+        request.session["flash_pr_err"] = f"{pr.pr_no} is {pr.status} — reopen it first."
+        return RedirectResponse(f"/requests/{rid}", status_code=303)
+    form = await request.form()
+    before_total = pr.total
+    was_approved = pr.status == "Approved"
+    _apply_header(pr, form, db)
+    for ln in list(pr.lines):
+        db.delete(ln)
+    db.flush()
+    for ln in _read_lines(form):
+        db.add(M.PurchaseRequestLine(request_id=pr.id, **ln))
+    db.flush()
+    await _save_photo(pr, form)
+    RQ.recompute(pr)
+    what = f"total RM {before_total:,.2f} → RM {pr.total:,.2f}"
+    if was_approved:
+        RQ.unapprove_on_edit(db, pr, user.display_name, what)
+        request.session["flash_pr_err"] = (
+            f"{pr.pr_no} edited after approval — the approval is cancelled. "
+            "Submit it again for a fresh decision.")
+    elif pr.status == "Submitted":
+        # Editing something already in front of the approvers pulls it back.
+        pr.status = "Draft"
+        RQ.log_event(db, pr, user.display_name, "edited", what + " · withdrawn from approvers")
+        request.session["flash_pr"] = f"{pr.pr_no} updated and pulled back to Draft — submit again."
+    else:
+        RQ.log_event(db, pr, user.display_name, "edited", what)
+        request.session["flash_pr"] = "Saved."
+    db.commit()
+    if str(form.get("submit_now") or ""):
+        ok, msg = RQ.submit_request(db, pr, user)
+        request.session["flash_pr" if ok else "flash_pr_err"] = msg
+    return RedirectResponse(f"/requests/{rid}", status_code=303)
+
+
+@app.post("/requests/{rid}/submit")
+def request_submit(rid: int, request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    pr = _pr_or_404(db, rid)
+    if not _can_edit_request(user, pr):
+        return RedirectResponse(f"/requests/{rid}", status_code=302)
+    ok, msg = RQ.submit_request(db, pr, user)
+    request.session["flash_pr" if ok else "flash_pr_err"] = msg
+    return RedirectResponse(f"/requests/{rid}", status_code=303)
+
+
+@app.post("/requests/{rid}/decide")
+def request_decide(rid: int, request: Request, action: str = Form(...), note: str = Form(""),
+                   db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    ok, msg = RQ.decide_request(db, rid, action, user, note, channel="web")
+    request.session["flash_pr" if ok else "flash_pr_err"] = msg
+    return RedirectResponse(f"/requests/{rid}", status_code=303)
+
+
+@app.post("/requests/{rid}/withdraw")
+def request_withdraw(rid: int, request: Request, db: Session = Depends(get_db)):
+    """Requester pulls a Submitted request back before anyone decides."""
+    user = current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    pr = _pr_or_404(db, rid)
+    if _can_edit_request(user, pr) and pr.status == "Submitted":
+        pr.status = "Draft"
+        RQ.log_event(db, pr, user.display_name, "withdrawn")
+        db.commit()
+        request.session["flash_pr"] = f"{pr.pr_no} withdrawn — it's a draft again, same number."
+    return RedirectResponse(f"/requests/{rid}", status_code=303)
+
+
+@app.post("/requests/{rid}/cancel")
+def request_cancel(rid: int, request: Request, reason: str = Form(""), db: Session = Depends(get_db)):
+    """An approved purchase that won't happen after all."""
+    user = current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    pr = _pr_or_404(db, rid)
+    if (_can_edit_request(user, pr) or user.can_approve) and pr.status == "Approved":
+        if not reason.strip():
+            request.session["flash_pr_err"] = "Say why it's cancelled — it stays on the record."
+            return RedirectResponse(f"/requests/{rid}", status_code=303)
+        pr.status = "Cancelled"
+        RQ.log_event(db, pr, user.display_name, "cancelled", reason.strip())
+        db.commit()
+        request.session["flash_pr"] = f"{pr.pr_no} cancelled."
+    return RedirectResponse(f"/requests/{rid}", status_code=303)
+
+
+@app.post("/requests/{rid}/reopen")
+def request_reopen(rid: int, request: Request, db: Session = Depends(get_db)):
+    """A wrong rejection or cancellation. Admin only; back to Draft with the trail intact."""
+    user = current_user(request, db)
+    if not user or user.role != "admin":
+        return RedirectResponse("/", status_code=302)
+    pr = _pr_or_404(db, rid)
+    if pr.status in ("Rejected", "Cancelled"):
+        was = pr.status
+        pr.status = "Draft"
+        pr.decided_by, pr.decided_at, pr.decision_note = "", None, ""
+        pr.expires_at, pr.approved_json = None, ""
+        RQ.log_event(db, pr, user.display_name, "reopened", f"was {was}")
+        db.commit()
+        request.session["flash_pr"] = f"{pr.pr_no} reopened as a draft — submit again when ready."
+    return RedirectResponse(f"/requests/{rid}", status_code=303)
+
+
+@app.post("/requests/{rid}/fulfilled")
+def request_fulfilled(rid: int, request: Request, db: Session = Depends(get_db)):
+    """The goods arrived and the invoice is in. Closes the request."""
+    user = current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    pr = _pr_or_404(db, rid)
+    if (_can_edit_request(user, pr) or user.can_approve) and pr.status == "Approved":
+        pr.status = "Fulfilled"
+        RQ.log_event(db, pr, user.display_name, "fulfilled",
+                     f"invoiced RM {pr.invoiced:,.2f} vs approved RM {pr.total:,.2f}")
+        db.commit()
+        request.session["flash_pr"] = f"{pr.pr_no} marked fulfilled."
+    return RedirectResponse(f"/requests/{rid}", status_code=303)
+
+
+@app.post("/requests/{rid}/delete")
+def request_delete(rid: int, request: Request, db: Session = Depends(get_db)):
+    """Only a Draft that was never submitted -- it has no number and no trail
+    anyone else has seen. Anything numbered stays: cancel or reject instead."""
+    user = current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    pr = _pr_or_404(db, rid)
+    if _can_edit_request(user, pr) and pr.status == "Draft" and not pr.pr_no:
+        db.delete(pr)
+        db.commit()
+        request.session["flash_pr"] = "Draft deleted."
+        return RedirectResponse("/requests", status_code=303)
+    request.session["flash_pr_err"] = "Only an unsubmitted draft can be deleted — cancel or reject a numbered request."
+    return RedirectResponse(f"/requests/{rid}", status_code=303)
+
+
+@app.post("/requests/{rid}/pdf")
+def request_pdf_route(rid: int, request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    pr = _pr_or_404(db, rid)
+    if not _can_see_request(user, pr):
+        return RedirectResponse("/requests", status_code=302)
+    RQ.build_pdf(db, pr)
+    db.commit()
+    return RedirectResponse(f"/files/{pr.pdf_path}", status_code=303)
+
+
+@app.post("/payments/{pid}/link-request")
+def payment_link_request(pid: int, request: Request, request_id: str = Form(""),
+                         db: Session = Depends(get_db)):
+    """Attach (or detach) the approval a payment was made under."""
+    user = current_user(request, db)
+    if not user or user.role not in ("admin", "manager"):
+        return RedirectResponse("/", status_code=302)
+    p = db.get(M.Payment, pid)
+    if p:
+        rid = request_id.strip()
+        p.request_id = int(rid) if rid.isdigit() else None
+        db.commit()
+    return RedirectResponse("/payments", status_code=303)
 
 
 # ─────────────────────────── PETTY CASH (multi-account) ───────────────────────────
@@ -3780,13 +4156,27 @@ def settings_page(request: Request, db: Session = Depends(get_db)):
 @app.post("/settings/users/new")
 def user_new(request: Request, username: str = Form(...), password: str = Form(...),
              display_name: str = Form(...), role: str = Form("staff"),
-             telegram_id: str = Form(""), db: Session = Depends(get_db)):
+             telegram_id: str = Form(""), can_approve: str = Form(""),
+             db: Session = Depends(get_db)):
     me = current_user(request, db)
     if not me or me.role != "admin":
         return RedirectResponse("/", status_code=302)
     db.add(M.User(username=username.strip().lower(), password_hash=hash_password(password),
-                  display_name=display_name, role=role, telegram_id=telegram_id.strip()))
+                  display_name=display_name, role=role, telegram_id=telegram_id.strip(),
+                  can_approve=bool(can_approve)))
     db.commit()
+    return RedirectResponse("/settings", status_code=302)
+
+
+@app.post("/settings/users/{uid}/approver")
+def user_approver(uid: int, request: Request, db: Session = Depends(get_db)):
+    me = current_user(request, db)
+    if not me or me.role != "admin":
+        return RedirectResponse("/", status_code=302)
+    u = db.get(M.User, uid)
+    if u:
+        u.can_approve = not u.can_approve
+        db.commit()
     return RedirectResponse("/settings", status_code=302)
 
 

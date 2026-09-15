@@ -414,6 +414,92 @@ def voucher_pdf(pv_no: str, payee: str, items: list[dict], total: float,
     return rel
 
 
+# ═══════════════════════ PURCHASE REQUEST ═══════════════════════
+def request_pdf(pr_no: str, req: dict, lines: list[dict], total: float,
+                company="CATDAY SDN BHD", address="Uptown PJ", reg_no="",
+                approved: bool = False) -> str:
+    """req: {requester, date, needed_by, urgency, supplier, purpose, reason,
+    terms, decided_by, decided_at, expires, note}. lines: [{item, category,
+    qty, uom, unit_price, amount}].
+
+    Before approval the sheet is stamped NOT APPROVED across the middle so a
+    printout can never be waved at a supplier as a go-ahead."""
+    subdir = f"requests/{date.today():%Y-%m}"
+    os.makedirs(os.path.join(UPLOAD_DIR, subdir), exist_ok=True)
+    rel = f"{subdir}/{pr_no}_{safe_name(req.get('supplier') or 'request')}.pdf"
+    doc = _doc(rel)
+    title = "APPROVED PURCHASE REQUEST" if approved else "PURCHASE REQUEST"
+    el = [_brand_band(company, address, reg_no), Spacer(1, 9 * mm),
+          _title(title), Spacer(1, 5 * mm)]
+
+    el.append(_meta_block([
+        ("REQUESTED BY", req.get("requester", "")),
+        ("REQUEST NO.", pr_no),
+        ("DATE", req.get("date", "")),
+    ]))
+    el.append(Spacer(1, 5 * mm))
+    el.append(_brand_box("WHAT THIS IS FOR", [
+        [Paragraph("Supplier", LBL), Paragraph(req.get("supplier") or "-", VAL)],
+        [Paragraph("Purpose", LBL), Paragraph(req.get("purpose") or "-", VAL)],
+        [Paragraph("Why", LBL), Paragraph(req.get("reason") or "-", BODY)],
+        [Paragraph("Needed by", LBL),
+         Paragraph(f"{req.get('needed_by') or '-'}"
+                   + ("  &middot;  URGENT" if req.get("urgency") == "Urgent" else ""), VAL)],
+        [Paragraph("Payment terms", LBL), Paragraph(req.get("terms") or "-", BODY)],
+    ]))
+    el.append(Spacer(1, 6 * mm))
+
+    data = [[Paragraph("NO.", TH), Paragraph("ITEM", TH), Paragraph("CATEGORY", TH),
+             Paragraph("QTY", TH_R), Paragraph("UOM", TH), Paragraph("UNIT (RM)", TH_R),
+             Paragraph("AMOUNT (RM)", TH_R)]]
+    for i, ln in enumerate(lines, 1):
+        qty = ln["qty"]
+        qty_s = f"{qty:g}" if float(qty).is_integer() else f"{qty:,.2f}"
+        data.append([Paragraph(str(i), BODY), Paragraph(ln["item"], BODY),
+                     Paragraph(ln["category"], SMALL), Paragraph(qty_s, BODY_R),
+                     Paragraph(ln["uom"], BODY), Paragraph(f"{ln['unit_price']:,.2f}", BODY_R),
+                     Paragraph(f"{ln['amount']:,.2f}", BODY_R)])
+    n = len(lines)
+    data.append(["", "", "", "", "", Paragraph("TOTAL", TOT), Paragraph(f"{total:,.2f}", TOT_R)])
+    el.append(_brand_table(data, [11 * mm, 62 * mm, 30 * mm, 15 * mm, 16 * mm, 20 * mm, 22 * mm],
+                           n, [n + 1]))
+    el.append(Spacer(1, 2 * mm))
+    el.append(Paragraph("Prices are the requester's estimate. The invoice that arrives is "
+                        "checked against this total.", TINY))
+
+    if approved:
+        el.append(Spacer(1, 6 * mm))
+        el.append(_brand_box("APPROVAL", [
+            [Paragraph("Approved by", LBL), Paragraph(req.get("decided_by") or "-", VAL)],
+            [Paragraph("On", LBL), Paragraph(req.get("decided_at") or "-", VAL)],
+            [Paragraph("Valid until", LBL), Paragraph(req.get("expires") or "-", VAL)],
+            [Paragraph("Note", LBL), Paragraph(req.get("note") or "-", BODY)],
+        ]))
+        el.append(Spacer(1, 3 * mm))
+        el.append(Paragraph("This approval clears the purchase to go ahead. It is not a "
+                            "payment: the supplier's invoice still goes through the usual "
+                            "verification and voucher.", TINY))
+    else:
+        el.append(_sig_block(["Requested By", "Approved By"]))
+
+    _footer(el, company, reg_no, pr_no)
+
+    def _stamp(canvas, _doc):
+        if approved:
+            return
+        canvas.saveState()
+        canvas.setFont(DISPLAY_F, 54)
+        canvas.setFillColor(BRAND_RUST)
+        canvas.setFillAlpha(0.13)
+        canvas.translate(PAGE_W / 2, 148 * mm)
+        canvas.rotate(28)
+        canvas.drawCentredString(0, 0, "NOT APPROVED")
+        canvas.restoreState()
+
+    doc.build(el, onFirstPage=_stamp, onLaterPages=_stamp)
+    return rel
+
+
 # ═══════════════════════════ PAYMENT LISTING ═══════════════════════════
 def listing_pdf(pl_no: str, vouchers: list[dict], total: float,
                 company="CATDAY SDN BHD", address="Uptown PJ", reg_no="") -> str:
