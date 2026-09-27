@@ -264,7 +264,7 @@ def invoice_pdf(inv_no: str, customer: str, cust_address: str, cust_contact: str
                 items: list[dict], due_date: str, notes: str = "",
                 deposit_paid: float = 0.0, schedule: list[dict] | None = None,
                 company="MEOW & ME PET SHOP SDN BHD", address="", reg_no="",
-                bank: dict | None = None) -> str:
+                bank: dict | None = None, inv_date: str = "") -> str:
     """Customer sales invoice.
 
     `company` / `reg_no` carry the LEGAL entity — Malaysian invoices must show
@@ -288,7 +288,9 @@ def invoice_pdf(inv_no: str, customer: str, cust_address: str, cust_contact: str
     el.append(_meta_block([
         ("BILL TO", customer),
         ("INVOICE NO.", inv_no),
-        ("INVOICE DATE", f"{date.today():%d/%m/%Y}"),
+        # The invoice's own date, not today's -- a re-issued PDF (after a
+        # payment, or an edit) must still say when the invoice was raised.
+        ("INVOICE DATE", inv_date or f"{date.today():%d/%m/%Y}"),
         ("PAYMENT DUE", due_date, ParagraphStyle("duer", parent=VAL_R, textColor=BRAND_RUST)),
     ]))
     addr_bits = "<br/>".join(filter(None, [cust_address,

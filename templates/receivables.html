@@ -4,18 +4,29 @@
 <div class="pagehead">
   <h1>Receivables 应收账款</h1>
   <div class="actions">
-    {% if user.role in ['admin','manager'] %}
-    <button onclick="document.getElementById('dlg-newinv').showModal()">＋ New invoice 新发票</button>
+    {% if user.role in ['admin','manager','storekeeper'] %}
+    <a class="btn" href="/receivables/new">＋ New invoice 新发票</a>
     {% endif %}
+    {% if user.role != 'storekeeper' %}
     <a class="btn secondary" href="/reports/ar-aging">{{ icon('list', 14) }} AR Aging</a>
+    {% endif %}
   </div>
 </div>
 <div class="sub">Customer invoices for boarding packages, memberships and corporate accounts. Each invoice posts Dr Trade Debtors / Cr revenue; each receipt posts Dr Bank (or Cash) / Cr Trade Debtors — the P&L, TB and Balance Sheet update automatically.</div>
 
 {% if flash %}
 <div class="panel" style="background:var(--green-bg);border-color:rgba(29,127,63,.3)">
-  <div style="font-size:13px;color:var(--green);font-weight:700">✓ {{ flash }}</div>
+  <div style="font-size:13px;color:var(--green);font-weight:700">✓ {{ flash }}
+    {% if flash_pdf %}<a class="btn small" style="margin-left:8px" href="/files/{{ flash_pdf }}" target="_blank">{{ icon('file', 12) }} Open the PDF 打开PDF</a>{% endif %}</div>
 </div>
+{% endif %}
+{% if flash_err %}
+<div class="panel" style="background:var(--amber-bg);border-color:var(--amber)">
+  <div style="font-size:12.5px;color:var(--amber);font-weight:700">{{ flash_err }}</div>
+</div>
+{% endif %}
+{% if user.role == 'storekeeper' %}
+<div class="sub" style="margin-top:-4px">Payments are recorded by the bookkeeper once the money shows in the bank — you don't need to mark invoices paid. 收款由会计对了银行后记录。</div>
 {% endif %}
 
 <div class="cards">
@@ -44,7 +55,7 @@
       <td>
         {% if i.pdf_path %}
         <a class="docchip" href="/files/{{ i.pdf_path }}" target="_blank">{{ icon('file', 12) }} Invoice</a>
-        {% elif user.role in ['admin','manager'] %}
+        {% elif user.role in ['admin','manager','storekeeper'] %}
         <form method="post" action="/receivables/{{ i.id }}/pdf" class="inline">
           <button class="small secondary" type="submit">Generate</button></form>
         {% else %}—{% endif %}
@@ -64,6 +75,7 @@
           <input type="date" name="date" value="{{ today_iso }}" class="slim" style="width:130px">
           <input type="number" step="0.01" name="amount" value="{{ i.outstanding }}" class="slim" style="width:100px">
           <select name="method" class="slim" style="width:80px"><option>Bank</option><option>Cash</option></select>
+          <input name="reference" class="slim" style="width:130px" placeholder="Bank ref (optional)" title="The bank's reference — printed on the paid invoice">
           <button class="small" type="submit">Receive 收款</button>
         </form>
         {% if user.role == 'admin' and not i.receipts %}
@@ -73,7 +85,10 @@
         </form>
         {% endif %}
         {% endif %}
-        {% if user.role in ['admin','manager'] and i.pdf_path and i.status != 'Void' %}
+        {% if user.role in ['admin','manager','storekeeper'] and i.status != 'Void' and not i.receipts %}
+        <a class="btn small secondary" href="/receivables/{{ i.id }}/edit" title="Fix a mistake — allowed until a payment is recorded">{{ icon('edit', 12) }} Edit</a>
+        {% endif %}
+        {% if user.role in ['admin','manager','storekeeper'] and i.pdf_path and i.status != 'Void' %}
         <form method="post" action="/receivables/{{ i.id }}/pdf" class="inline"
               title="Re-issue the PDF with the latest company details and payments">
           <button class="small ghost" type="submit">↻ PDF</button></form>
@@ -88,7 +103,7 @@
       <td colspan="10" style="padding-bottom:10px">
         {% for r in i.receipts %}
         <span class="badge paid" style="margin-right:6px">
-          {{ r.date.strftime('%d/%m/%y') }} · {{ r.method }} · RM {{ r.amount|rm }}
+          {{ r.date.strftime('%d/%m/%y') }} · {{ r.method }} · RM {{ r.amount|rm }}{% if r.notes %} · ref {{ r.notes }}{% endif %}
         </span>
         {% if user.role == 'admin' %}
         <form method="post" action="/receivables/receipt/{{ r.id }}/delete" class="inline"
@@ -106,48 +121,4 @@
   </table>
 </div>
 
-<dialog id="dlg-newinv">
-  <form method="post" action="/receivables/new">
-    <div class="dlg-head"><b>＋ New customer invoice</b>
-      <button type="button" class="x" onclick="this.closest('dialog').close()">✕</button></div>
-    <div class="dlg-body">
-      <div class="dlg-grid">
-        <div class="full"><label>Customer 客户</label><input name="customer" required placeholder="Customer / company name"></div>
-        <div class="full"><label>Customer address 地址 <span style="text-transform:none;font-weight:500">(printed on the invoice)</span></label>
-          <input name="cust_address" placeholder="e.g. 1, Jalan SS21/1, 47400 Petaling Jaya, Selangor"></div>
-        <div><label>Contact no. 联络号码</label><input name="cust_contact" placeholder="012-345 6789"></div>
-        <div><label>Revenue stream 收入类别</label>
-          <select name="stream">{% for s in streams %}<option>{{ s }}</option>{% endfor %}</select></div>
-        <div><label>Amount RM 金额</label><input type="number" step="0.01" name="amount" required></div>
-        <div><label>Invoice date 日期</label><input type="date" name="date" value="{{ today_iso }}"></div>
-        <div><label>Due date 到期 <span style="text-transform:none;font-weight:500">(blank = +30 days)</span></label>
-          <input type="date" name="due_date"></div>
-        <div class="full"><label>Description / notes 描述 <span style="text-transform:none;font-weight:500">(this becomes the invoice line item)</span></label>
-          <input name="notes" value="{{ prefill_note }}" placeholder="e.g. Devon Rex Kitten (Male) — DOB 16 June 2025"></div>
-        {% if prefill_deposit %}
-        <div class="full" style="background:var(--amber-bg);padding:8px 10px;border-radius:6px">
-          <div style="font-size:11.5px;color:var(--amber);font-weight:700">
-            Deposit of RM {{ prefill_deposit|rm }} received on {{ prefill_date }}</div>
-          <div style="font-size:11.5px;line-height:1.6;margin-top:2px">
-            Enter the <b>full sale value</b> above (not the deposit). Create the invoice, then
-            use <b>Receive 收款</b> on it to record the RM {{ prefill_deposit|rm }} — the invoice
-            will then show the balance still owing.
-          </div>
-        </div>
-        {% endif %}
-      </div>
-    </div>
-    <div class="dlg-foot">
-      <button type="button" class="ghost" onclick="this.closest('dialog').close()">Cancel</button>
-      <button type="submit">Create &amp; post 创建入账</button>
-    </div>
-  </form>
-</dialog>
-{% if prefill_deposit %}
-<script>
-  // Arrived from a daily report carrying a deposit — open the form straight away
-  // so the deposit can't be lost between the two screens.
-  document.getElementById('dlg-newinv')?.showModal();
-</script>
-{% endif %}
 {% endblock %}

@@ -104,11 +104,11 @@ NAV_GROUPS = [
     ("Every day 每天", [
         ("documents", "/documents", "inbox", "Verify Inbox", ("admin", "manager", "viewer")),
         ("requests", "/requests", "list", "Purchase Requests 采购申请",
-         ("admin", "manager", "staff", "viewer", "requester")),
+         ("admin", "manager", "staff", "viewer", "requester", "storekeeper")),
         ("sales", "/sales", "cart", "Sales", ("admin", "manager", "staff", "viewer")),
         ("pettycash", "/pettycash", "coins", "Petty Cash", ("admin", "manager", "staff", "viewer")),
         ("boarding", "/boarding", "cat", "Boarding", ("admin", "manager", "staff", "viewer")),
-        ("stock", "/stock", "coins", "Stock & Usage 库存", ("admin", "manager", "staff", "viewer")),
+        ("stock", "/stock", "coins", "Stock & Usage 库存", ("admin", "manager", "staff", "viewer", "storekeeper")),
     ]),
     ("Paying suppliers 付款", [
         ("payments", "/payments", "card", "Payments", ("admin", "manager", "viewer")),
@@ -120,7 +120,7 @@ NAV_GROUPS = [
         ("payroll", "/payroll", "banknote", "Payroll", ("admin", "viewer")),
         ("statutory", "/reports/statutory", "landmark", "Statutory Dues", ("admin", "viewer")),
         ("reconciliation", "/reconciliation", "banknote", "Bank Reconciliation", ("admin", "manager", "viewer")),
-        ("receivables", "/receivables", "receipt", "Receivables 应收", ("admin", "manager", "viewer")),
+        ("receivables", "/receivables", "receipt", "Receivables 应收", ("admin", "manager", "viewer", "storekeeper")),
         ("pnl", "/pnl", "chart", "Profit & Loss", ("admin", "viewer")),
     ]),
     ("Reports 报告", [
@@ -344,6 +344,8 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     _u = current_user(request, db)
     if _u and _u.role == "requester":
         return RedirectResponse("/requests", status_code=302)
+    if _u and _u.role == "storekeeper":
+        return RedirectResponse("/receivables", status_code=302)
     mo = month_str()
     petty_bal = (db.query(func.coalesce(func.sum(M.PettyCashEntry.amount_in), 0)).scalar()
                  - db.query(func.coalesce(func.sum(M.PettyCashEntry.amount_out), 0)).scalar())
@@ -3361,12 +3363,25 @@ def _ar_aging_rows(db):
     return rows, totals, round(sum(t for t in totals), 2), open_invs
 
 
+AR_EDIT_ROLES = ("admin", "manager", "storekeeper")
+
+
+def _received_text(r) -> str:
+    how = {"Bank": "bank transfer", "Cash": "cash"}.get(r.method, r.method.lower())
+    return f"Received {r.date:%d/%m/%Y} — {how}" + (f", ref {r.notes}" if r.notes else "")
+
+
 def _build_invoice_pdf(db, inv) -> str:
-    """Render (or re-render) the customer-facing PDF for an AR invoice and
-    store its path on the record. Called on creation and again after a
-    receipt, so the document always reflects what has actually been paid:
-    with nothing received it shows a payment schedule, and once money is in
-    it shows the deposit deducted and the balance still due."""
+    """Render (or re-render) the customer-facing PDF for an AR invoice.
+
+    Three states, each worded for what actually happened:
+      - nothing received: a Payment Schedule with the full amount Due
+      - paid in full:     the schedule shows each payment as Paid, with its
+                          date, method and bank reference
+      - part paid:        the deposit is deducted in the table and the note
+                          states the balance still due
+    Called on create, on edit and after every receipt, so the document always
+    reflects the record."""
     settings = {s.key: s.value for s in db.query(M.Setting).all()}
     bank = {"bank_name": settings.get("COMPANY_BANK", ""),
             "account_no": settings.get("COMPANY_BANK_ACCOUNT", ""),
@@ -3376,33 +3391,96 @@ def _build_invoice_pdf(db, inv) -> str:
         if acc:
             bank = {"bank_name": acc.bank_name, "account_no": acc.account_no,
                     "account_holder": settings.get("COMPANY_NAME", "")}
+    if inv.lines:
+        items = [{"description": ln.printed, "amount": ln.amount} for ln in inv.lines]
+        own_notes = inv.notes or ""
+    else:
+        # Invoices from before lines existed: the notes WERE the line item.
+        items = [{"description": inv.notes or f"{inv.stream} services", "amount": inv.amount}]
+        own_notes = ""
+    due = f"{inv.due_date:%d/%m/%Y}"
     received = inv.received
-    schedule = None
-    if not received:
-        schedule = [{"label": f"{inv.stream} — full amount", "amount": inv.amount,
-                     "due": f"On or before {inv.due_date:%d/%m/%Y}", "status": "Due"}]
-    # The description doubles as the line item, so don't repeat it in Notes —
-    # that block is for payment terms the customer needs spelled out.
-    terms = (f"Deposit of RM{received:,.2f} received. Balance of "
-             f"RM{inv.outstanding:,.2f} due on or before "
-             f"{inv.due_date:%d/%m/%Y}.") if received and inv.outstanding > 0.005 else ""
+    schedule, deposit_paid, lead = None, 0.0, ""
+    if received <= 0.005:
+        schedule = [{"label": "Full amount", "amount": inv.amount,
+                     "due": f"On or before {due}", "status": "Due"}]
+    elif inv.outstanding <= 0.005:
+        rs = sorted(inv.receipts, key=lambda r: (r.date, r.id))
+        schedule = [{"label": "Full amount" if len(rs) == 1 else f"Payment {i}",
+                     "amount": r.amount, "due": _received_text(r), "status": "Paid"}
+                    for i, r in enumerate(rs, 1)]
+        lead = "Paid in full, thank you."
+    else:
+        deposit_paid = received
+        lead = (f"Deposit of RM{received:,.2f} received. Balance of "
+                f"RM{inv.outstanding:,.2f} due on or before {due}.")
     return pdfgen.invoice_pdf(
         inv_no=inv.inv_no, customer=inv.customer,
         cust_address=inv.cust_address or "", cust_contact=inv.cust_contact or "",
-        items=[{"description": inv.notes or f"{inv.stream} services",
-                "amount": inv.amount}],
-        due_date=f"{inv.due_date:%d/%m/%Y}",
-        notes=terms,
-        deposit_paid=received, schedule=schedule,
+        items=items, due_date=due,
+        notes=" ".join(x for x in (lead, own_notes) if x),
+        deposit_paid=deposit_paid, schedule=schedule,
         company=settings.get("COMPANY_NAME", "MEOW & ME PET SHOP SDN BHD"),
         address=settings.get("COMPANY_ADDRESS", ""),
-        reg_no=settings.get("COMPANY_ROC", ""), bank=bank)
+        reg_no=settings.get("COMPANY_ROC", ""), bank=bank,
+        inv_date=f"{inv.date:%d/%m/%Y}")
+
+
+def _read_invoice_lines(f) -> list[dict]:
+    """Invoice lines from the form. Blank rows are skipped; a negative price is
+    a discount and is kept."""
+    descs, qtys = f.getlist("line_desc"), f.getlist("line_qty")
+    pers, prices, streams = f.getlist("line_per"), f.getlist("line_price"), f.getlist("line_stream")
+    out = []
+    for i, d in enumerate(descs):
+        d = str(d).strip()
+        if not d:
+            continue
+        def num(lst, default):
+            try:
+                return float(str(lst[i]).replace(",", "").strip() or default)
+            except (ValueError, IndexError):
+                return default
+        qty = num(qtys, 1.0)
+        price = num(prices, 0.0)
+        if qty <= 0 or price == 0:
+            continue
+        stream = str(streams[i]) if i < len(streams) else "Other"
+        out.append({"description": d[:500], "qty": qty,
+                    "per": (str(pers[i]).strip() if i < len(pers) else "")[:20],
+                    "unit_price": price,
+                    "stream": stream if stream in M.STREAMS else "Other"})
+    return out
+
+
+def _apply_invoice_form(inv, f, lines):
+    inv.customer = str(f.get("customer", "")).strip()[:120]
+    inv.cust_address = str(f.get("cust_address", "")).strip()
+    inv.cust_contact = str(f.get("cust_contact", "")).strip()[:60]
+    inv.notes = str(f.get("notes", "")).strip()
+    inv.date = parse_date(str(f.get("date", ""))) or date.today()
+    inv.due_date = parse_date(str(f.get("due_date", ""))) or inv.date
+    inv.month = f"{inv.date:%b %Y}"
+    inv.amount = round(sum(round(l["qty"] * l["unit_price"], 2) for l in lines), 2)
+    # Header stream = the biggest line, for lists and filters. The ledger
+    # credits each line's own stream regardless.
+    inv.stream = max(lines, key=lambda l: l["qty"] * l["unit_price"])["stream"]
+
+
+def _invoice_form_ctx(inv=None, **extra):
+    today = date.today().isoformat()
+    return dict(inv=inv, catalogue=M.SERVICE_CATALOGUE, streams=M.STREAMS,
+                today_iso=today, **extra)
 
 
 @app.get("/receivables", response_class=HTMLResponse)
 def receivables(request: Request, q: str = "", status: str = "",
                 deposit: float = 0, note: str = "", on: str = "",
                 db: Session = Depends(get_db)):
+    if deposit:
+        from urllib.parse import urlencode
+        return RedirectResponse("/receivables/new?" + urlencode(
+            {"deposit": deposit, "note": note, "on": on}), status_code=302)
     ledger.sync_ledger(db)
     query = db.query(M.ARInvoice).order_by(M.ARInvoice.date.desc(), M.ARInvoice.id.desc())
     if status:
@@ -3420,41 +3498,115 @@ def receivables(request: Request, q: str = "", status: str = "",
                   # deposit, so the figure and its context aren't re-typed.
                   prefill_deposit=deposit or 0, prefill_note=note,
                   prefill_date=on or date.today().isoformat(),
-                  flash=request.session.pop("flash_ar", None))
+                  flash=request.session.pop("flash_ar", None),
+                  flash_pdf=request.session.pop("flash_ar_pdf", None),
+                  flash_err=request.session.pop("flash_ar_err", None))
+
+
+@app.get("/receivables/new", response_class=HTMLResponse)
+def receivables_new_form(request: Request, deposit: float = 0, note: str = "", on: str = "",
+                         db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user or user.role not in AR_EDIT_ROLES:
+        return RedirectResponse("/receivables", status_code=302)
+    return render(request, db, "invoice_form.html", "receivables",
+                  **_invoice_form_ctx(prefill_deposit=deposit, prefill_note=note,
+                                      prefill_date=on,
+                                      flash_err=request.session.pop("flash_ar_err", None)))
+
+
+@app.get("/receivables/{inv_id}/edit", response_class=HTMLResponse)
+def receivables_edit_form(inv_id: int, request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user or user.role not in AR_EDIT_ROLES:
+        return RedirectResponse("/receivables", status_code=302)
+    inv = db.get(M.ARInvoice, inv_id)
+    if not inv or inv.status == "Void" or inv.receipts:
+        request.session["flash_ar_err"] = (
+            "That invoice can't be edited — it has a payment recorded against it, or it "
+            "is void. Ask Weng Teng / Eugene to undo the payment first if it really is wrong.")
+        return RedirectResponse("/receivables", status_code=303)
+    return render(request, db, "invoice_form.html", "receivables",
+                  **_invoice_form_ctx(inv, flash_err=request.session.pop("flash_ar_err", None)))
+
+
+@app.post("/receivables/{inv_id}/update")
+async def receivables_update(inv_id: int, request: Request, db: Session = Depends(get_db)):
+    """Fix a typo on an issued invoice. Allowed until money is recorded against
+    it: after that the invoice is evidence of what was paid for, and the
+    payment has to be undone first. The number never changes."""
+    user = current_user(request, db)
+    if not user or user.role not in AR_EDIT_ROLES:
+        return RedirectResponse("/", status_code=302)
+    inv = db.get(M.ARInvoice, inv_id)
+    if not inv or inv.status == "Void" or inv.receipts:
+        request.session["flash_ar_err"] = "That invoice can't be edited any more."
+        return RedirectResponse("/receivables", status_code=303)
+    f = await request.form()
+    lines = _read_invoice_lines(f)
+    if not str(f.get("customer", "")).strip() or not lines or sum(
+            l["qty"] * l["unit_price"] for l in lines) <= 0:
+        request.session["flash_ar_err"] = "Needs a customer and at least one line, with a total above zero."
+        return RedirectResponse(f"/receivables/{inv_id}/edit", status_code=303)
+    before = inv.amount
+    _apply_invoice_form(inv, f, lines)
+    for ln in list(inv.lines):
+        db.delete(ln)
+    db.flush()
+    for l in lines:
+        db.add(M.ARInvoiceLine(invoice_id=inv.id, **l))
+    db.flush()
+    db.expire(inv, ["lines"])
+    try:
+        inv.pdf_path = _build_invoice_pdf(db, inv)
+    except Exception:
+        pass
+    db.commit()
+    ledger.repost(db, "ARInvoice", inv.id)
+    request.session["flash_ar"] = (
+        f"{inv.inv_no} updated — RM {before:,.2f} → RM {inv.amount:,.2f}. PDF re-issued.")
+    request.session["flash_ar_pdf"] = inv.pdf_path
+    return RedirectResponse("/receivables", status_code=303)
 
 
 @app.post("/receivables/new")
 async def receivables_new(request: Request, db: Session = Depends(get_db)):
     user = current_user(request, db)
-    if not user or user.role not in ("admin", "manager"):
+    if not user or user.role not in AR_EDIT_ROLES:
         return RedirectResponse("/", status_code=302)
     f = await request.form()
+    lines = _read_invoice_lines(f)
+    if not lines and f.get("amount"):
+        # The old one-amount form (and anything scripted against it) still works.
+        amt = float(f.get("amount") or 0)
+        lines = [{"description": str(f.get("notes", "")).strip() or f"{f.get('stream') or 'Boarding'} services",
+                  "qty": 1.0, "per": "", "unit_price": amt,
+                  "stream": str(f.get("stream") or "Boarding")}] if amt > 0 else []
     customer = str(f.get("customer", "")).strip()
-    amount = float(f.get("amount") or 0)
-    if not customer or amount <= 0:
-        return RedirectResponse("/receivables", status_code=303)
+    if not customer or not lines or sum(l["qty"] * l["unit_price"] for l in lines) <= 0:
+        request.session["flash_ar_err"] = "Needs a customer and at least one line, with a total above zero."
+        return RedirectResponse("/receivables/new", status_code=303)
     inv_date = parse_date(str(f.get("date", ""))) or date.today()
-    due = parse_date(str(f.get("due_date", ""))) if f.get("due_date") else None
     inv_no = telegram_bot.next_monthly_counter(db, "ARINV", "INV-", inv_date)
-    inv = M.ARInvoice(inv_no=inv_no, customer=customer,
-                      cust_address=str(f.get("cust_address", "")).strip(),
-                      cust_contact=str(f.get("cust_contact", "")).strip(),
-                      stream=str(f.get("stream") or "Boarding"),
-                      date=inv_date, due_date=due or (inv_date + timedelta(days=30)),
-                      amount=amount, month=f"{inv_date:%b %Y}",
-                      notes=str(f.get("notes", "")).strip(),
-                      created_by=user.display_name)
+    inv = M.ARInvoice(inv_no=inv_no, customer=customer, created_by=user.display_name,
+                      date=inv_date, due_date=inv_date)
+    _apply_invoice_form(inv, f, lines)
+    if not f.get("line_desc"):
+        inv.notes = ""        # old form: the notes became the line, don't print them twice
     db.add(inv)
     db.flush()
+    for l in lines:
+        db.add(M.ARInvoiceLine(invoice_id=inv.id, **l))
+    db.flush()
+    db.expire(inv, ["lines"])
     try:
         inv.pdf_path = _build_invoice_pdf(db, inv)
     except Exception:
         inv.pdf_path = ""   # never block the accounting record on a PDF failure
     db.commit()
     ledger.sync_ledger(db)
-    request.session["flash_ar"] = (
-        f"{inv_no} · {customer} · RM {amount:,.2f} — invoice PDF ready, posted "
-        f"Dr Trade Debtors / Cr {f.get('stream') or 'Boarding'} revenue")
+    request.session["flash_ar"] = f"{inv_no} · {customer} · RM {inv.amount:,.2f} — invoice created."
+    request.session["flash_ar_pdf"] = inv.pdf_path
     return RedirectResponse("/receivables", status_code=303)
 
 
@@ -3463,7 +3615,7 @@ def receivables_pdf(inv_id: int, request: Request, db: Session = Depends(get_db)
     """Re-issue the PDF — picks up edited company settings and any receipts
     recorded since the invoice was created."""
     user = current_user(request, db)
-    if not user or user.role not in ("admin", "manager"):
+    if not user or user.role not in AR_EDIT_ROLES:
         return RedirectResponse("/", status_code=302)
     inv = db.get(M.ARInvoice, inv_id)
     if inv:
@@ -3488,6 +3640,7 @@ async def receivables_receipt(inv_id: int, request: Request, db: Session = Depen
         db.add(M.ARReceipt(invoice_id=inv.id,
                            date=parse_date(str(f.get("date", ""))) or date.today(),
                            amount=amount, method=str(f.get("method") or "Bank"),
+                           notes=str(f.get("reference", "")).strip()[:200],
                            recorded_by=user.display_name))
         db.flush()
         if inv.outstanding <= 0.005:
@@ -3671,7 +3824,7 @@ async def stock_item_update(item_id: int, request: Request, db: Session = Depend
 @app.post("/stock/move")
 async def stock_move(request: Request, db: Session = Depends(get_db)):
     user = current_user(request, db)
-    if not user or user.role not in ("admin", "manager"):
+    if not user or user.role not in ("admin", "manager", "storekeeper"):
         return RedirectResponse("/", status_code=302)
     f = await request.form()
     item = db.get(M.StockItem, int(f.get("item_id") or 0))

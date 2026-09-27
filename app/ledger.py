@@ -234,11 +234,27 @@ def _expected_entries(db: Session):
     for inv in db.query(M.ARInvoice).filter(M.ARInvoice.status != "Void").all():
         if not inv.amount:
             continue
+        # Credit each revenue stream its own share. A discount line (negative)
+        # nets against its stream; if a stream nets negative it posts as a debit
+        # rather than a negative credit.
+        if inv.lines:
+            by_stream = {}
+            for ln in inv.lines:
+                by_stream[ln.stream] = by_stream.get(ln.stream, 0) + ln.amount
+        else:
+            by_stream = {inv.stream: inv.amount}
+        rev_lines = []
+        for stream, amt in by_stream.items():
+            code = M.STREAM_ACCOUNT.get(stream, M.ACC_OTHER_INCOME)
+            amt = round(amt, 2)
+            if amt > 0:
+                rev_lines.append((code, 0, amt, stream))
+            elif amt < 0:
+                rev_lines.append((code, -amt, 0, stream))
         out[("ARInvoice", inv.id, "invoice")] = {
             "date": inv.date, "ref": inv.inv_no, "month": inv.month or f"{inv.date:%b %Y}",
             "memo": f"Invoice {inv.inv_no} · {inv.customer}",
-            "lines": [(M.ACC_AR, inv.amount, 0, inv.customer),
-                      (M.STREAM_ACCOUNT.get(inv.stream, M.ACC_OTHER_INCOME), 0, inv.amount, inv.stream)],
+            "lines": [(M.ACC_AR, inv.amount, 0, inv.customer)] + rev_lines,
         }
         for r in inv.receipts:
             if not r.amount:
@@ -325,6 +341,18 @@ def sync_ledger(db: Session):
     if added or removed:
         db.commit()
     return added, removed
+
+
+def repost(db: Session, source_type: str, source_id: int):
+    """Re-derive one record's entries. sync_ledger only adds what is missing and
+    removes what is stale -- it never notices that an existing record CHANGED --
+    so anything edited in place (an invoice's lines, its date) must drop its
+    entries and let sync post them fresh."""
+    for je in db.query(M.JournalEntry).filter(M.JournalEntry.source_type == source_type,
+                                              M.JournalEntry.source_id == source_id).all():
+        db.delete(je)
+    db.flush()
+    return sync_ledger(db)
 
 
 def rebuild_ledger(db: Session):

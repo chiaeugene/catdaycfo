@@ -1,0 +1,190 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block content %}
+<style>
+  .ln { border:1px solid var(--line, #e7dfcf); border-radius:10px; padding:12px; margin-bottom:10px; background:var(--card, #fff); }
+  .ln-grid { display:grid; gap:10px; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); align-items:end; }
+  .ln-desc { grid-column: 1 / -1; }
+  .ln-nights { grid-column: 1 / -1; display:none; gap:10px; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); background:var(--amber-bg); border-radius:8px; padding:8px 10px; }
+  .ln-nights.on { display:grid; }
+  .ln-amt { font-weight:800; font-size:15px; text-align:right; padding-bottom:6px; }
+  .ln-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; font-size:11.5px; font-weight:800; color:var(--muted); text-transform:uppercase; letter-spacing:.4px; }
+  .inv-total { display:flex; justify-content:space-between; align-items:center; font-size:18px; font-weight:800; padding:10px 4px; border-top:2px solid var(--brand); margin-top:6px; }
+  .hint { font-size:11px; color:var(--muted); margin-top:3px; }
+</style>
+
+<div class="pagehead">
+  <h1>{% if inv %}Edit {{ inv.inv_no }}{% else %}New invoice 新发票{% endif %}</h1>
+  <div class="actions"><a class="btn secondary" href="/receivables">Cancel</a></div>
+</div>
+<div class="sub">{% if inv %}Fix anything on the invoice — the number stays {{ inv.inv_no }} and the PDF is re-issued.{% else %}The number is given automatically when you create it. The PDF is ready straight after — send it to the customer.{% endif %}</div>
+
+{% if flash_err %}
+<div class="panel" style="background:var(--amber-bg);border-color:var(--amber)">
+  <div style="font-size:12.5px;color:var(--amber);font-weight:700">{{ flash_err }}</div></div>
+{% endif %}
+{% if prefill_deposit %}
+<div class="panel" style="background:var(--amber-bg);border-color:var(--amber)">
+  <div style="font-size:12.5px;color:var(--amber);font-weight:700">Deposit of RM {{ prefill_deposit|rm }} reported on {{ prefill_date }}</div>
+  <div style="font-size:12px;margin-top:4px">Invoice the <b>full sale value</b> below, not the deposit. The deposit is recorded as a payment once it shows in the bank.</div>
+</div>
+{% endif %}
+
+{% if inv and inv.lines %}{% set rows = inv.lines %}
+{% elif inv %}{% set rows = [{'description': inv.notes, 'qty': 1, 'per': '', 'unit_price': inv.amount, 'stream': inv.stream}] %}
+{% else %}{% set rows = [{'description': prefill_note or '', 'qty': 1, 'per': '', 'unit_price': '', 'stream': 'Grooming'}] %}{% endif %}
+
+<form method="post" action="{% if inv %}/receivables/{{ inv.id }}/update{% else %}/receivables/new{% endif %}" id="invform">
+<div class="panel">
+  <h2>Customer 客户</h2>
+  <div class="formrow" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr))">
+    <div><label>Customer name 客户名字 *</label>
+      <input name="customer" required value="{{ inv.customer if inv else '' }}" placeholder="e.g. Milk Tan"></div>
+    <div><label>Contact no. 电话</label>
+      <input name="cust_contact" value="{{ inv.cust_contact if inv else '' }}" placeholder="e.g. +60 12-313 2977"></div>
+    <div style="grid-column:1/-1"><label>Address 地址 <span style="text-transform:none;font-weight:500">(optional — printed on the invoice)</span></label>
+      <input name="cust_address" value="{{ inv.cust_address if inv else '' }}"></div>
+    <div><label>Invoice date 发票日期</label>
+      <input type="date" name="date" id="invdate" value="{{ inv.date.isoformat() if inv else (prefill_date or today_iso) }}"></div>
+    <div><label>Payment due 付款期限</label>
+      <input type="date" name="due_date" id="duedate" value="{{ inv.due_date.isoformat() if inv else (prefill_date or today_iso) }}">
+      <div class="hint">Same day unless agreed otherwise</div></div>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>What was sold 项目</h2>
+  <div id="lines">
+    {% for l in rows %}
+    <div class="ln">
+      <div class="ln-head"><span>Line</span>
+        <button type="button" class="small ghost js-del" title="Remove this line">✕ remove</button></div>
+      <div class="ln-grid">
+        <div class="ln-desc"><label>Service 服务</label>
+          <select class="js-svc" style="width:100%">
+            <option value="">— pick —</option>
+            {% for c in catalogue %}<option value="{{ loop.index0 }}" {% if l.description and l.description.startswith(c[0]) %}selected{% endif %}>{{ c[0] }}{% if c[2] %} · RM{{ '%g'|format(c[2]) }}{% endif %}</option>{% endfor %}
+            <option value="other">Other / type it</option>
+          </select></div>
+        <div class="ln-desc"><label>Description on invoice 发票上的描述 <span style="text-transform:none;font-weight:500">(add the cat's name)</span></label>
+          <input name="line_desc" class="js-desc" value="{{ l.description }}" placeholder="e.g. Premium Grooming — Casper & Luther, 27/09/2026"></div>
+        <div class="ln-nights js-nights{% if l.per == 'night' %} on{% endif %}">
+          <div><label>Check-in 入住</label><input type="date" class="js-in"></div>
+          <div><label>Check-out 退房</label><input type="date" class="js-out"></div>
+          <div class="hint" style="align-self:center">The nights are counted for you and the dates added to the description.</div>
+        </div>
+        <div><label>Qty 数量</label>
+          <input type="number" step="any" min="0" name="line_qty" class="js-qty" value="{{ '%g'|format(l.qty) if l.qty != '' else 1 }}"></div>
+        <div><label>Per 单位</label>
+          <select name="line_per" class="js-per">
+            {% for p in ['', 'cat', 'night', 'plan', 'session', 'pcs'] %}<option value="{{ p }}" {% if l.per == p %}selected{% endif %}>{{ p or '—' }}</option>{% endfor %}
+          </select></div>
+        <div><label>Price RM 单价</label>
+          <input type="number" step="0.01" name="line_price" class="js-price" value="{{ l.unit_price }}" placeholder="0.00">
+          <div class="hint">Discount? Enter a minus, e.g. -140</div></div>
+        <div><label>Type 类别</label>
+          <select name="line_stream" class="js-stream">
+            {% for s in streams %}<option {% if l.stream == s %}selected{% endif %}>{{ s }}</option>{% endfor %}
+          </select></div>
+        <div class="ln-amt js-amt"></div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  <button type="button" class="small secondary" id="addline">{{ icon('plus', 12) }} Add another line 加一行</button>
+  <div class="inv-total"><span>Total 总额</span><span id="total">RM 0.00</span></div>
+  <div id="totalwarn" class="hint" style="color:var(--red);font-weight:700;display:none">The total must be above zero.</div>
+</div>
+
+<div class="panel">
+  <label>Notes 备注 <span style="text-transform:none;font-weight:500">(optional — printed at the bottom, e.g. "Checked out 27/09/2026", plan terms)</span></label>
+  <textarea name="notes" rows="3" style="width:100%">{{ inv.notes if inv and inv.lines else '' }}</textarea>
+</div>
+
+<div class="panel">
+  <div class="actions">
+    <button type="submit">{{ icon('check', 14) }} {% if inv %}Save changes 保存{% else %}Create invoice 开发票{% endif %}</button>
+    <a class="btn secondary" href="/receivables">Cancel</a>
+  </div>
+</div>
+</form>
+
+<script>
+(function () {
+  var CAT = {{ catalogue|tojson }};
+  var box = document.getElementById('lines');
+  function fmt(n) { return n.toLocaleString('en-MY', {minimumFractionDigits: 2, maximumFractionDigits: 2}); }
+  function dmy(iso) { var p = iso.split('-'); return p[2] + '/' + p[1] + '/' + p[0]; }
+  var RANGE = /,?\s*\d{2}\/\d{2}\/\d{4} to \d{2}\/\d{2}\/\d{4}$/;
+
+  function recalc() {
+    var total = 0;
+    box.querySelectorAll('.ln').forEach(function (ln) {
+      var q = parseFloat(ln.querySelector('.js-qty').value) || 0;
+      var p = parseFloat(ln.querySelector('.js-price').value) || 0;
+      var a = Math.round(q * p * 100) / 100; total += a;
+      ln.querySelector('.js-amt').textContent = a ? 'RM ' + fmt(a) : '';
+    });
+    document.getElementById('total').textContent = 'RM ' + fmt(total);
+    document.getElementById('totalwarn').style.display = total > 0 ? 'none' : 'block';
+    return total;
+  }
+
+  function wire(ln) {
+    var svc = ln.querySelector('.js-svc'), desc = ln.querySelector('.js-desc');
+    var per = ln.querySelector('.js-per'), price = ln.querySelector('.js-price');
+    var stream = ln.querySelector('.js-stream'), nights = ln.querySelector('.js-nights');
+    var cin = ln.querySelector('.js-in'), cout = ln.querySelector('.js-out'), qty = ln.querySelector('.js-qty');
+    function showNights() { nights.classList.toggle('on', per.value === 'night'); }
+    svc.addEventListener('change', function () {
+      var c = CAT[this.value];
+      if (!c) return;
+      // Picking a service fills its price and type; the description keeps
+      // anything typed after the dash (the cat's name).
+      var tail = desc.value.indexOf(' — ') >= 0 ? desc.value.slice(desc.value.indexOf(' — ')) : ' — ';
+      desc.value = c[0] + tail;
+      if (c[2]) price.value = c[2].toFixed(2);
+      stream.value = c[1]; per.value = c[3];
+      showNights(); recalc(); desc.focus();
+      desc.setSelectionRange(desc.value.length, desc.value.length);
+    });
+    per.addEventListener('change', showNights);
+    function countNights() {
+      if (!cin.value || !cout.value) return;
+      var n = Math.round((new Date(cout.value) - new Date(cin.value)) / 86400000);
+      if (n <= 0) { alert('Check-out must be after check-in.'); return; }
+      qty.value = n;
+      desc.value = desc.value.replace(RANGE, '') + ', ' + dmy(cin.value) + ' to ' + dmy(cout.value);
+      recalc();
+    }
+    cin.addEventListener('change', countNights); cout.addEventListener('change', countNights);
+    qty.addEventListener('input', recalc); price.addEventListener('input', recalc);
+    ln.querySelector('.js-del').addEventListener('click', function () {
+      if (box.querySelectorAll('.ln').length > 1) ln.remove();
+      else ln.querySelectorAll('input').forEach(function (i) { i.value = i.classList.contains('js-qty') ? 1 : ''; });
+      recalc();
+    });
+    showNights();
+  }
+
+  box.querySelectorAll('.ln').forEach(wire);
+  document.getElementById('addline').addEventListener('click', function () {
+    var first = box.querySelector('.ln'), ln = first.cloneNode(true);
+    ln.querySelectorAll('input').forEach(function (i) { i.value = i.classList.contains('js-qty') ? 1 : ''; });
+    ln.querySelector('.js-svc').value = ''; ln.querySelector('.js-per').value = '';
+    ln.querySelector('.js-amt').textContent = '';
+    box.appendChild(ln); wire(ln); ln.querySelector('.js-svc').focus();
+  });
+
+  // Payment due follows the invoice date until someone changes it on purpose.
+  var d1 = document.getElementById('invdate'), d2 = document.getElementById('duedate'), touched = d1.value !== d2.value;
+  d2.addEventListener('change', function () { touched = true; });
+  d1.addEventListener('change', function () { if (!touched) d2.value = d1.value; });
+
+  document.getElementById('invform').addEventListener('submit', function (e) {
+    if (recalc() <= 0) { e.preventDefault(); document.getElementById('totalwarn').scrollIntoView({block: 'center'}); }
+  });
+  recalc();
+})();
+</script>
+{% endblock %}

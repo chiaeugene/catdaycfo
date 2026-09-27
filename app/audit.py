@@ -27,6 +27,16 @@ REQUESTER_PREFIXES = ("/requests", "/static", "/login", "/logout", "/files/reque
 # when can_approve is set. Jasmine changes nothing in the books; this isn't
 # the books.
 APPROVER_PATH = re.compile(r"^/requests/\d+/decide$")
+# The storekeeper (Karen) issues customer invoices, raises purchase requests and
+# looks after stock. She never records money received -- payments are recorded
+# by the bookkeeper only after they show up in the bank -- and she can't see
+# the books. Files are limited to invoices and request photos.
+STOREKEEPER_PREFIXES = ("/receivables", "/requests", "/stock", "/files/invoices/",
+                        "/files/requests/", "/static", "/login", "/logout", "/health")
+STOREKEEPER_DENY = re.compile(r"^/receivables/(\d+/(receipt|void)|receipt/\d+/delete)$")
+# role -> (paths it may reach, where it lands when it strays)
+CONFINED_ROLES = {"requester": (REQUESTER_PREFIXES, "/requests"),
+                  "storekeeper": (STOREKEEPER_PREFIXES, "/receivables")}
 # Never block or log these — the Telegram bot has no user session, and
 # blocking /login itself would make it impossible to sign in.
 BLOCK_EXEMPT_PREFIXES = ("/telegram/webhook", "/login", "/logout")
@@ -91,6 +101,7 @@ ACTION_PATTERNS = [
     (r"^POST /stock/recipe/new$", "Added service recipe"),
     (r"^POST /stock/recipe/\d+/delete$", "Deleted service recipe"),
     (r"^POST /receivables/new$", "Created customer invoice"),
+    (r"^POST /receivables/\d+/update$", "Edited customer invoice"),
     (r"^POST /receivables/\d+/receipt$", "Recorded customer receipt"),
     (r"^POST /receivables/\d+/void$", "Voided customer invoice"),
     (r"^POST /receivables/\d+/pdf$", "Re-issued customer invoice PDF"),
@@ -150,21 +161,25 @@ class AccessControlMiddleware(BaseHTTPMiddleware):
 
         uid_before = request.session.get("uid")
         blocked = False
-        confined = False     # requester wandering outside /requests
-        if uid_before and (should_block_check or not path.startswith(REQUESTER_PREFIXES)):
+        confined_to = ""     # a confined role wandering outside its area
+        if uid_before and not path.startswith("/static"):
             db = SessionLocal()
             try:
                 u = db.get(M.User, uid_before)
                 if u and u.role == "viewer" and should_block_check:
                     blocked = not (u.can_approve and APPROVER_PATH.match(path))
-                if u and u.role == "requester" and not path.startswith(REQUESTER_PREFIXES) \
-                        and path != "/":
-                    confined = True
+                if u and u.role == "storekeeper" and should_block_check \
+                        and STOREKEEPER_DENY.match(path):
+                    blocked = True
+                if u and u.role in CONFINED_ROLES and path != "/":
+                    allowed, home = CONFINED_ROLES[u.role]
+                    if not path.startswith(allowed):
+                        confined_to = home
             finally:
                 db.close()
 
-        if confined:
-            return RedirectResponse("/requests", status_code=303)
+        if confined_to:
+            return RedirectResponse(confined_to, status_code=303)
 
         if blocked:
             # Send them back where they came from, not to `path` itself — most

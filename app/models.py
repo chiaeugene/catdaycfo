@@ -7,7 +7,23 @@ from .database import Base
 # "viewer" is read-only system-wide — enforced centrally in app/audit.py's
 # AccessControlMiddleware, not by individual routes (many older routes never
 # had their own role check, so a per-route approach would miss some).
-ROLES = ["admin", "manager", "staff", "viewer", "requester"]
+ROLES = ["admin", "manager", "staff", "viewer", "requester", "storekeeper"]
+
+# What the shop sells, so an invoice is picked rather than typed. Prices are
+# the defaults the form fills in -- every line stays editable, because promos
+# and founding-customer rates are real and frequent. `per` is the unit the
+# quantity counts ("night" makes the form offer check-in/check-out dates and
+# count the nights itself; Karen's hand counts were off three times in Sept).
+SERVICE_CATALOGUE = [
+    # (label, stream, unit price, per)
+    ("Premium Grooming", "Grooming", 138.0, "cat"),
+    ("Premium Grooming (RM99 promo)", "Grooming", 99.0, "cat"),
+    ("The Haven boarding", "Boarding", 88.0, "night"),
+    ("The Big Nook boarding", "Boarding", 0.0, "night"),
+    ("Signature Cat Day Plan", "Membership", 1899.0, "plan"),
+    ("Comfort Recovery Plan", "Membership", 2099.0, "plan"),
+    ("Founding Family Circle privilege rate", "Boarding", 0.0, ""),
+]
 
 # ── Purchase requests ──────────────────────────────────────────────────────
 # Approval before spending. Deliberately outside the ledger: a request posts
@@ -608,6 +624,12 @@ class ARInvoice(Base):
     notes: Mapped[str] = mapped_column(Text, default="")
     created_by: Mapped[str] = mapped_column(String(100), default="")
     receipts = relationship("ARReceipt", backref="invoice", cascade="all, delete-orphan")
+    # One row per thing sold. Each line carries its own revenue stream, so a
+    # boarding stay with grooming on top credits both accounts instead of
+    # filing the grooming under boarding. Invoices made before lines existed
+    # have none and fall back to amount + stream + notes.
+    lines = relationship("ARInvoiceLine", backref="invoice", cascade="all, delete-orphan",
+                         order_by="ARInvoiceLine.id")
 
     @property
     def received(self):
@@ -616,6 +638,32 @@ class ARInvoice(Base):
     @property
     def outstanding(self):
         return round(self.amount - self.received, 2)
+
+
+class ARInvoiceLine(Base):
+    __tablename__ = "ar_invoice_lines"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    invoice_id: Mapped[int] = mapped_column(ForeignKey("ar_invoices.id"))
+    description: Mapped[str] = mapped_column(Text, default="")
+    qty: Mapped[float] = mapped_column(Float, default=1.0)
+    per: Mapped[str] = mapped_column(String(20), default="")      # night / cat / plan ...
+    unit_price: Mapped[float] = mapped_column(Float, default=0.0) # negative = discount
+    stream: Mapped[str] = mapped_column(String(30), default="Other")
+
+    @property
+    def amount(self) -> float:
+        return round(self.qty * self.unit_price, 2)
+
+    @property
+    def printed(self) -> str:
+        """The text on the invoice. Quantity and rate are spelled out only when
+        there is more than one, so '35 nights x RM48' shows but '1 x RM99'
+        doesn't clutter a single grooming."""
+        if abs(self.qty - 1) < 1e-9:
+            return self.description
+        q = f"{self.qty:g}"
+        unit = f" {self.per}{'s' if self.per and self.qty != 1 else ''}" if self.per else ""
+        return f"{self.description} ({q}{unit} × RM{self.unit_price:,.2f})"
 
 
 class ARReceipt(Base):
