@@ -31,8 +31,12 @@ APPROVER_PATH = re.compile(r"^/requests/\d+/decide$")
 # looks after stock. She never records money received -- payments are recorded
 # by the bookkeeper only after they show up in the bank -- and she can't see
 # the books. Files are limited to invoices and request photos.
-STOREKEEPER_PREFIXES = ("/receivables", "/requests", "/stock", "/files/invoices/",
-                        "/files/requests/", "/static", "/login", "/logout", "/health")
+STOREKEEPER_PREFIXES = ("/receivables", "/requests", "/stock", "/attendance", "/files/invoices/",
+                        "/files/requests/", "/files/attendance/", "/static", "/login", "/logout",
+                        "/health")
+# Staff clock in from their own phones with no login, so these must work for
+# anyone -- including someone who happens to be signed in as a confined role.
+PUBLIC_PREFIXES = ("/attendance/kiosk", "/attendance/scan", "/attendance/punch", "/approve/")
 STOREKEEPER_DENY = re.compile(r"^/receivables/(\d+/(receipt|void)|receipt/\d+/delete)$")
 # role -> (paths it may reach, where it lands when it strays)
 CONFINED_ROLES = {"requester": (REQUESTER_PREFIXES, "/requests"),
@@ -101,6 +105,17 @@ ACTION_PATTERNS = [
     (r"^POST /stock/recipe/new$", "Added service recipe"),
     (r"^POST /stock/recipe/\d+/delete$", "Deleted service recipe"),
     (r"^POST /receivables/new$", "Created customer invoice"),
+    (r"^POST /attendance/punch$", "Staff clock-in/out"),
+    (r"^POST /attendance/kiosk/setup$", "Set up attendance kiosk"),
+    (r"^POST /attendance/people/new$", "Added staff to attendance"),
+    (r"^POST /attendance/people/\d+/toggle$", "Toggled staff attendance access"),
+    (r"^POST /attendance/people/\d+/reset-pin$", "Reset staff attendance PIN"),
+    (r"^POST /attendance/device/\d+/confirm$", "Confirmed staff phone"),
+    (r"^POST /attendance/device/\d+/reject$", "Rejected staff phone"),
+    (r"^POST /attendance/device/\d+/remove$", "Removed staff phone"),
+    (r"^POST /attendance/remark$", "Added attendance remark"),
+    (r"^POST /attendance/manual$", "Added manual attendance entry"),
+    (r"^POST /attendance/log/\d+/void$", "Voided attendance scan"),
     (r"^POST /receivables/\d+/update$", "Edited customer invoice"),
     (r"^POST /receivables/\d+/receipt$", "Recorded customer receipt"),
     (r"^POST /receivables/\d+/void$", "Voided customer invoice"),
@@ -162,7 +177,7 @@ class AccessControlMiddleware(BaseHTTPMiddleware):
         uid_before = request.session.get("uid")
         blocked = False
         confined_to = ""     # a confined role wandering outside its area
-        if uid_before and not path.startswith("/static"):
+        if uid_before and not path.startswith(("/static",) + PUBLIC_PREFIXES):
             db = SessionLocal()
             try:
                 u = db.get(M.User, uid_before)

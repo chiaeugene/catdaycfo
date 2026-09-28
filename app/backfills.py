@@ -154,5 +154,24 @@ def ar_lines_sept_2026(db):
     print(f"  backfill: AR lines done — {len(touched)} invoices")
 
 
+def attendance_roster_from_payroll(db):
+    """Start the attendance list with everyone already on payroll, so Karen
+    only has to add part-timers. Names only -- nothing from payroll is copied."""
+    key = "BACKFILL_ATT_ROSTER"
+    if db.get(M.Setting, key):
+        return
+    n = 0
+    for s in db.query(M.Staff).filter(M.Staff.active == True).all():  # noqa: E712
+        if not db.query(M.AttendancePerson).filter(M.AttendancePerson.staff_id == s.id).first():
+            db.add(M.AttendancePerson(name=s.name, position=s.position or "",
+                                      employment="Full-time", staff_id=s.id,
+                                      created_by="system (from payroll)"))
+            n += 1
+    db.add(M.Setting(key=key, value=datetime.utcnow().isoformat(timespec="seconds")))
+    db.commit()
+    print(f"  backfill: attendance roster started with {n} payroll staff")
+
+
 def run_all(db):
     ar_lines_sept_2026(db)
+    attendance_roster_from_payroll(db)

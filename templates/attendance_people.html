@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block content %}
+{% if flash %}
+<div class="panel" style="background:var(--green-bg);border-color:rgba(29,127,63,.3)">
+  <div style="font-size:13px;color:var(--green);font-weight:700">✓ {{ flash }}</div></div>
+{% endif %}
+<div class="pagehead">
+  <h1>Staff &amp; phones 员工与手机</h1>
+  <div class="actions"><a class="btn secondary" href="/attendance">← Attendance</a></div>
+</div>
+<div class="sub">Everyone who clocks in — full-time and part-time. This list is only for attendance; it doesn't touch payroll. Staff can't add themselves: add them here first, then they scan the QR and choose a PIN.</div>
+
+{% if can_manage %}
+<div class="panel">
+  <h2 style="margin-top:0">Add staff 添加员工</h2>
+  <form method="post" action="/attendance/people/new" class="inline">
+    <div><label>Name 名字</label><input name="name" required placeholder="As they'll recognise it"></div>
+    <div><label>Position</label><input name="position" placeholder="e.g. Groomer"></div>
+    <div><label>Type</label><select name="employment"><option>Full-time</option><option>Part-time</option></select></div>
+    <button type="submit">{{ icon('plus', 14) }} Add</button>
+  </form>
+</div>
+{% endif %}
+
+<div class="tablewrap">
+<table>
+  <tr><th>Name</th><th>Type</th><th>PIN</th><th>Phones</th><th></th></tr>
+  {% for p in people %}
+  <tr style="{{ '' if p.active else 'opacity:.55' }}">
+    <td><b>{{ p.name }}</b><div class="muted" style="font-size:11px">{{ p.position }}{% if not p.active %} · can't clock in{% endif %}</div></td>
+    <td>{{ p.employment }}</td>
+    <td>{{ '✓ set' if p.pin_hash else '— not yet' }}</td>
+    <td style="font-size:12px">
+      {% for d in p.devices %}
+      <div style="margin-bottom:4px">
+        <span class="badge {{ {'confirmed':'approved','pending':'pending','rejected':'void'}[d.status] }}">{{ d.status }}</span>
+        <span class="muted">added {{ d.created_at|myt('%d/%m/%y') }}{% if d.decided_by %} · {{ d.decided_by }}{% endif %}</span>
+        {% if can_manage and d.status == 'confirmed' %}
+        <form method="post" action="/attendance/device/{{ d.id }}/remove" class="inline"
+              onsubmit="return confirm('Stop this phone clocking in for {{ p.name }}? (Lost or changed phone.) Past scans stay.')">
+          <button class="small ghost" type="submit">remove</button></form>
+        {% endif %}
+      </div>
+      {% else %}<span class="muted">none yet</span>{% endfor %}
+    </td>
+    <td>
+      {% if can_manage %}
+      <div class="actions">
+        {% if p.pin_hash %}
+        <form method="post" action="/attendance/people/{{ p.id }}/reset-pin" class="inline"
+              onsubmit="return confirm('Clear {{ p.name }}\'s PIN? They choose a new one on their next scan.')">
+          <button class="small secondary" type="submit">Reset PIN</button></form>
+        {% endif %}
+        <form method="post" action="/attendance/people/{{ p.id }}/toggle" class="inline"
+              onsubmit="return confirm('{{ ('Stop ' ~ p.name ~ ' clocking in? (Left the company.) Their records stay.') if p.active else ('Let ' ~ p.name ~ ' clock in again?') }}')">
+          <button class="small {{ 'danger' if p.active else 'secondary' }}" type="submit">{{ 'Remove' if p.active else 'Bring back' }}</button></form>
+      </div>
+      {% endif %}
+    </td>
+  </tr>
+  {% else %}
+  <tr><td colspan="5" class="empty">No one yet — add staff above.</td></tr>
+  {% endfor %}
+</table>
+</div>
+{% endblock %}

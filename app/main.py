@@ -1,3 +1,4 @@
+import io
 import os
 import secrets
 from datetime import date, datetime, timedelta
@@ -18,6 +19,7 @@ from .database import Base, engine, get_db, run_migrations
 from . import models as M
 from .auth import hash_password, verify_password, current_user
 from . import telegram_bot, pdfgen, claude_ai, ledger, backup, audit, requests_logic as RQ
+from . import attendance as ATT
 from .audit import AccessControlMiddleware
 from .statutory import calc_statutory
 
@@ -39,6 +41,8 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 templates.env.filters["rm"] = lambda v: f"{(v or 0):,.2f}"
 templates.env.filters["abs"] = lambda v: abs(v or 0)
+# Stored times are UTC; the shop runs on Malaysia time.
+templates.env.filters["myt"] = lambda dt, fmt="%H:%M": (dt + timedelta(hours=8)).strftime(fmt) if dt else ""
 app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
 
 # Cache-buster for /static assets. Browsers hold onto style.css hard, so a CSS
@@ -108,6 +112,7 @@ NAV_GROUPS = [
         ("sales", "/sales", "cart", "Sales", ("admin", "manager", "staff", "viewer")),
         ("pettycash", "/pettycash", "coins", "Petty Cash", ("admin", "manager", "staff", "viewer")),
         ("boarding", "/boarding", "cat", "Boarding", ("admin", "manager", "staff", "viewer")),
+        ("attendance", "/attendance", "check", "Attendance 考勤", ("admin", "manager", "viewer", "storekeeper")),
         ("stock", "/stock", "coins", "Stock & Usage 库存", ("admin", "manager", "staff", "viewer", "storekeeper")),
     ]),
     ("Paying suppliers 付款", [
@@ -1063,6 +1068,11 @@ def ar_receipt_delete(rid: int, request: Request, db: Session = Depends(get_db))
     if r:
         inv = db.get(M.ARInvoice, r.invoice_id)
         amt = r.amount
+        if r.invoice_id:
+            _inv_ev_inv = db.get(M.ARInvoice, r.invoice_id)
+            if _inv_ev_inv:
+                _inv_event(db, _inv_ev_inv, user.display_name, "payment undone",
+                           f"RM{amt:,.2f} · {r.method} · {r.date:%d/%m/%Y}")
         db.delete(r)
         db.flush()
         if inv:
@@ -2173,6 +2183,453 @@ def payment_link_request(pid: int, request: Request, request_id: str = Form(""),
         p.request_id = int(rid) if rid.isdigit() else None
         db.commit()
     return RedirectResponse("/payments", status_code=303)
+
+
+
+# ─────────────────────────── ATTENDANCE ───────────────────────────
+# Staff clock in and out by scanning a live QR on the counter device. The
+# kiosk, scan and punch pages are public (staff have no login); everything
+# else is Karen's and the admins'. The trust rules live in app/attendance.py.
+KIOSK_COOKIE = "catday_kiosk"
+DEV_COOKIE = "catday_att_dev"
+ATT_MANAGE = ("admin", "manager", "storekeeper")
+TWO_YEARS = 60 * 60 * 24 * 730
+
+
+def _kiosk_from_cookie(request, db):
+    tok = request.cookies.get(KIOSK_COOKIE, "")
+    if not tok:
+        return None
+    return db.query(M.AttendanceKiosk).filter(M.AttendanceKiosk.token == tok,
+                                              M.AttendanceKiosk.active == True).first()  # noqa: E712
+
+
+def _device_from_cookie(request, db):
+    tok = request.cookies.get(DEV_COOKIE, "")
+    if not tok:
+        return None
+    d = db.query(M.AttendanceDevice).filter(M.AttendanceDevice.token == tok).first()
+    if not d or d.status == "rejected" or not d.person or not d.person.active:
+        return None
+    return d
+
+
+def _public(request, template, **ctx):
+    ctx.setdefault("asset_v", ASSET_V)
+    return templates.TemplateResponse(request, template, ctx)
+
+
+@app.get("/attendance/kiosk", response_class=HTMLResponse)
+def att_kiosk(request: Request, db: Session = Depends(get_db)):
+    k = _kiosk_from_cookie(request, db)
+    return _public(request, "att_kiosk.html", kiosk=k)
+
+
+@app.get("/attendance/kiosk/qr.svg")
+def att_kiosk_qr(request: Request, db: Session = Depends(get_db)):
+    k = _kiosk_from_cookie(request, db)
+    if not k:
+        raise HTTPException(404)
+    base = str(request.base_url).rstrip("/")
+    url = f"{base}/attendance/scan?k={k.id}&c={ATT.code_for(k)}"
+    from fastapi.responses import Response
+    return Response(ATT.qr_svg(url), media_type="image/svg+xml",
+                    headers={"Cache-Control": "no-store", "X-Seconds-Left": str(ATT.seconds_left())})
+
+
+@app.get("/attendance/scan", response_class=HTMLResponse)
+def att_scan(request: Request, k: int = 0, c: str = "", db: Session = Depends(get_db)):
+    kiosk = db.get(M.AttendanceKiosk, k) if k else None
+    if not kiosk or not kiosk.active or not ATT.code_valid(kiosk, c, ATT.SCAN_WINDOWS):
+        return _public(request, "att_done.html", ok=False,
+                       message="This code has expired. Scan the QR on the counter again. "
+                               "二维码已过期，请重新扫描柜台上的二维码。")
+    dev = _device_from_cookie(request, db)
+    person, suggest = (dev.person if dev else None), "in"
+    if person:
+        start, end = ATT.day_bounds_utc(ATT.today_myt())
+        last = db.query(M.AttendanceLog).filter(
+            M.AttendanceLog.person_id == person.id, M.AttendanceLog.status != "rejected",
+            M.AttendanceLog.at >= start, M.AttendanceLog.at < end
+        ).order_by(M.AttendanceLog.at.desc()).first()
+        suggest = "out" if last and last.kind == "in" else "in"
+    people = db.query(M.AttendancePerson).filter(M.AttendancePerson.active == True) \
+        .order_by(M.AttendancePerson.name).all()  # noqa: E712
+    return _public(request, "att_scan.html", k=k, c=c, person=person, device=dev,
+                   suggest=suggest, people=people,
+                   has_pin={p.id: bool(p.pin_hash) for p in people})
+
+
+@app.post("/attendance/punch", response_class=HTMLResponse)
+async def att_punch(request: Request, db: Session = Depends(get_db)):
+    f = await request.form()
+    try:
+        k = int(f.get("k") or 0)
+    except ValueError:
+        k = 0
+    kiosk = db.get(M.AttendanceKiosk, k) if k else None
+    if not kiosk or not kiosk.active or not ATT.code_valid(kiosk, str(f.get("c", "")), ATT.PUNCH_WINDOWS):
+        return _public(request, "att_done.html", ok=False,
+                       message="That took too long and the code expired. Scan the QR on the "
+                               "counter again. 超时了，请重新扫描。")
+    kind = "out" if f.get("kind") == "out" else "in"
+    dev = _device_from_cookie(request, db)
+    new_cookie = None
+    if dev:
+        person = dev.person
+    else:
+        try:
+            person = db.get(M.AttendancePerson, int(f.get("person_id") or 0))
+        except ValueError:
+            person = None
+        if not person or not person.active:
+            return _public(request, "att_done.html", ok=False, message="Pick your name. 请选择你的名字。")
+        pin = str(f.get("pin", "")).strip()
+        if ATT.pin_locked(person.id):
+            return _public(request, "att_done.html", ok=False,
+                           message="Too many wrong PINs. Wait 15 minutes or ask Karen. PIN错误太多次。")
+        set_pin = False
+        if person.pin_hash:
+            if not verify_password(pin, person.pin_hash):
+                ATT.pin_failed(person.id)
+                return _public(request, "att_done.html", ok=False,
+                               message="Wrong PIN. Scan again and retry, or ask Karen to reset it. PIN错误。")
+        else:
+            if not (pin.isdigit() and len(pin) == 4) or pin != str(f.get("pin2", "")).strip():
+                return _public(request, "att_done.html", ok=False,
+                               message="Choose a 4-digit PIN and type it the same twice. 请设4位数PIN。")
+            person.pin_hash = hash_password(pin)
+            set_pin = True
+        dev = M.AttendanceDevice(person_id=person.id, token=ATT.new_device_token(),
+                                 status="pending", set_pin=set_pin,
+                                 user_agent=(request.headers.get("user-agent") or "")[:200])
+        db.add(dev)
+        db.flush()
+        new_cookie = dev.token
+
+    up = f.get("selfie")
+    data = await up.read() if up is not None and getattr(up, "filename", "") else b""
+    if not data:
+        db.rollback()
+        return _public(request, "att_done.html", ok=False,
+                       message="A selfie is needed to clock in or out. Scan again and take the photo. 需要自拍。")
+
+    # Same person, same action, within two minutes: a double tap, not a new event.
+    last = db.query(M.AttendanceLog).filter(M.AttendanceLog.person_id == person.id,
+                                            M.AttendanceLog.status != "rejected") \
+        .order_by(M.AttendanceLog.at.desc()).first()
+    if last and last.kind == kind and (datetime.utcnow() - last.at).total_seconds() < 120:
+        db.rollback()
+        return _public(request, "att_done.html", ok=True, person=person, log=last, dup=True,
+                       flag_text=ATT.FLAG_TEXT)
+
+    def num(name):
+        try:
+            return float(f.get(name)) if f.get(name) not in (None, "") else None
+        except ValueError:
+            return None
+    lat, lng, acc = num("lat"), num("lng"), num("acc")
+    dist = ATT.distance_m(lat, lng, kiosk.lat, kiosk.lng)
+    flags = []
+    if lat is None:
+        flags.append("no-location")
+    elif dist is not None and dist > ATT.RADIUS_M + (acc or 0):
+        flags.append("outside")
+    if dev.status == "pending":
+        flags.append("new-phone")
+    log = M.AttendanceLog(person_id=person.id, kind=kind, device_id=dev.id,
+                          lat=lat, lng=lng, accuracy_m=acc, distance_m=dist,
+                          selfie_path=ATT.save_selfie(person.id, data),
+                          status="pending" if dev.status == "pending" else "ok",
+                          flags=",".join(flags))
+    db.add(log)
+    db.commit()
+    resp = _public(request, "att_done.html", ok=True, person=person, log=log, dup=False,
+                   flag_text=ATT.FLAG_TEXT)
+    if new_cookie:
+        resp.set_cookie(DEV_COOKIE, new_cookie, max_age=TWO_YEARS, httponly=True, samesite="lax")
+    return resp
+
+
+@app.post("/attendance/kiosk/setup")
+def att_kiosk_setup(request: Request, lat: str = Form(""), lng: str = Form(""),
+                    db: Session = Depends(get_db)):
+    """Make THIS device the shop kiosk. Replaces any earlier kiosk."""
+    user = current_user(request, db)
+    if not user or user.role not in ("admin", "storekeeper"):
+        return RedirectResponse("/", status_code=302)
+    for old in db.query(M.AttendanceKiosk).filter(M.AttendanceKiosk.active == True).all():  # noqa: E712
+        old.active = False
+    tok, sec = ATT.new_kiosk_secret()
+    def num(v):
+        try:
+            return float(v) if v else None
+        except ValueError:
+            return None
+    k = M.AttendanceKiosk(token=tok, secret=sec, lat=num(lat), lng=num(lng),
+                          authorised_by=user.display_name)
+    db.add(k)
+    db.commit()
+    resp = RedirectResponse("/attendance/kiosk", status_code=303)
+    resp.set_cookie(KIOSK_COOKIE, tok, max_age=TWO_YEARS, httponly=True, samesite="lax")
+    return resp
+
+
+def _att_day_rows(db, d: date):
+    start, end = ATT.day_bounds_utc(d)
+    logs = db.query(M.AttendanceLog).filter(M.AttendanceLog.at >= start, M.AttendanceLog.at < end).all()
+    remarks = db.query(M.AttendanceRemark).filter(M.AttendanceRemark.day == d).all()
+    people = db.query(M.AttendancePerson).order_by(M.AttendancePerson.name).all()
+    rows = []
+    for p in people:
+        pl = [l for l in logs if l.person_id == p.id]
+        if not p.active and not pl:
+            continue
+        rows.append({"p": p, "s": ATT.day_summary(pl, d == ATT.today_myt()),
+                     "remarks": [r for r in remarks if r.person_id == p.id]})
+    return rows
+
+
+@app.get("/attendance", response_class=HTMLResponse)
+def att_board(request: Request, day: str = "", db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    ATT.purge_old_selfies(db)
+    d = parse_date(day) if day else ATT.today_myt()
+    rows = _att_day_rows(db, d)
+    pending = db.query(M.AttendanceDevice).filter(M.AttendanceDevice.status == "pending") \
+        .order_by(M.AttendanceDevice.created_at).all()
+    kiosk = db.query(M.AttendanceKiosk).filter(M.AttendanceKiosk.active == True).first()  # noqa: E712
+    return render(request, db, "attendance.html", "attendance",
+                  d=d, rows=rows, pending=pending, kiosk=kiosk, this_is_kiosk=bool(_kiosk_from_cookie(request, db)),
+                  prev_day=(d - timedelta(days=1)).isoformat(), next_day=(d + timedelta(days=1)).isoformat(),
+                  is_today=d == ATT.today_myt(), flag_text=ATT.FLAG_TEXT,
+                  can_manage=user.role in ATT_MANAGE, is_admin=user.role == "admin",
+                  flash=request.session.pop("flash_att", None))
+
+
+def _att_month(db, month: str):
+    try:
+        y, m = (int(x) for x in month.split("-"))
+        first = date(y, m, 1)
+    except (ValueError, AttributeError):
+        t = ATT.today_myt()
+        first = date(t.year, t.month, 1)
+    nxt = date(first.year + (first.month == 12), first.month % 12 + 1, 1)
+    days = [first + timedelta(days=i) for i in range((nxt - first).days)]
+    start, _ = ATT.day_bounds_utc(first)
+    end, _ = ATT.day_bounds_utc(nxt)
+    logs = db.query(M.AttendanceLog).filter(M.AttendanceLog.at >= start, M.AttendanceLog.at < end).all()
+    remarks = db.query(M.AttendanceRemark).filter(M.AttendanceRemark.day >= first,
+                                                  M.AttendanceRemark.day < nxt).all()
+    today = ATT.today_myt()
+    people = []
+    for p in db.query(M.AttendancePerson).order_by(M.AttendancePerson.name).all():
+        per_day, tot_h, worked, ot = [], 0.0, 0, 0.0
+        for d in days:
+            s0, e0 = ATT.day_bounds_utc(d)
+            dl = [l for l in logs if l.person_id == p.id and s0 <= l.at < e0]
+            rm = [r for r in remarks if r.person_id == p.id and r.day == d]
+            sm = ATT.day_summary(dl, d == today)
+            if sm["state"] != "absent":
+                worked += 1
+                tot_h += sm["hours"]
+            ot += sum(r.hours for r in rm if r.kind == "OT")
+            per_day.append({"d": d, "s": sm, "remarks": rm})
+        if worked or p.active:
+            people.append({"p": p, "days": per_day, "hours": round(tot_h, 2),
+                           "worked": worked, "ot": round(ot, 2)})
+    return first, days, people
+
+
+@app.get("/attendance/timesheet", response_class=HTMLResponse)
+def att_timesheet(request: Request, month: str = "", person: int = 0, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    first, days, people = _att_month(db, month)
+    if person:
+        people = [x for x in people if x["p"].id == person]
+    return render(request, db, "attendance_timesheet.html", "attendance",
+                  first=first, people=people, person=person,
+                  all_people=db.query(M.AttendancePerson).order_by(M.AttendancePerson.name).all(),
+                  month=f"{first:%Y-%m}", flag_text=ATT.FLAG_TEXT)
+
+
+@app.get("/attendance/timesheet.csv")
+def att_timesheet_csv(request: Request, month: str = "", db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    import csv
+    first, days, people = _att_month(db, month)
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["Name", "Employment", "Date", "First in", "Last out", "Hours", "Issues", "Flags", "OT hours", "Remarks"])
+    for x in people:
+        for dd in x["days"]:
+            sm = dd["s"]
+            if sm["state"] == "absent" and not dd["remarks"]:
+                continue
+            w.writerow([x["p"].name, x["p"].employment, f"{dd['d']:%d/%m/%Y}",
+                        f"{ATT.myt(sm['first_in'].at):%H:%M}" if sm["first_in"] else "",
+                        f"{ATT.myt(sm['last_out'].at):%H:%M}" if sm["last_out"] else "",
+                        sm["hours"], "; ".join(sm["issues"]),
+                        "; ".join(f for f in sm["flags"] if f != "new-phone"),
+                        sum(r.hours for r in dd["remarks"] if r.kind == "OT"),
+                        "; ".join(f"{r.kind}: {r.text}" for r in dd["remarks"])])
+    from fastapi.responses import Response
+    return Response(buf.getvalue(), media_type="text/csv", headers={
+        "Content-Disposition": f'attachment; filename="attendance_{first:%Y-%m}.csv"'})
+
+
+@app.get("/attendance/people", response_class=HTMLResponse)
+def att_people(request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    people = db.query(M.AttendancePerson).order_by(M.AttendancePerson.active.desc(),
+                                                   M.AttendancePerson.name).all()
+    return render(request, db, "attendance_people.html", "attendance",
+                  people=people, can_manage=user.role in ATT_MANAGE,
+                  flash=request.session.pop("flash_att", None))
+
+
+def _att_guard(request, db, roles=ATT_MANAGE):
+    user = current_user(request, db)
+    return user if user and user.role in roles else None
+
+
+@app.post("/attendance/people/new")
+def att_people_new(request: Request, name: str = Form(...), position: str = Form(""),
+                   employment: str = Form("Full-time"), db: Session = Depends(get_db)):
+    user = _att_guard(request, db)
+    if not user:
+        return RedirectResponse("/", status_code=302)
+    name = name.strip()
+    if name and not db.query(M.AttendancePerson).filter(func.lower(M.AttendancePerson.name) == name.lower()).first():
+        db.add(M.AttendancePerson(name=name[:100], position=position.strip()[:100],
+                                  employment=employment if employment in ("Full-time", "Part-time") else "Full-time",
+                                  created_by=user.display_name))
+        db.commit()
+        request.session["flash_att"] = f"{name} added. They can scan the QR now and set their PIN."
+    else:
+        request.session["flash_att"] = f"{name or 'That name'} is already on the list."
+    return RedirectResponse("/attendance/people", status_code=303)
+
+
+@app.post("/attendance/people/{pid}/toggle")
+def att_people_toggle(pid: int, request: Request, db: Session = Depends(get_db)):
+    user = _att_guard(request, db)
+    p = db.get(M.AttendancePerson, pid)
+    if user and p:
+        p.active = not p.active
+        db.commit()
+        request.session["flash_att"] = (f"{p.name} can clock in again." if p.active else
+                                        f"{p.name} removed from attendance — their phone stops working.")
+    return RedirectResponse("/attendance/people", status_code=303)
+
+
+@app.post("/attendance/people/{pid}/reset-pin")
+def att_people_reset_pin(pid: int, request: Request, db: Session = Depends(get_db)):
+    user = _att_guard(request, db)
+    p = db.get(M.AttendancePerson, pid)
+    if user and p:
+        p.pin_hash = ""
+        db.commit()
+        request.session["flash_att"] = f"{p.name}'s PIN cleared — they set a new one on their next scan."
+    return RedirectResponse("/attendance/people", status_code=303)
+
+
+@app.post("/attendance/device/{did}/{action}")
+def att_device(did: int, action: str, request: Request, db: Session = Depends(get_db)):
+    """confirm / reject a new phone, or remove a confirmed one (lost, changed)."""
+    user = _att_guard(request, db)
+    d = db.get(M.AttendanceDevice, did)
+    back = request.headers.get("referer") or "/attendance"
+    if not user or not d or action not in ("confirm", "reject", "remove"):
+        return RedirectResponse(back, status_code=303)
+    who, now = user.display_name, datetime.utcnow()
+    pend = db.query(M.AttendanceLog).filter(M.AttendanceLog.device_id == d.id,
+                                            M.AttendanceLog.status == "pending").all()
+    if action == "confirm" and d.status == "pending":
+        d.status, d.decided_by, d.decided_at = "confirmed", who, now
+        for l in pend:
+            l.status = "ok"
+        msg = f"{d.person.name}'s phone confirmed — {len(pend)} scan(s) now count."
+    elif action == "reject" and d.status == "pending":
+        d.status, d.decided_by, d.decided_at = "rejected", who, now
+        for l in pend:
+            l.status, l.note = "rejected", f"Phone rejected by {who}"
+        if d.set_pin:
+            d.person.pin_hash = ""       # free the name for the real person
+        msg = (f"Phone rejected — its {len(pend)} scan(s) for {d.person.name} don't count"
+               + (", and the PIN it set is cleared." if d.set_pin else "."))
+    elif action == "remove":
+        d.status, d.decided_by, d.decided_at = "rejected", who, now
+        msg = f"That phone no longer clocks in for {d.person.name}. Past scans stay."
+    else:
+        msg = "Nothing to change."
+    db.commit()
+    request.session["flash_att"] = msg
+    return RedirectResponse(back, status_code=303)
+
+
+@app.post("/attendance/remark")
+def att_remark(request: Request, person_id: int = Form(...), day: str = Form(...),
+               kind: str = Form("Reason"), hours: str = Form(""), text: str = Form(""),
+               db: Session = Depends(get_db)):
+    """Karen annotates a day — overtime or a reason. She never changes the times."""
+    user = _att_guard(request, db)
+    d = parse_date(day)
+    if user and d and text.strip():
+        try:
+            h = max(0.0, float(hours)) if hours else 0.0
+        except ValueError:
+            h = 0.0
+        db.add(M.AttendanceRemark(person_id=person_id, day=d, kind="OT" if kind == "OT" else "Reason",
+                                  hours=h if kind == "OT" else 0.0, text=text.strip()[:500],
+                                  by=user.display_name))
+        db.commit()
+        request.session["flash_att"] = "Remark added."
+    return RedirectResponse(f"/attendance?day={day}", status_code=303)
+
+
+@app.post("/attendance/manual")
+def att_manual(request: Request, person_id: int = Form(...), day: str = Form(...),
+               time_: str = Form(..., alias="time"), kind: str = Form("out"),
+               reason: str = Form(""), db: Session = Depends(get_db)):
+    """Admin only: add a scan that was missed (forgot to clock out). Marked manual."""
+    user = _att_guard(request, db, ("admin",))
+    d = parse_date(day)
+    if not user or not d or not reason.strip():
+        request.session["flash_att"] = "A reason is needed for a manual entry."
+        return RedirectResponse(f"/attendance?day={day}", status_code=303)
+    try:
+        hh, mm = (int(x) for x in time_.split(":")[:2])
+    except ValueError:
+        return RedirectResponse(f"/attendance?day={day}", status_code=303)
+    at = datetime(d.year, d.month, d.day, hh, mm) - ATT.MYT
+    db.add(M.AttendanceLog(person_id=person_id, kind="out" if kind == "out" else "in", at=at,
+                           status="manual", flags="manual", note=reason.strip()[:500],
+                           created_by=user.display_name))
+    db.commit()
+    request.session["flash_att"] = "Manual entry added."
+    return RedirectResponse(f"/attendance?day={day}", status_code=303)
+
+
+@app.post("/attendance/log/{lid}/void")
+def att_void(lid: int, request: Request, reason: str = Form(""), db: Session = Depends(get_db)):
+    """Admin only: a scan that shouldn't count. Kept, marked, with the reason."""
+    user = _att_guard(request, db, ("admin",))
+    l = db.get(M.AttendanceLog, lid)
+    day = f"{ATT.myt(l.at):%Y-%m-%d}" if l else ""
+    if user and l and reason.strip():
+        l.status, l.note = "rejected", f"Voided by {user.display_name}: {reason.strip()[:400]}"
+        db.commit()
+        request.session["flash_att"] = "Scan voided — it stays on record, marked."
+    return RedirectResponse(f"/attendance?day={day}", status_code=303)
 
 
 # ─────────────────────────── PETTY CASH (multi-account) ───────────────────────────
@@ -3366,6 +3823,33 @@ def _ar_aging_rows(db):
 AR_EDIT_ROLES = ("admin", "manager", "storekeeper")
 
 
+def _inv_event(db, inv, who: str, action: str, detail: str = ""):
+    db.add(M.ARInvoiceEvent(invoice_id=inv.id, who=who, action=action, detail=detail[:2000]))
+
+
+def _inv_snapshot(inv) -> dict:
+    return {"customer": inv.customer, "contact": inv.cust_contact or "",
+            "address": inv.cust_address or "", "date": f"{inv.date:%d/%m/%Y}",
+            "due": f"{inv.due_date:%d/%m/%Y}", "notes": inv.notes or "",
+            "total": inv.amount,
+            "lines": [f"{l.printed} = RM{l.amount:,.2f}" for l in inv.lines]}
+
+
+def _inv_diff(a: dict, b: dict) -> str:
+    """What an edit changed, old → new, in words someone can read later."""
+    out = []
+    for k, label in (("customer", "Customer"), ("contact", "Contact"), ("address", "Address"),
+                     ("date", "Invoice date"), ("due", "Due"), ("notes", "Notes")):
+        if a[k] != b[k]:
+            out.append(f"{label}: “{a[k] or '—'}” → “{b[k] or '—'}”")
+    if abs(a["total"] - b["total"]) > 0.005:
+        out.append(f"Total: RM{a['total']:,.2f} → RM{b['total']:,.2f}")
+    if a["lines"] != b["lines"]:
+        out.append("Lines before: " + " | ".join(a["lines"] or ["—"]))
+        out.append("Lines after: " + " | ".join(b["lines"] or ["—"]))
+    return "\n".join(out) or "Saved with no changes"
+
+
 def _received_text(r) -> str:
     how = {"Bank": "bank transfer", "Cash": "cash"}.get(r.method, r.method.lower())
     return f"Received {r.date:%d/%m/%Y} — {how}" + (f", ref {r.notes}" if r.notes else "")
@@ -3474,7 +3958,7 @@ def _invoice_form_ctx(inv=None, **extra):
 
 
 @app.get("/receivables", response_class=HTMLResponse)
-def receivables(request: Request, q: str = "", status: str = "",
+def receivables(request: Request, q: str = "", status: str = "", by: str = "",
                 deposit: float = 0, note: str = "", on: str = "",
                 db: Session = Depends(get_db)):
     if deposit:
@@ -3488,11 +3972,14 @@ def receivables(request: Request, q: str = "", status: str = "",
     if q:
         like = f"%{q.strip()}%"
         query = query.filter((M.ARInvoice.inv_no.ilike(like)) | (M.ARInvoice.customer.ilike(like)))
+    if by:
+        query = query.filter(M.ARInvoice.created_by == by)
     invoices = query.limit(300).all()
+    creators = sorted({c for (c,) in db.query(M.ARInvoice.created_by).distinct() if c})
     open_total = sum(i.outstanding for i in db.query(M.ARInvoice)
                      .filter(M.ARInvoice.status != "Void").all() if i.outstanding > 0.005)
     return render(request, db, "receivables.html", "receivables",
-                  invoices=invoices, q=q, flt=status, streams=M.STREAMS,
+                  invoices=invoices, q=q, flt=status, streams=M.STREAMS, by=by, creators=creators,
                   open_total=round(open_total, 2), today_iso=date.today().isoformat(),
                   # Pre-fill when arriving from a daily report that reported a
                   # deposit, so the figure and its context aren't re-typed.
@@ -3549,6 +4036,7 @@ async def receivables_update(inv_id: int, request: Request, db: Session = Depend
         request.session["flash_ar_err"] = "Needs a customer and at least one line, with a total above zero."
         return RedirectResponse(f"/receivables/{inv_id}/edit", status_code=303)
     before = inv.amount
+    snap_before = _inv_snapshot(inv)
     _apply_invoice_form(inv, f, lines)
     for ln in list(inv.lines):
         db.delete(ln)
@@ -3557,6 +4045,7 @@ async def receivables_update(inv_id: int, request: Request, db: Session = Depend
         db.add(M.ARInvoiceLine(invoice_id=inv.id, **l))
     db.flush()
     db.expire(inv, ["lines"])
+    _inv_event(db, inv, user.display_name, "edited", _inv_diff(snap_before, _inv_snapshot(inv)))
     try:
         inv.pdf_path = _build_invoice_pdf(db, inv)
     except Exception:
@@ -3599,6 +4088,8 @@ async def receivables_new(request: Request, db: Session = Depends(get_db)):
         db.add(M.ARInvoiceLine(invoice_id=inv.id, **l))
     db.flush()
     db.expire(inv, ["lines"])
+    _inv_event(db, inv, user.display_name, "created",
+               f"RM{inv.amount:,.2f} · " + " | ".join(l.printed for l in inv.lines))
     try:
         inv.pdf_path = _build_invoice_pdf(db, inv)
     except Exception:
@@ -3643,6 +4134,9 @@ async def receivables_receipt(inv_id: int, request: Request, db: Session = Depen
                            notes=str(f.get("reference", "")).strip()[:200],
                            recorded_by=user.display_name))
         db.flush()
+        _inv_event(db, inv, user.display_name, "payment",
+                   f"RM{amount:,.2f} · {f.get('method') or 'Bank'} · {f.get('date') or 'today'}"
+                   + (f" · ref {str(f.get('reference')).strip()}" if f.get("reference") else ""))
         if inv.outstanding <= 0.005:
             inv.status = "Paid"
         # Re-issue so the document shows the deposit received and the balance
@@ -3665,6 +4159,7 @@ def receivables_void(inv_id: int, request: Request, db: Session = Depends(get_db
     inv = db.get(M.ARInvoice, inv_id)
     if inv and not inv.receipts:
         inv.status = "Void"
+        _inv_event(db, inv, user.display_name, "voided")
         db.commit()
         ledger.sync_ledger(db)   # removes the derived posting
     return RedirectResponse("/receivables", status_code=303)

@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block content %}
+<div class="pagehead">
+  <h1>Timesheet {{ first.strftime('%B %Y') }}</h1>
+  <div class="actions">
+    <a class="btn secondary" href="/attendance">← Today</a>
+    <a class="btn secondary" href="/attendance/timesheet.csv?month={{ month }}">{{ icon('file', 14) }} Download CSV</a>
+  </div>
+</div>
+<div class="sub">Hours are counted from each clock-in to the clock-out after it. Voided scans don't count; days with a problem are marked. OT is what Karen noted in remarks.</div>
+
+<form method="get" class="filters" style="align-items:center;gap:8px">
+  <input type="month" name="month" value="{{ month }}" class="slim">
+  <select name="person" class="slim"><option value="0">Everyone</option>
+    {% for p in all_people %}<option value="{{ p.id }}" {% if person == p.id %}selected{% endif %}>{{ p.name }}</option>{% endfor %}</select>
+  <button class="small" type="submit">Show</button>
+</form>
+
+<div class="cards">
+  {% for x in people %}
+  <div class="card"><div class="label">{{ x.p.name }}</div>
+    <div class="value" style="font-size:18px">{{ x.worked }} days · {{ '%.1f'|format(x.hours) }} h</div>
+    {% if x.ot %}<div class="muted" style="font-size:12px">OT noted: {{ '%g'|format(x.ot) }} h</div>{% endif %}</div>
+  {% endfor %}
+</div>
+
+{% for x in people %}
+<div class="panel">
+  <h2 style="margin-top:0">{{ x.p.name }} <span class="muted" style="font-size:12px;font-weight:500">{{ x.p.employment }}</span></h2>
+  <div class="tablewrap">
+  <table>
+    <tr><th>Date</th><th>In</th><th>Out</th><th class="num">Hours</th><th>Notes</th></tr>
+    {% for dd in x.days %}{% set s = dd.s %}
+    {% if s.state != 'absent' or dd.remarks %}
+    <tr>
+      <td>{{ dd.d.strftime('%a %d/%m') }}</td>
+      <td class="mono">{{ s.first_in.at|myt if s.first_in else '—' }}</td>
+      <td class="mono">{{ s.last_out.at|myt if s.last_out else '—' }}</td>
+      <td class="num">{{ '%.2f'|format(s.hours) if s.hours else '' }}</td>
+      <td style="font-size:12px">
+        {% for i in s.issues %}<span class="badge pending">⚠ {{ i }}</span> {% endfor %}
+        {% for f in s.flags if f not in ['new-phone'] %}<span class="badge pending" title="{{ flag_text.get(f, f) }}">{{ f }}</span> {% endfor %}
+        {% for m in dd.remarks %}<span class="badge {{ 'approved' if m.kind == 'OT' else 'draft' }}">{{ m.kind }}{% if m.hours %} {{ '%g'|format(m.hours) }}h{% endif %}</span> {{ m.text }} {% endfor %}
+      </td>
+    </tr>
+    {% endif %}
+    {% endfor %}
+    <tr><td colspan="3" style="font-weight:800">{{ x.worked }} days</td><td class="num" style="font-weight:800">{{ '%.2f'|format(x.hours) }}</td><td>{% if x.ot %}OT {{ '%g'|format(x.ot) }} h{% endif %}</td></tr>
+  </table>
+  </div>
+</div>
+{% else %}
+<div class="panel"><div class="empty">No attendance this month.</div></div>
+{% endfor %}
+{% endblock %}

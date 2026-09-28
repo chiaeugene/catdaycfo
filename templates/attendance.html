@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block content %}
+<style>
+  .attrow td { vertical-align: top; }
+  .scan { display:inline-flex; align-items:center; gap:6px; margin:0 8px 6px 0; font-size:12px; }
+  .scan img { width:34px; height:34px; border-radius:50%; object-fit:cover; border:2px solid var(--line); }
+  .scan.rejected { opacity:.45; text-decoration: line-through; }
+  .state-in { background:var(--green-bg); color:var(--green); }
+  .state-out { background:var(--line, #eee); }
+  .state-absent { background:var(--amber-bg); color:var(--amber); }
+</style>
+
+{% if flash %}
+<div class="panel" style="background:var(--green-bg);border-color:rgba(29,127,63,.3)">
+  <div style="font-size:13px;color:var(--green);font-weight:700">✓ {{ flash }}</div></div>
+{% endif %}
+
+<div class="pagehead">
+  <h1>Attendance 考勤</h1>
+  <div class="actions">
+    <a class="btn secondary" href="/attendance/timesheet">{{ icon('list', 14) }} Monthly timesheet</a>
+    <a class="btn secondary" href="/attendance/people">{{ icon('cat', 14) }} Staff &amp; phones</a>
+  </div>
+</div>
+<div class="sub">Staff clock in and out by scanning the QR on the counter screen, with a selfie. Times are the system's own clock (Malaysia time), not the phone's.
+  {% if can_manage and not is_admin %}You can add remarks — OT or a reason. Only Eugene / Weng Teng can correct a time.{% endif %}</div>
+
+{# ── Counter screen ── #}
+<div class="panel" style="padding:14px 18px">
+  {% if this_is_kiosk %}
+    <b>✓ This device is the counter screen.</b> <a class="btn small" href="/attendance/kiosk" style="margin-left:8px">Open the QR screen</a>
+  {% elif kiosk %}
+    <span class="muted">Counter screen set up by {{ kiosk.authorised_by }} on {{ kiosk.created_at|myt('%d/%m/%Y') }}{% if kiosk.lat %} · shop location saved{% else %} · <b style="color:var(--amber)">no shop location saved — "scanned away from the shop" can't be checked</b>{% endif %}.</span>
+  {% else %}
+    <b style="color:var(--amber)">No counter screen yet.</b> <span class="muted">On the device that stays at the counter, sign in and press the button below.</span>
+  {% endif %}
+  {% if can_manage and user.role in ['admin','storekeeper'] and not this_is_kiosk %}
+  <form method="post" action="/attendance/kiosk/setup" id="kioskform" class="inline" style="margin-left:8px"
+        onsubmit="return confirm('Make THIS device the counter screen?{% if kiosk %} The current one stops working.{% endif %}')">
+    <input type="hidden" name="lat"><input type="hidden" name="lng">
+    <button class="small" type="submit">{{ icon('check', 12) }} Set up this device as the counter screen</button>
+  </form>
+  <script>
+    // Save where the counter is, so a scan from far away can be flagged.
+    if (navigator.geolocation) navigator.geolocation.getCurrentPosition(function (p) {
+      var f = document.getElementById('kioskform');
+      if (f) { f.lat.value = p.coords.latitude; f.lng.value = p.coords.longitude; }
+    }, function () {}, {enableHighAccuracy: true, timeout: 10000});
+  </script>
+  {% endif %}
+</div>
+
+{# ── New phones waiting ── #}
+{% if pending %}
+<div class="panel" style="border-color:var(--brand);background:var(--amber-bg)">
+  <h2 style="margin-top:0">New phones to confirm 新手机待确认</h2>
+  <div class="sub" style="margin-bottom:8px">Someone scanned for the first time on a phone. Check the selfie is really that person. Their scans count once confirmed.</div>
+  <table>
+    {% for d in pending %}
+    {% set first = (d.person and (d.person.devices|length)) %}
+    <tr>
+      <td><b>{{ d.person.name }}</b>{% if d.set_pin %} <span class="badge pending" title="This phone chose their PIN">set PIN</span>{% endif %}</td>
+      <td class="muted">{{ d.created_at|myt('%d/%m %H:%M') }}</td>
+      <td class="muted" style="font-size:11px;max-width:260px">{{ d.user_agent[:70] }}</td>
+      <td>
+        {% if can_manage %}
+        <div class="actions">
+          <form method="post" action="/attendance/device/{{ d.id }}/confirm" class="inline"><button class="small success" type="submit">{{ icon('check', 12) }} It's them — confirm</button></form>
+          <form method="post" action="/attendance/device/{{ d.id }}/reject" class="inline"
+                onsubmit="return confirm('Reject this phone? Its scans won\'t count{{ ' and the PIN it set is cleared' if d.set_pin }}.')"><button class="small danger" type="submit">Not them — reject</button></form>
+        </div>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+
+{# ── The day ── #}
+<div class="filters" style="align-items:center">
+  <a href="/attendance?day={{ prev_day }}">← {{ prev_day[8:10] }}/{{ prev_day[5:7] }}</a>
+  <b style="margin:0 10px">{{ d.strftime('%A %d/%m/%Y') }}{% if is_today %} · today{% endif %}</b>
+  {% if not is_today %}<a href="/attendance?day={{ next_day }}">{{ next_day[8:10] }}/{{ next_day[5:7] }} →</a> <a href="/attendance">Today</a>{% endif %}
+</div>
+
+<div class="tablewrap">
+<table>
+  <tr><th>Staff</th><th>Now</th><th>In</th><th>Out</th><th class="num">Hours</th><th>Scans</th><th>Remarks</th></tr>
+  {% for r in rows %}{% set s = r.s %}
+  <tr class="attrow">
+    <td><b>{{ r.p.name }}</b><div class="muted" style="font-size:11px">{{ r.p.employment }}{% if not r.p.active %} · inactive{% endif %}</div></td>
+    <td>
+      {% if s.state == 'in' %}<span class="badge state-in">In{% if is_today %} now{% endif %}</span>
+      {% elif s.state == 'out' %}<span class="badge state-out">Out</span>
+      {% else %}<span class="badge state-absent">Not in</span>{% endif %}
+      {% if s.pending %}<div><span class="badge pending">phone unconfirmed</span></div>{% endif %}
+    </td>
+    <td class="mono">{{ s.first_in.at|myt if s.first_in else '—' }}</td>
+    <td class="mono">{{ s.last_out.at|myt if s.last_out else '—' }}</td>
+    <td class="num">{{ '%.2f'|format(s.hours) if s.hours else '' }}</td>
+    <td>
+      {% for l in s.logs %}
+      <span class="scan {{ l.status }}" title="{{ l.status }}{% if l.note %} — {{ l.note }}{% endif %}{% if l.distance_m is not none %} · {{ l.distance_m|int }} m from counter{% endif %}">
+        {% if l.selfie_path %}<a href="/files/{{ l.selfie_path }}" target="_blank"><img src="/files/{{ l.selfie_path }}" alt="selfie" loading="lazy"></a>{% endif %}
+        <span><b>{{ l.kind|upper }}</b> {{ l.at|myt }}{% if l.status == 'manual' %} <span class="badge draft">manual</span>{% endif %}{% if l.status == 'rejected' %} <span class="badge void">void</span>{% endif %}</span>
+        {% for f in (l.flags or '').split(',') if f and f not in ['manual','new-phone'] %}<span class="badge pending" title="{{ flag_text.get(f, f) }}">⚠ {{ f }}</span>{% endfor %}
+      </span>
+      {% if is_admin and l.status != 'rejected' %}
+      <details class="rowedit" style="display:inline-block"><summary style="font-size:10.5px">void</summary>
+        <form method="post" action="/attendance/log/{{ l.id }}/void" class="inline" style="margin-top:4px">
+          <input name="reason" required placeholder="Why it shouldn't count" class="slim" style="width:180px">
+          <button class="small danger" type="submit">Void</button></form></details>
+      {% endif %}
+      {% endfor %}
+      {% for i in s.issues %}<div><span class="badge pending">⚠ {{ i }}</span></div>{% endfor %}
+      {% if is_admin %}
+      <details class="rowedit"><summary style="font-size:10.5px">+ add missed scan</summary>
+        <form method="post" action="/attendance/manual" class="inline" style="margin-top:4px">
+          <input type="hidden" name="person_id" value="{{ r.p.id }}"><input type="hidden" name="day" value="{{ d.isoformat() }}">
+          <select name="kind" class="slim"><option value="out">Out</option><option value="in">In</option></select>
+          <input type="time" name="time" required class="slim">
+          <input name="reason" required placeholder="Reason (e.g. forgot to clock out)" class="slim" style="width:200px">
+          <button class="small" type="submit">Add</button></form></details>
+      {% endif %}
+    </td>
+    <td style="min-width:200px">
+      {% for m in r.remarks %}
+      <div style="font-size:12px;margin-bottom:4px"><span class="badge {{ 'approved' if m.kind == 'OT' else 'draft' }}">{{ m.kind }}{% if m.kind == 'OT' and m.hours %} {{ '%g'|format(m.hours) }}h{% endif %}</span> {{ m.text }} <span class="muted">— {{ m.by }}</span></div>
+      {% endfor %}
+      {% if can_manage %}
+      <details class="rowedit"><summary style="font-size:10.5px">+ remark</summary>
+        <form method="post" action="/attendance/remark" class="inline" style="margin-top:4px">
+          <input type="hidden" name="person_id" value="{{ r.p.id }}"><input type="hidden" name="day" value="{{ d.isoformat() }}">
+          <select name="kind" class="slim" onchange="this.form.hours.style.display = this.value === 'OT' ? '' : 'none'">
+            <option value="Reason">Reason</option><option value="OT">OT</option></select>
+          <input name="hours" type="number" step="0.25" min="0" placeholder="OT hrs" class="slim" style="width:80px;display:none">
+          <input name="text" required placeholder="e.g. Late — flat tyre / Stayed for late check-in" class="slim" style="width:220px">
+          <button class="small" type="submit">Add</button></form></details>
+      {% endif %}
+    </td>
+  </tr>
+  {% else %}
+  <tr><td colspan="7" class="empty">No staff on the attendance list yet — add them in <a href="/attendance/people">Staff &amp; phones</a>.</td></tr>
+  {% endfor %}
+</table>
+</div>
+{% endblock %}

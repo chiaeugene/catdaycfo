@@ -40,6 +40,13 @@
   <a href="/receivables?status={{ s }}" class="{% if flt == s %}on{% endif %}">{{ s }}</a>
   {% endfor %}
   <form method="get" action="/receivables" class="inline" style="margin-left:auto">
+    {% if flt %}<input type="hidden" name="status" value="{{ flt }}">{% endif %}
+    {% if creators %}
+    <select name="by" class="slim" onchange="this.form.submit()" title="Who created the invoice">
+      <option value="">Created by: anyone</option>
+      {% for c in creators %}<option value="{{ c }}" {% if by == c %}selected{% endif %}>Created by: {{ c }}</option>{% endfor %}
+    </select>
+    {% endif %}
     <input name="q" value="{{ q }}" placeholder="Search invoice / customer" class="slim" style="width:220px">
     <button class="small" type="submit">Search</button>
   </form>
@@ -47,7 +54,7 @@
 
 <div class="tablewrap">
   <table>
-    <tr><th>Invoice</th><th>PDF</th><th>Date</th><th>Due</th><th>Customer</th><th>Stream</th>
+    <tr><th>Invoice</th><th>PDF</th><th>Date</th><th>Due</th><th>Customer</th><th>By</th><th>Stream</th>
         <th class="num">Amount</th><th class="num">Received</th><th class="num">Outstanding</th><th>Status</th><th></th></tr>
     {% for i in invoices %}
     <tr>
@@ -63,6 +70,7 @@
       <td>{{ i.date.strftime('%d/%m/%y') }}</td>
       <td>{{ i.due_date.strftime('%d/%m/%y') }}</td>
       <td>{{ i.customer }}</td>
+      <td class="muted" style="font-size:12px">{{ i.created_by or '—' }}</td>
       <td><span class="badge draft">{{ i.stream }}</span></td>
       <td class="num">{{ i.amount|rm }}</td>
       <td class="num">{{ i.received|rm if i.received else '' }}</td>
@@ -100,7 +108,7 @@
        invoice shows as paid and there is no way back to the money owing. #}
     <tr class="subrow">
       <td></td>
-      <td colspan="10" style="padding-bottom:10px">
+      <td colspan="11" style="padding-bottom:10px">
         {% for r in i.receipts %}
         <span class="badge paid" style="margin-right:6px">
           {{ r.date.strftime('%d/%m/%y') }} · {{ r.method }} · RM {{ r.amount|rm }}{% if r.notes %} · ref {{ r.notes }}{% endif %}
@@ -115,8 +123,27 @@
       </td>
     </tr>
     {% endif %}
+    {% if i.events %}
+    {# Append-only history: an invoice can be edited until paid, so what it
+       said before an edit is kept here, old → new. #}
+    <tr class="subrow">
+      <td></td>
+      <td colspan="11" style="padding-bottom:8px">
+        <details><summary style="font-size:11.5px;color:var(--muted);cursor:pointer">History ({{ i.events|length }}) · last: {{ i.events[-1].action }} by {{ i.events[-1].who }}, {{ i.events[-1].at|myt('%d/%m %H:%M') }}</summary>
+          <table style="margin-top:6px">
+            {% for e in i.events|reverse %}
+            <tr><td class="mono" style="white-space:nowrap;font-size:11.5px">{{ e.at|myt('%d/%m/%y %H:%M') }}</td>
+                <td style="white-space:nowrap"><b>{{ e.who }}</b></td>
+                <td><span class="badge draft">{{ e.action }}</span></td>
+                <td style="font-size:12px;white-space:pre-line">{{ e.detail }}</td></tr>
+            {% endfor %}
+          </table>
+        </details>
+      </td>
+    </tr>
+    {% endif %}
     {% else %}
-    <tr><td colspan="11" class="empty">No customer invoices yet — use ＋ New invoice for boarding packages, kitten sales, memberships, or corporate billing.<br>还没有客户发票。</td></tr>
+    <tr><td colspan="12" class="empty">No customer invoices yet — use ＋ New invoice for boarding packages, kitten sales, memberships, or corporate billing.<br>还没有客户发票。</td></tr>
     {% endfor %}
   </table>
 </div>

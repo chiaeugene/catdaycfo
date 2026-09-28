@@ -354,6 +354,94 @@ class PurchaseRequestEvent(Base):
     channel: Mapped[str] = mapped_column(String(10), default="web") # web / telegram
 
 
+# ─────────────────────────── Attendance ───────────────────────────
+# Kept apart from payroll's Staff on purpose: part-timers clock in but aren't
+# on payroll, and payroll picks up every active Staff row. Karen manages this
+# roster; payroll is never touched by it. `staff_id` links a person to their
+# payroll record when there is one, for a future payroll feed.
+class AttendancePerson(Base):
+    __tablename__ = "attendance_people"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100))
+    position: Mapped[str] = mapped_column(String(100), default="")
+    employment: Mapped[str] = mapped_column(String(20), default="Full-time")
+    staff_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"), nullable=True)
+    pin_hash: Mapped[str] = mapped_column(String(200), default="")
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_by: Mapped[str] = mapped_column(String(100), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    devices = relationship("AttendanceDevice", backref="person", cascade="all, delete-orphan")
+
+
+class AttendanceKiosk(Base):
+    """The device at the counter that shows the live QR. Authorised once by a
+    logged-in user; after that it's recognised by a long-lived cookie, so the
+    screen works logged out. Its location, captured at set-up, is the shop."""
+    __tablename__ = "attendance_kiosks"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    secret: Mapped[str] = mapped_column(String(64))
+    name: Mapped[str] = mapped_column(String(60), default="Counter")
+    lat: Mapped[float | None] = mapped_column(Float, nullable=True)
+    lng: Mapped[float | None] = mapped_column(Float, nullable=True)
+    authorised_by: Mapped[str] = mapped_column(String(100), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class AttendanceDevice(Base):
+    """A staff member's phone. The first scan from a phone links it pending
+    Karen's confirmation -- otherwise anyone could pick a colleague's name."""
+    __tablename__ = "attendance_devices"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    person_id: Mapped[int] = mapped_column(ForeignKey("attendance_people.id"))
+    token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    status: Mapped[str] = mapped_column(String(12), default="pending")  # pending/confirmed/rejected
+    set_pin: Mapped[bool] = mapped_column(Boolean, default=False)       # this phone chose the PIN
+    user_agent: Mapped[str] = mapped_column(String(200), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    decided_by: Mapped[str] = mapped_column(String(100), default="")
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class AttendanceLog(Base):
+    """One clock-in or clock-out. Time is the server's, never the phone's.
+    Never edited: a wrong scan is voided (status 'rejected', with a reason)
+    and a missing one is added as 'manual' by an admin, with a reason."""
+    __tablename__ = "attendance_logs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    person_id: Mapped[int] = mapped_column(ForeignKey("attendance_people.id"))
+    kind: Mapped[str] = mapped_column(String(4))                       # in / out
+    at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    device_id: Mapped[int | None] = mapped_column(ForeignKey("attendance_devices.id"), nullable=True)
+    lat: Mapped[float | None] = mapped_column(Float, nullable=True)
+    lng: Mapped[float | None] = mapped_column(Float, nullable=True)
+    accuracy_m: Mapped[float | None] = mapped_column(Float, nullable=True)
+    distance_m: Mapped[float | None] = mapped_column(Float, nullable=True)
+    selfie_path: Mapped[str] = mapped_column(String(300), default="")
+    status: Mapped[str] = mapped_column(String(10), default="ok")      # ok/pending/rejected/manual
+    flags: Mapped[str] = mapped_column(String(200), default="")        # comma list
+    note: Mapped[str] = mapped_column(Text, default="")
+    created_by: Mapped[str] = mapped_column(String(100), default="")   # set for manual entries
+    person = relationship("AttendancePerson")
+    device = relationship("AttendanceDevice")
+
+
+class AttendanceRemark(Base):
+    """Karen's notes on a person's day: overtime (with hours) or a reason
+    (late, left early, absent). She annotates; she doesn't change the times."""
+    __tablename__ = "attendance_remarks"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    person_id: Mapped[int] = mapped_column(ForeignKey("attendance_people.id"))
+    day: Mapped[date] = mapped_column(Date, index=True)
+    kind: Mapped[str] = mapped_column(String(10), default="Reason")    # OT / Reason
+    hours: Mapped[float] = mapped_column(Float, default=0.0)
+    text: Mapped[str] = mapped_column(Text, default="")
+    by: Mapped[str] = mapped_column(String(100), default="")
+    at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    person = relationship("AttendancePerson")
+
+
 class PettyCashAccount(Base):
     """A company may run several petty-cash tins/floats (e.g. Front Desk, Grooming)."""
     __tablename__ = "petty_cash_accounts"
@@ -630,6 +718,8 @@ class ARInvoice(Base):
     # have none and fall back to amount + stream + notes.
     lines = relationship("ARInvoiceLine", backref="invoice", cascade="all, delete-orphan",
                          order_by="ARInvoiceLine.id")
+    events = relationship("ARInvoiceEvent", backref="invoice", cascade="all, delete-orphan",
+                          order_by="ARInvoiceEvent.id")
 
     @property
     def received(self):
@@ -664,6 +754,19 @@ class ARInvoiceLine(Base):
         q = f"{self.qty:g}"
         unit = f" {self.per}{'s' if self.per and self.qty != 1 else ''}" if self.per else ""
         return f"{self.description} ({q}{unit} × RM{self.unit_price:,.2f})"
+
+
+class ARInvoiceEvent(Base):
+    """Append-only history of one invoice: created, edited (old → new),
+    payment recorded or undone, voided. An invoice can be edited until money
+    is recorded against it, so what it said before an edit has to survive."""
+    __tablename__ = "ar_invoice_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    invoice_id: Mapped[int] = mapped_column(ForeignKey("ar_invoices.id"))
+    at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    who: Mapped[str] = mapped_column(String(100), default="")
+    action: Mapped[str] = mapped_column(String(30), default="")
+    detail: Mapped[str] = mapped_column(Text, default="")
 
 
 class ARReceipt(Base):

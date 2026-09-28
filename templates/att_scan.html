@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en"><head>
+<title>cat day · Clock in / out</title>
+{% include "att_public_head.html" %}
+<style>
+  .hi { font-size:30px; margin:6px 0 2px; }
+  .shot { margin-top:16px; border:2px dashed var(--line); border-radius:14px; padding:14px; text-align:center; }
+  .shot img { display:none; width:160px; height:160px; object-fit:cover; border-radius:50%; margin:0 auto 10px; border:4px solid var(--cream); }
+  .shot.done img { display:block; }
+  .row2 { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:16px; }
+  .sug { outline:4px solid var(--yellow); outline-offset:2px; }
+  .loc { font-size:13px; margin-top:12px; color:#7A6A55; }
+</style>
+</head><body>
+<div class="band"><span class="display">cat day</span><small>Clock in / out 打卡</small></div>
+<div class="wrap">
+
+  {% if person %}
+    <div class="muted">Welcome back 欢迎</div>
+    <div class="hi display">Hi {{ person.name }} 👋</div>
+    {% if device and device.status == 'pending' %}
+    <div class="note">This phone is waiting for Karen to confirm it. Your clock-ins are saved and count once she does.</div>
+    {% endif %}
+  {% else %}
+    <div class="hi display">First time on this phone</div>
+    <div class="muted">Pick your name and enter your PIN. After this, this phone remembers you. Karen confirms new phones.<br>第一次使用：选名字、输入PIN。</div>
+    <div class="card">
+      <label for="person">Your name 名字</label>
+      <select id="person">
+        <option value="">— choose —</option>
+        {% for p in people %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}
+      </select>
+      <div id="pinbox" style="display:none">
+        <label for="pin" id="pinlabel">Your 4-digit PIN 你的PIN</label>
+        <input id="pin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off">
+        <div id="pin2box" style="display:none">
+          <label for="pin2">Type it again 再输入一次</label>
+          <input id="pin2" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off">
+          <div class="muted" style="margin-top:6px">You're choosing your PIN now. Keep it to yourself.</div>
+        </div>
+      </div>
+      <div class="muted" style="margin-top:10px">Name not on the list? Ask Karen to add you.</div>
+    </div>
+  {% endif %}
+
+  <div class="shot" id="shot">
+    <img id="preview" alt="Your selfie">
+    <button type="button" class="btn btn-ghost" id="takebtn">📷 Take a selfie 自拍</button>
+    <input id="cam" type="file" accept="image/*" capture="user" hidden>
+    <div class="muted" style="margin-top:8px">Needed for every clock-in and clock-out.</div>
+  </div>
+
+  <div class="row2">
+    <button type="button" class="btn btn-in{% if suggest == 'in' %} sug{% endif %}" data-kind="in" disabled>Clock in<br><small>上班</small></button>
+    <button type="button" class="btn btn-out{% if suggest == 'out' %} sug{% endif %}" data-kind="out" disabled>Clock out<br><small>下班</small></button>
+  </div>
+  <div class="loc" id="loc">📍 Checking location… (please allow)</div>
+  <div class="err" id="err" style="display:none"></div>
+</div>
+
+<script>
+(function () {
+  var HAS_PIN = {{ has_pin|tojson }};
+  var known = {{ 'true' if person else 'false' }};
+  var blob = null, pos = null;
+  var btns = document.querySelectorAll('[data-kind]');
+  var err = document.getElementById('err');
+  function fail(msg) { err.textContent = msg; err.style.display = 'block'; err.scrollIntoView({block: 'center'}); }
+  function ready() {
+    var ok = !!blob;
+    if (!known) {
+      var pid = document.getElementById('person').value, pin = document.getElementById('pin').value;
+      ok = ok && pid && /^\d{4}$/.test(pin) && (HAS_PIN[pid] || document.getElementById('pin2').value === pin);
+    }
+    btns.forEach(function (b) { b.disabled = !ok; });
+  }
+
+  if (!known) {
+    var sel = document.getElementById('person');
+    sel.addEventListener('change', function () {
+      document.getElementById('pinbox').style.display = this.value ? 'block' : 'none';
+      var first = this.value && !HAS_PIN[this.value];
+      document.getElementById('pin2box').style.display = first ? 'block' : 'none';
+      document.getElementById('pinlabel').textContent = first ? 'Choose a 4-digit PIN 设定4位数PIN' : 'Your 4-digit PIN 你的PIN';
+      ready();
+    });
+    ['pin', 'pin2'].forEach(function (id) { document.getElementById(id).addEventListener('input', ready); });
+  }
+
+  // Selfie: shrink on the phone so a photo is ~50 KB, not 4 MB.
+  var cam = document.getElementById('cam');
+  document.getElementById('takebtn').addEventListener('click', function () { cam.click(); });
+  cam.addEventListener('change', function () {
+    var file = this.files && this.files[0];
+    if (!file) return;
+    var img = new Image();
+    img.onload = function () {
+      var max = 640, w = img.width, h = img.height, r = Math.min(1, max / Math.max(w, h));
+      var c = document.createElement('canvas'); c.width = Math.round(w * r); c.height = Math.round(h * r);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      c.toBlob(function (b) {
+        blob = b;
+        document.getElementById('preview').src = URL.createObjectURL(b);
+        document.getElementById('shot').classList.add('done');
+        document.getElementById('takebtn').textContent = '📷 Retake 重拍';
+        ready();
+      }, 'image/jpeg', 0.72);
+    };
+    img.src = URL.createObjectURL(file);
+  });
+
+  var loc = document.getElementById('loc');
+  if (navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(function (p) {
+      pos = p.coords; loc.textContent = '📍 Location ready';
+    }, function () {
+      loc.textContent = '📍 Location not shared. You can still clock in, but it will be flagged for Karen.';
+    }, {enableHighAccuracy: true, timeout: 10000, maximumAge: 60000});
+  } else { loc.textContent = '📍 This phone can\'t share location. It will be flagged.'; }
+
+  btns.forEach(function (b) {
+    b.addEventListener('click', function () {
+      if (!blob) { fail('Take a selfie first.'); return; }
+      btns.forEach(function (x) { x.disabled = true; });
+      b.innerHTML = 'Saving… 保存中';
+      var fd = new FormData();
+      fd.append('k', '{{ k }}'); fd.append('c', '{{ c }}'); fd.append('kind', b.dataset.kind);
+      if (!known) {
+        fd.append('person_id', document.getElementById('person').value);
+        fd.append('pin', document.getElementById('pin').value);
+        fd.append('pin2', document.getElementById('pin2').value);
+      }
+      if (pos) { fd.append('lat', pos.latitude); fd.append('lng', pos.longitude); fd.append('acc', pos.accuracy); }
+      fd.append('selfie', blob, 'selfie.jpg');
+      fetch('/attendance/punch', {method: 'POST', body: fd, credentials: 'same-origin'})
+        .then(function (r) { return r.text(); })
+        .then(function (html) { document.open(); document.write(html); document.close(); })
+        .catch(function () { fail('No connection. Check your internet and scan again.'); b.innerHTML = 'Try again'; ready(); });
+    });
+  });
+})();
+</script>
+</body></html>

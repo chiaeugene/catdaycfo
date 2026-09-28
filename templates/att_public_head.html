@@ -1,0 +1,31 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<style>
+  @font-face { font-family: "Gliker"; src: url("/static/fonts/Gliker-Bold.ttf") format("truetype"); font-weight: 700; font-display: swap; }
+  @font-face { font-family: "Onest"; src: url("/static/fonts/Onest-Regular.ttf") format("truetype"); font-weight: 400; font-display: swap; }
+  @font-face { font-family: "Onest"; src: url("/static/fonts/Onest-Bold.ttf") format("truetype"); font-weight: 700; font-display: swap; }
+  :root { --brown:#2D1907; --cream:#ECDBB6; --paper:#FBF6EC; --rust:#B14919; --teal:#729094; --yellow:#E7CE7A;
+          --green:#2F6B3F; --line:#E4D6B8; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; background:var(--paper); color:var(--brown);
+               font-family:"Onest", system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .display { font-family:"Gliker", "Onest", system-ui, sans-serif; font-weight:700; letter-spacing:-.01em; }
+  .wrap { max-width:460px; margin:0 auto; padding:20px 18px 40px; }
+  .band { background:var(--brown); color:var(--cream); padding:16px 18px; display:flex; align-items:center; gap:10px; }
+  .band .display { font-size:22px; }
+  .band small { color:var(--yellow); font-size:12px; display:block; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:14px; padding:18px; margin-top:16px; }
+  label { display:block; font-size:11.5px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--teal); margin:14px 0 6px; }
+  input, select { width:100%; font:inherit; font-size:17px; padding:13px 14px; border:1.5px solid var(--line); border-radius:10px; background:#fff; color:var(--brown); }
+  input:focus, select:focus, button:focus-visible { outline:3px solid var(--yellow); outline-offset:1px; }
+  .btn { display:block; width:100%; font:inherit; font-size:18px; font-weight:700; padding:16px; border-radius:12px; border:0; cursor:pointer; text-align:center; text-decoration:none; }
+  .btn-in { background:var(--green); color:#fff; }
+  .btn-out { background:var(--rust); color:#fff; }
+  .btn-ghost { background:transparent; color:var(--brown); border:1.5px solid var(--line); }
+  .btn[disabled] { opacity:.45; cursor:default; }
+  .muted { color:#7A6A55; font-size:13.5px; line-height:1.5; }
+  .err { background:#FBE7DF; color:var(--rust); border-radius:10px; padding:12px 14px; font-weight:700; font-size:14.5px; margin-top:14px; }
+  .note { background:#FFF4D6; border-radius:10px; padding:10px 12px; font-size:13.5px; margin-top:10px; }
+  @media (prefers-reduced-motion: reduce) { * { animation:none !important; transition:none !important; } }
+</style>

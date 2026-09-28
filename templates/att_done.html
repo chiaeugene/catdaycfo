@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en"><head>
+<title>cat day · Attendance</title>
+{% include "att_public_head.html" %}
+<style>
+  .big { font-size:34px; line-height:1.1; margin:10px 0 6px; }
+  .tick { width:84px; height:84px; border-radius:50%; display:grid; place-items:center; font-size:44px; margin:10px auto 0; }
+  .in { background:#E2F0E5; color:var(--green); }
+  .out { background:#FBE7DF; color:var(--rust); }
+  .time { font-size:56px; font-variant-numeric:tabular-nums; margin:6px 0; }
+</style>
+</head><body>
+<div class="band"><span class="display">cat day</span><small>Attendance 考勤</small></div>
+<div class="wrap" style="text-align:center">
+{% if ok %}
+  <div class="tick {{ log.kind }}">✓</div>
+  <div class="big display">{{ person.name }}</div>
+  <div style="font-size:20px;font-weight:700">{{ 'Clocked in 已上班' if log.kind == 'in' else 'Clocked out 已下班' }}</div>
+  <div class="time display">{{ log.at|myt }}</div>
+  <div class="muted">{{ log.at|myt('%A %d %B %Y') }}</div>
+  {% if dup %}<div class="note">Already recorded a moment ago — nothing more to do.</div>{% endif %}
+  {% for f in (log.flags or '').split(',') if f %}
+  <div class="note" style="text-align:left">⚠ {{ flag_text.get(f, f) }}{% if f == 'new-phone' %}. It counts once Karen confirms this phone.{% endif %}</div>
+  {% endfor %}
+  <p class="muted" style="margin-top:22px">You can close this page. 可以关闭此页。</p>
+{% else %}
+  <div class="tick out">!</div>
+  <div class="err" style="text-align:left">{{ message }}</div>
+{% endif %}
+</div>
+</body></html>
