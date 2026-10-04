@@ -424,6 +424,9 @@ class PettyClaimLine(Base):
     # company expense) without deleting what was claimed.
     excluded: Mapped[bool] = mapped_column(Boolean, default=False)
     exclude_reason: Mapped[str] = mapped_column(Text, default="")
+    # A question for the reviewer about this line, shown beside it until the
+    # claim is approved ("is this a cat day expense?").
+    query: Mapped[str] = mapped_column(Text, default="")
     payment_id: Mapped[int | None] = mapped_column(ForeignKey("payments.id"), nullable=True)
 
 

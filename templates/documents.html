@@ -65,7 +65,7 @@
     {% if d.file_path %}
     <a class="btn secondary small" style="padding:3px 12px;font-size:11.5px" href="/files/{{ d.file_path }}" target="_blank">{{ icon('eye', 13) }} Open full size 全屏</a>
     {% endif %}
-    <span class="meta">from <b>{{ d.sender }}</b> · {{ d.received_at.strftime('%d/%m/%Y %H:%M') }}</span>
+    <span class="meta">from <b>{{ d.sender }}</b> · {{ d.received_at|myt('%d/%m/%Y %H:%M') }}</span>
     {% if d.ai_classified %}<span class="ai-tag">AI understood</span>{% endif %}
   </div>
 
@@ -380,7 +380,7 @@
   {% for d in processed %}
   <tr>
     <td>{% if d.file_path %}<a href="/files/{{ d.file_path }}" target="_blank">{{ d.doc_no }}</a>{% else %}{{ d.doc_no }}{% endif %}</td>
-    <td>{{ d.received_at.strftime('%d/%m %H:%M') }}</td>
+    <td>{{ d.received_at|myt('%d/%m %H:%M') }}</td>
     <td>{{ d.sender }}</td>
     <td>{{ d.section }}</td>
     <td>{{ d.intake_type }}</td>

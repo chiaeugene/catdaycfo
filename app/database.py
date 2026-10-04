@@ -42,6 +42,7 @@ MIGRATIONS = [
     "ALTER TABLE users ADD COLUMN can_approve BOOLEAN DEFAULT 0",
     "ALTER TABLE payments ADD COLUMN request_id INTEGER",
     "ALTER TABLE payments ADD COLUMN claim_id INTEGER",
+    "ALTER TABLE petty_claim_lines ADD COLUMN query TEXT DEFAULT ''",
 ]
 
 

@@ -276,7 +276,47 @@ def karen_claims_aug_sep_2026(db):
     db.commit()
 
 
+# Questions about specific lines on those two claims, put on the lines so the
+# reviewer sees them where she decides. (0-based position, amount) -> question.
+_Q_OTHER = ("Is this a cat day expense? It reads like the LCW Cup event / the academy. "
+            "If another business should bear it, leave it out.")
+_Q_EVENT = ("Is this a cat day expense? It is for an outside group's event. If another "
+            "business should bear it, or it is recharged, leave it out.")
+_Q_VET = ("Vet bill for a named cat. If it is a customer's cat, is it recharged to the owner "
+          "or the shop's cost? (Kenzo & Mei Mei are Aster Yang's, INV-2609-002.)")
+_CLAIM_QUERIES = {
+    "Aug 2026": {2: (156.00, _Q_OTHER), 3: (15.20, _Q_OTHER), 9: (395.10, _Q_OTHER),
+                 22: (1000.00, _Q_OTHER), 23: (27.10, _Q_OTHER)},
+    "Sep 2026": {18: (378.00, _Q_EVENT), 22: (94.18, _Q_EVENT), 32: (200.00, _Q_EVENT),
+                 34: (554.00, _Q_EVENT), 35: (135.52, _Q_EVENT),
+                 16: (95.00, _Q_VET), 25: (315.90, _Q_VET), 30: (346.00, _Q_VET)},
+}
+
+
+def karen_claim_queries(db):
+    key = "BACKFILL_CLAIM_QUERIES_2608_2609"
+    if db.get(M.Setting, key):
+        return
+    n = 0
+    for period, qs in _CLAIM_QUERIES.items():
+        for c in db.query(M.PettyClaim).filter(M.PettyClaim.period == period,
+                                               M.PettyClaim.created_by.like("Eugene (from Ms Lee%")).all():
+            if c.status not in ("Draft", "Submitted", "Returned"):
+                continue                      # already decided: nothing to ask
+            lines = list(c.lines)
+            for pos, (amt, q) in qs.items():
+                # Only if the line is still where it was and still that amount --
+                # she may have edited the draft since it was loaded.
+                if pos < len(lines) and abs(lines[pos].amount - amt) < 0.005 and not lines[pos].query:
+                    lines[pos].query = q
+                    n += 1
+    db.add(M.Setting(key=key, value=datetime.utcnow().isoformat(timespec="seconds")))
+    db.commit()
+    print(f"  backfill: {n} review questions added to the Aug/Sep claim lines")
+
+
 def run_all(db):
     ar_lines_sept_2026(db)
     attendance_roster_from_payroll(db)
     karen_claims_aug_sep_2026(db)
+    karen_claim_queries(db)

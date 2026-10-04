@@ -48,7 +48,7 @@
   {% for p in requests %}
   <tr>
     <td class="mono"><a href="/requests/{{ p.id }}"><b>{{ p.pr_no or '(draft)' }}</b></a></td>
-    <td>{{ (p.submitted_at or p.created_at).strftime('%d/%m/%y') }}</td>
+    <td>{{ (p.submitted_at or p.created_at)|myt('%d/%m/%y') }}</td>
     <td>{{ p.requester }}</td>
     <td>{{ p.supplier or '—' }}{% if p.supplier_new %} <span class="badge pending" title="Not in Suppliers yet">new</span>{% endif %}</td>
     <td>{{ p.purpose }}{% if p.urgency == 'Urgent' %} <span class="badge rejected">urgent</span>{% endif %}</td>
@@ -59,7 +59,7 @@
     <td class="num" style="font-weight:700">{{ p.total|rm }}</td>
     <td><span class="badge {{ badge.get(p.status, 'draft') }}">{{ p.status }}</span>
         {% if p.stale %}<span class="badge void" title="Approval older than {{ M.PR_APPROVAL_DAYS }} days">stale</span>{% endif %}</td>
-    <td style="font-size:12px">{% if p.decided_by %}{{ p.decided_by }} · {{ p.decided_at.strftime('%d/%m') }}{% endif %}</td>
+    <td style="font-size:12px">{% if p.decided_by %}{{ p.decided_by }} · {{ p.decided_at|myt('%d/%m') }}{% endif %}</td>
   </tr>
   {% else %}
   <tr><td colspan="9" class="empty">No requests yet — <a href="/requests/new">start one</a>. 还没有申请。</td></tr>

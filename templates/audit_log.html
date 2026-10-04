@@ -31,7 +31,7 @@
     <tr><th>When</th><th>Who</th><th>Action</th><th>Path</th><th>Result</th></tr>
     {% for e in entries %}
     <tr {% if e.blocked %}style="background:var(--amber-bg)"{% endif %}>
-      <td class="mono">{{ e.timestamp.strftime('%d/%m/%y %H:%M:%S') }}</td>
+      <td class="mono">{{ e.timestamp|myt('%d/%m/%y %H:%M:%S') }}</td>
       <td><b>{{ e.user_name }}</b></td>
       <td>{{ e.action }}</td>
       <td class="mono" style="color:var(--muted)">{{ e.method }} {{ e.path }}</td>

@@ -95,7 +95,7 @@ def warnings(db, claim) -> dict:
               if p.id not in own_ids]
 
     for l in claim.lines:
-        notes = []
+        notes = [l.query] if l.query else []
         k = _key(l.supplier)
         # 1. The same shop already has a payment for the same amount: was this
         #    paid by the company directly, as well as claimed?

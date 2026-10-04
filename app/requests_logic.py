@@ -65,12 +65,13 @@ def build_pdf(db: Session, pr: M.PurchaseRequest) -> str:
     settings = {s.key: s.value for s in db.query(M.Setting).all()}
     req = {
         "requester": pr.requester,
-        "date": f"{(pr.submitted_at or pr.created_at):%d/%m/%Y}",
+        # Stored in UTC; documents show Malaysia time.
+        "date": f"{(pr.submitted_at or pr.created_at) + timedelta(hours=8):%d/%m/%Y}",
         "needed_by": f"{pr.needed_by:%d/%m/%Y}" if pr.needed_by else "",
         "urgency": pr.urgency, "supplier": pr.supplier, "purpose": pr.purpose,
         "reason": pr.reason, "terms": pr.terms,
         "decided_by": pr.decided_by,
-        "decided_at": f"{pr.decided_at:%d/%m/%Y %H:%M}" if pr.decided_at else "",
+        "decided_at": f"{pr.decided_at + timedelta(hours=8):%d/%m/%Y %H:%M}" if pr.decided_at else "",
         "expires": f"{pr.expires_at:%d/%m/%Y}" if pr.expires_at else "",
         "note": pr.decision_note,
     }

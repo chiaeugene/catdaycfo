@@ -60,9 +60,9 @@
     <div><label>Purpose</label><div>{{ pr.purpose }}</div></div>
     <div><label>Needed by</label><div>{{ pr.needed_by.strftime('%d/%m/%Y') if pr.needed_by else '—' }}</div></div>
     <div><label>Payment terms</label><div>{{ pr.terms }}</div></div>
-    <div><label>Submitted</label><div>{{ pr.submitted_at.strftime('%d/%m/%Y %H:%M') if pr.submitted_at else '—' }}</div></div>
+    <div><label>Submitted</label><div>{{ pr.submitted_at|myt('%d/%m/%Y %H:%M') if pr.submitted_at else '—' }}</div></div>
     {% if pr.decided_by %}
-    <div><label>Decided</label><div>{{ pr.decided_by }} · {{ pr.decided_at.strftime('%d/%m/%Y %H:%M') }}</div></div>
+    <div><label>Decided</label><div>{{ pr.decided_by }} · {{ pr.decided_at|myt('%d/%m/%Y %H:%M') }}</div></div>
     {% endif %}
     {% if pr.expires_at %}<div><label>Approval valid until</label><div>{{ pr.expires_at.strftime('%d/%m/%Y') }}</div></div>{% endif %}
   </div>
@@ -163,7 +163,7 @@
   <table>
     {% for e in pr.events|reverse %}
     <tr>
-      <td class="mono" style="white-space:nowrap;font-size:11.5px">{{ e.at.strftime('%d/%m/%y %H:%M') }}</td>
+      <td class="mono" style="white-space:nowrap;font-size:11.5px">{{ e.at|myt('%d/%m/%y %H:%M') }}</td>
       <td style="white-space:nowrap"><b>{{ e.who }}</b></td>
       <td><span class="badge draft">{{ e.action }}</span>{% if e.channel == 'telegram' %} <span title="via Telegram">📱</span>{% endif %}</td>
       <td style="font-size:12.5px">{{ e.detail }}</td>

@@ -2359,7 +2359,7 @@ async def claim_update(cid: int, request: Request, db: Session = Depends(get_db)
         return RedirectResponse(f"/claims/{cid}", status_code=302)
     f = await request.form()
     before = c.total_claimed
-    keep = {(l.date, l.supplier, l.description, l.amount): (l.excluded, l.exclude_reason) for l in c.lines}
+    keep = {(l.date, l.supplier, l.description, l.amount): (l.excluded, l.exclude_reason, l.query) for l in c.lines}
     lines = _claim_lines_from_form(f)
     c.claimant = str(f.get("claimant") or c.claimant).strip()[:100]
     c.period = str(f.get("period") or c.period).strip()[:20]
@@ -2368,8 +2368,8 @@ async def claim_update(cid: int, request: Request, db: Session = Depends(get_db)
         db.delete(l)
     db.flush()
     for l in lines:
-        ex = keep.get((l["date"], l["supplier"], l["description"], l["amount"]), (False, ""))
-        db.add(M.PettyClaimLine(claim_id=c.id, excluded=ex[0], exclude_reason=ex[1], **l))
+        ex = keep.get((l["date"], l["supplier"], l["description"], l["amount"]), (False, "", ""))
+        db.add(M.PettyClaimLine(claim_id=c.id, excluded=ex[0], exclude_reason=ex[1], query=ex[2], **l))
     db.flush()
     db.expire(c, ["lines"])
     CL.log(db, c, user.display_name, "edited",
