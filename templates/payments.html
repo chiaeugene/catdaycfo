@@ -83,6 +83,7 @@
     <td>{{ p.grp }}</td>
     <td class="num">{{ p.amount|rm }}</td>
     <td><span class="badge {{ p.status.replace(' ','')|lower }}">{{ p.status }}</span>
+      {% if p.claim_id and p.claim %}<a class="badge draft" href="/claims/{{ p.claim_id }}" title="Line of petty cash claim {{ p.claim.claim_no }}">{{ p.claim.claim_no }}</a>{% endif %}
       {% set fl = pay_flags.get(p.id) %}
       {% if p.request_id and p.request and not fl %}
         <a class="badge approved" href="/requests/{{ p.request_id }}" title="Approved under {{ p.request.pr_no }}">{{ p.request.pr_no }}</a>

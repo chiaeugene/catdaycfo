@@ -234,4 +234,6 @@ def payment_flag(p: M.Payment) -> str:
         return ""
     if p.category in M.APPROVAL_EXEMPT:
         return ""
+    if getattr(p, "claim_id", None):
+        return ""          # a petty cash claim is reviewed and approved as a whole
     return "No approval"

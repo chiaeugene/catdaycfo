@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% set badge = {'Draft':'draft','Submitted':'submitted','Returned':'pending','Posted':'approved','Paid':'paid'} %}
+{% block content %}
+{% if flash %}<div class="panel" style="background:var(--green-bg);border-color:rgba(29,127,63,.3)"><div style="font-size:13px;color:var(--green);font-weight:700">✓ {{ flash }}</div></div>{% endif %}
+{% if flash_err %}<div class="panel" style="background:var(--amber-bg);border-color:var(--amber)"><div style="font-size:12.5px;color:var(--amber);font-weight:700">{{ flash_err }}</div></div>{% endif %}
+
+<div class="pagehead">
+  <h1>Petty Cash Claims 零用金报销</h1>
+  <div class="actions">{% if can_create %}<a class="btn" href="/claims/new">{{ icon('plus', 14) }} New claim 新报销</a>{% endif %}</div>
+</div>
+<div class="sub">Small things a staff member paid for and is claiming back. Enter the receipts (or paste them from Excel), submit, and a reviewer approves — each line then goes to its own expense category and the whole claim is paid by one voucher.
+  <span class="muted">This replaces the monthly Excel list. The <a href="/pettycash">Petty Cash</a> page is only for a physical cash tin.</span></div>
+
+<div class="filters">
+  <a href="/claims" class="{% if not flt %}on{% endif %}">All</a>
+  {% for s in M.CLAIM_STATUS %}<a href="/claims?status={{ s }}" class="{% if flt == s %}on{% endif %}">{{ s }}</a>{% endfor %}
+</div>
+
+<div class="tablewrap">
+<table>
+  <tr><th>Claim</th><th>Period</th><th>Claimed by</th><th class="num">Lines</th><th class="num">Claimed</th><th class="num">To reimburse</th><th>Status</th><th>Reviewed</th></tr>
+  {% for c in claims %}
+  <tr>
+    <td class="mono"><a href="/claims/{{ c.id }}"><b>{{ c.claim_no or '(draft)' }}</b></a></td>
+    <td>{{ c.period }}</td>
+    <td>{{ c.claimant }}</td>
+    <td class="num">{{ c.lines|length }}</td>
+    <td class="num">{{ c.total_claimed|rm }}</td>
+    <td class="num" style="font-weight:700">{{ c.total|rm }}</td>
+    <td><span class="badge {{ badge.get(c.status, 'draft') }}">{{ c.status }}</span></td>
+    <td style="font-size:12px">{% if c.reviewed_by %}{{ c.reviewed_by }} · {{ c.reviewed_at|myt('%d/%m') }}{% endif %}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="8" class="empty">No claims yet{% if can_create %} — <a href="/claims/new">start one</a>{% endif %}. 还没有报销。</td></tr>
+  {% endfor %}
+</table>
+</div>
+{% endblock %}

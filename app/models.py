@@ -202,6 +202,10 @@ class Payment(Base):
     # The approval this spend was made under, if any. Nullable: rent is never
     # requested, and a payment linked to nothing simply carries a flag.
     request_id: Mapped[int | None] = mapped_column(ForeignKey("purchase_requests.id"), nullable=True)
+    # Set when this payment is one line of a staff petty cash claim. The
+    # "supplier" is then the claimant being reimbursed; the shop is in the
+    # description. One claim becomes one voucher.
+    claim_id: Mapped[int | None] = mapped_column(ForeignKey("petty_claims.id"), nullable=True)
     documents = relationship("Document", backref="payment", foreign_keys="Document.payment_id")
 
 
@@ -352,6 +356,95 @@ class PurchaseRequestEvent(Base):
     action: Mapped[str] = mapped_column(String(30), default="")     # created/submitted/approved/...
     detail: Mapped[str] = mapped_column(Text, default="")
     channel: Mapped[str] = mapped_column(String(10), default="web") # web / telegram
+
+
+# ─────────────────────────── Petty cash claims ───────────────────────────
+# A staff member pays for small things herself all month and claims the total
+# back. The claim is the unit: many receipts, each in its own expense category,
+# reimbursed by ONE voucher. Before this existed the list lived in Excel,
+# because the Petty Cash page takes one line at a time with no voucher, and
+# the "Staff Claim" route files every receipt under a single account.
+CLAIM_STATUS = ["Draft", "Submitted", "Returned", "Posted", "Paid"]
+
+
+class PettyClaim(Base):
+    __tablename__ = "petty_claims"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    claim_no: Mapped[str] = mapped_column(String(20), default="")      # PC-2609-001, on submit
+    claimant: Mapped[str] = mapped_column(String(100), default="")     # who is reimbursed
+    claimant_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    period: Mapped[str] = mapped_column(String(20), default="")        # "Sep 2026"
+    status: Mapped[str] = mapped_column(String(12), default="Draft")
+    notes: Mapped[str] = mapped_column(Text, default="")
+    created_by: Mapped[str] = mapped_column(String(100), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    reviewed_by: Mapped[str] = mapped_column(String(100), default="")
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    return_note: Mapped[str] = mapped_column(Text, default="")
+    pdf_path: Mapped[str] = mapped_column(String(300), default="")
+    lines = relationship("PettyClaimLine", backref="claim", cascade="all, delete-orphan",
+                         order_by="PettyClaimLine.position, PettyClaimLine.id")
+    files = relationship("PettyClaimFile", backref="claim", cascade="all, delete-orphan")
+    events = relationship("PettyClaimEvent", backref="claim", cascade="all, delete-orphan",
+                          order_by="PettyClaimEvent.id")
+    payments = relationship("Payment", backref="claim", foreign_keys="Payment.claim_id")
+
+    @property
+    def total_claimed(self) -> float:
+        return round(sum(l.amount for l in self.lines), 2)
+
+    @property
+    def total(self) -> float:
+        """What will actually be reimbursed: the claimed lines less any the
+        reviewer excluded."""
+        return round(sum(l.amount for l in self.lines if not l.excluded), 2)
+
+    @property
+    def editable(self) -> bool:
+        return self.status in ("Draft", "Returned")
+
+    @property
+    def paid(self) -> bool:
+        live = [p for p in self.payments if p.status != "Void"]
+        return bool(live) and all(p.status == "Paid" for p in live)
+
+
+class PettyClaimLine(Base):
+    __tablename__ = "petty_claim_lines"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    claim_id: Mapped[int] = mapped_column(ForeignKey("petty_claims.id"))
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    date: Mapped[date] = mapped_column(Date, default=date.today)
+    supplier: Mapped[str] = mapped_column(String(150), default="")     # the shop paid
+    description: Mapped[str] = mapped_column(Text, default="")
+    category: Mapped[str] = mapped_column(String(50), default="Misc")
+    amount: Mapped[float] = mapped_column(Float, default=0.0)
+    # The reviewer can leave a line out (already paid another way, not a
+    # company expense) without deleting what was claimed.
+    excluded: Mapped[bool] = mapped_column(Boolean, default=False)
+    exclude_reason: Mapped[str] = mapped_column(Text, default="")
+    payment_id: Mapped[int | None] = mapped_column(ForeignKey("payments.id"), nullable=True)
+
+
+class PettyClaimFile(Base):
+    __tablename__ = "petty_claim_files"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    claim_id: Mapped[int] = mapped_column(ForeignKey("petty_claims.id"))
+    path: Mapped[str] = mapped_column(String(300))
+    name: Mapped[str] = mapped_column(String(200), default="")
+    uploaded_by: Mapped[str] = mapped_column(String(100), default="")
+    at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class PettyClaimEvent(Base):
+    __tablename__ = "petty_claim_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    claim_id: Mapped[int] = mapped_column(ForeignKey("petty_claims.id"))
+    at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    who: Mapped[str] = mapped_column(String(100), default="")
+    action: Mapped[str] = mapped_column(String(30), default="")
+    detail: Mapped[str] = mapped_column(Text, default="")
 
 
 # ─────────────────────────── Attendance ───────────────────────────

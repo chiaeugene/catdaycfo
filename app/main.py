@@ -20,6 +20,7 @@ from . import models as M
 from .auth import hash_password, verify_password, current_user
 from . import telegram_bot, pdfgen, claude_ai, ledger, backup, audit, requests_logic as RQ
 from . import attendance as ATT
+from . import claims as CL
 from .audit import AccessControlMiddleware
 from .statutory import calc_statutory
 
@@ -111,6 +112,8 @@ NAV_GROUPS = [
          ("admin", "manager", "staff", "viewer", "requester", "storekeeper")),
         ("sales", "/sales", "cart", "Sales", ("admin", "manager", "staff", "viewer")),
         ("pettycash", "/pettycash", "coins", "Petty Cash", ("admin", "manager", "staff", "viewer")),
+        ("claims", "/claims", "receipt", "Petty Cash Claims 报销",
+         ("admin", "manager", "viewer", "storekeeper")),
         ("boarding", "/boarding", "cat", "Boarding", ("admin", "manager", "staff", "viewer")),
         ("attendance", "/attendance", "check", "Attendance 考勤", ("admin", "manager", "viewer", "storekeeper")),
         ("stock", "/stock", "coins", "Stock & Usage 库存", ("admin", "manager", "staff", "viewer", "storekeeper")),
@@ -877,8 +880,11 @@ ERRORS = {
 
 
 @app.get("/payments", response_class=HTMLResponse)
-def payments(request: Request, status: str = "", error: str = "", db: Session = Depends(get_db)):
+def payments(request: Request, status: str = "", error: str = "", claim: int = 0,
+             db: Session = Depends(get_db)):
     q = db.query(M.Payment).order_by(M.Payment.id.desc())
+    if claim:
+        q = q.filter(M.Payment.claim_id == claim)
     if status:
         q = q.filter(M.Payment.status == status)
     open_total = db.query(func.coalesce(func.sum(M.Payment.amount), 0)) \
@@ -2184,6 +2190,355 @@ def payment_link_request(pid: int, request: Request, request_id: str = Form(""),
         db.commit()
     return RedirectResponse("/payments", status_code=303)
 
+
+
+
+# ─────────────────────────── PETTY CASH CLAIMS ───────────────────────────
+# One person's small receipts for a period, reimbursed by one voucher, each
+# line in its own expense category. Rules in app/claims.py.
+CLAIM_CREATE = ("admin", "manager", "storekeeper")
+CLAIM_REVIEW = ("admin", "manager")
+
+
+def _claim_or_404(db, cid: int) -> M.PettyClaim:
+    c = db.get(M.PettyClaim, cid)
+    if not c:
+        raise HTTPException(404)
+    return c
+
+
+def _claim_mine(user, c) -> bool:
+    return c.claimant_user_id == user.id or c.created_by == user.display_name
+
+
+def _claim_can_see(user, c) -> bool:
+    return user.role != "storekeeper" or _claim_mine(user, c)
+
+
+def _claim_can_edit(user, c) -> bool:
+    if user.role in CLAIM_REVIEW:
+        return c.status in ("Draft", "Returned", "Submitted")
+    return user.role in CLAIM_CREATE and _claim_mine(user, c) and c.editable
+
+
+def _claim_lines_from_form(f) -> list[dict]:
+    dates, sups = f.getlist("l_date"), f.getlist("l_supplier")
+    descs, cats, amts = f.getlist("l_desc"), f.getlist("l_category"), f.getlist("l_amount")
+    out = []
+    for i in range(len(descs)):
+        desc, sup = str(descs[i]).strip(), (str(sups[i]).strip() if i < len(sups) else "")
+        try:
+            amt = float(str(amts[i]).replace(",", "").strip() or 0) if i < len(amts) else 0.0
+        except ValueError:
+            amt = 0.0
+        if not (desc or sup) or amt <= 0:
+            continue
+        d = parse_import_date(str(dates[i])) if i < len(dates) and str(dates[i]).strip() else None
+        cat = str(cats[i]) if i < len(cats) else ""
+        out.append({"date": d or date.today(), "supplier": sup[:150], "description": desc,
+                    "category": cat if cat in M.CATEGORIES else CL.guess_category(sup, desc, amt),
+                    "amount": round(amt, 2), "position": len(out)})
+    return out
+
+
+def _claim_pdf(db, c) -> str:
+    settings = {x.key: x.value for x in db.query(M.Setting).all()}
+    row = lambda l: {"date": f"{l.date:%d/%m/%y}", "supplier": l.supplier, "description": l.description,
+                     "category": l.category, "amount": l.amount, "reason": l.exclude_reason}
+    c.pdf_path = pdfgen.claim_pdf(
+        c.claim_no or f"DRAFT-{c.id}",
+        {"claimant": c.claimant, "period": c.period, "status": c.status,
+         "reviewed_by": c.reviewed_by,
+         "reviewed_at": f"{c.reviewed_at + timedelta(hours=8):%d/%m/%Y %H:%M}" if c.reviewed_at else ""},
+        [row(l) for l in c.lines if not l.excluded], c.total,
+        excluded=[row(l) for l in c.lines if l.excluded],
+        company=settings.get("COMPANY_NAME", "CATDAY SDN BHD"),
+        address=settings.get("COMPANY_ADDRESS", "Uptown PJ"),
+        reg_no=settings.get("COMPANY_ROC", ""))
+    return c.pdf_path
+
+
+@app.get("/claims", response_class=HTMLResponse)
+def claims_list(request: Request, status: str = "", db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    q = db.query(M.PettyClaim).order_by(M.PettyClaim.id.desc())
+    if status:
+        q = q.filter(M.PettyClaim.status == status)
+    claims = [c for c in q.limit(300).all() if _claim_can_see(user, c)]
+    for c in claims:                       # Posted → Paid once its voucher is paid
+        if c.status == "Posted" and c.paid:
+            c.status = "Paid"
+    db.commit()
+    return render(request, db, "claims.html", "claims", claims=claims, flt=status,
+                  can_create=user.role in CLAIM_CREATE,
+                  flash=request.session.pop("flash_cl", None),
+                  flash_err=request.session.pop("flash_cl_err", None))
+
+
+@app.get("/claims/new", response_class=HTMLResponse)
+def claim_new_form(request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user or user.role not in CLAIM_CREATE:
+        return RedirectResponse("/claims", status_code=302)
+    return render(request, db, "claim_form.html", "claims", c=None,
+                  keywords=CL.CATEGORY_KEYWORDS, sup_rules=CL.SUPPLIER_RULES, equip_min=CL.EQUIPMENT_MIN, today_iso=date.today().isoformat(),
+                  default_period=month_str())
+
+
+@app.post("/claims/new")
+async def claim_create(request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user or user.role not in CLAIM_CREATE:
+        return RedirectResponse("/", status_code=302)
+    f = await request.form()
+    lines = _claim_lines_from_form(f)
+    c = M.PettyClaim(claimant=str(f.get("claimant") or user.display_name).strip()[:100],
+                     claimant_user_id=user.id if user.role == "storekeeper" else None,
+                     period=str(f.get("period") or month_str()).strip()[:20],
+                     notes=str(f.get("notes", "")).strip(), created_by=user.display_name)
+    db.add(c)
+    db.flush()
+    for l in lines:
+        db.add(M.PettyClaimLine(claim_id=c.id, **l))
+    CL.log(db, c, user.display_name, "created", f"{len(lines)} lines · RM{sum(l['amount'] for l in lines):,.2f}")
+    db.commit()
+    request.session["flash_cl"] = f"Draft saved — {len(lines)} lines. Nothing is posted until it is submitted and approved."
+    return RedirectResponse(f"/claims/{c.id}", status_code=303)
+
+
+@app.get("/claims/{cid}", response_class=HTMLResponse)
+def claim_detail(cid: int, request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    c = _claim_or_404(db, cid)
+    if not _claim_can_see(user, c):
+        return RedirectResponse("/claims", status_code=302)
+    if c.status == "Posted" and c.paid:
+        c.status = "Paid"
+        db.commit()
+    by_cat = {}
+    for l in c.lines:
+        if not l.excluded:
+            by_cat[l.category] = round(by_cat.get(l.category, 0) + l.amount, 2)
+    open_pays = [p for p in c.payments if p.status in ("Unsorted", "Categorized") and not p.voucher_id]
+    vouchers = sorted({p.voucher for p in c.payments if p.voucher}, key=lambda v: v.id)
+    return render(request, db, "claim_detail.html", "claims", c=c,
+                  warn=CL.warnings(db, c) if c.status in ("Draft", "Submitted", "Returned") else {"lines": {}, "claim": []},
+                  by_cat=sorted(by_cat.items(), key=lambda kv: -kv[1]),
+                  can_edit=_claim_can_edit(user, c), mine=_claim_mine(user, c),
+                  can_review=user.role in CLAIM_REVIEW,
+                  self_review=(c.claimant_user_id == user.id or c.claimant.strip().lower() == user.display_name.strip().lower()),
+                  open_pays=open_pays, vouchers=vouchers, unpost_block=CL.can_unpost(c),
+                  flash=request.session.pop("flash_cl", None),
+                  flash_err=request.session.pop("flash_cl_err", None))
+
+
+@app.get("/claims/{cid}/edit", response_class=HTMLResponse)
+def claim_edit_form(cid: int, request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    c = _claim_or_404(db, cid)
+    if not _claim_can_see(user, c) or not _claim_can_edit(user, c):
+        return RedirectResponse(f"/claims/{cid}", status_code=302)
+    return render(request, db, "claim_form.html", "claims", c=c,
+                  keywords=CL.CATEGORY_KEYWORDS, sup_rules=CL.SUPPLIER_RULES, equip_min=CL.EQUIPMENT_MIN, today_iso=date.today().isoformat(),
+                  default_period=c.period)
+
+
+@app.post("/claims/{cid}/update")
+async def claim_update(cid: int, request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    c = _claim_or_404(db, cid)
+    if not _claim_can_see(user, c) or not _claim_can_edit(user, c):
+        return RedirectResponse(f"/claims/{cid}", status_code=302)
+    f = await request.form()
+    before = c.total_claimed
+    keep = {(l.date, l.supplier, l.description, l.amount): (l.excluded, l.exclude_reason) for l in c.lines}
+    lines = _claim_lines_from_form(f)
+    c.claimant = str(f.get("claimant") or c.claimant).strip()[:100]
+    c.period = str(f.get("period") or c.period).strip()[:20]
+    c.notes = str(f.get("notes", "")).strip()
+    for l in list(c.lines):
+        db.delete(l)
+    db.flush()
+    for l in lines:
+        ex = keep.get((l["date"], l["supplier"], l["description"], l["amount"]), (False, ""))
+        db.add(M.PettyClaimLine(claim_id=c.id, excluded=ex[0], exclude_reason=ex[1], **l))
+    db.flush()
+    db.expire(c, ["lines"])
+    CL.log(db, c, user.display_name, "edited",
+           f"{len(lines)} lines · RM{before:,.2f} → RM{c.total_claimed:,.2f}")
+    db.commit()
+    request.session["flash_cl"] = "Saved."
+    return RedirectResponse(f"/claims/{cid}", status_code=303)
+
+
+@app.post("/claims/{cid}/submit")
+def claim_submit(cid: int, request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    c = _claim_or_404(db, cid)
+    if not _claim_can_see(user, c) or c.status not in ("Draft", "Returned") \
+            or not (user.role in CLAIM_REVIEW or _claim_mine(user, c)):
+        return RedirectResponse(f"/claims/{cid}", status_code=302)
+    if not c.lines:
+        request.session["flash_cl_err"] = "Add at least one line before submitting."
+        return RedirectResponse(f"/claims/{cid}", status_code=303)
+    if not c.claim_no:
+        c.claim_no = telegram_bot.next_monthly_counter(db, "PC", "PC-")
+    c.status, c.submitted_at, c.return_note = "Submitted", datetime.utcnow(), ""
+    CL.log(db, c, user.display_name, "submitted", f"{len(c.lines)} lines · RM{c.total_claimed:,.2f}")
+    _claim_pdf(db, c)
+    db.commit()
+    request.session["flash_cl"] = f"{c.claim_no} submitted for review — RM {c.total_claimed:,.2f}."
+    return RedirectResponse(f"/claims/{cid}", status_code=303)
+
+
+@app.post("/claims/{cid}/line/{lid}/exclude")
+def claim_line_exclude(cid: int, lid: int, request: Request, reason: str = Form(""),
+                       db: Session = Depends(get_db)):
+    """Reviewer leaves a line out (or puts it back). What was claimed stays visible."""
+    user = current_user(request, db)
+    c = _claim_or_404(db, cid)
+    l = db.get(M.PettyClaimLine, lid)
+    if user and user.role in CLAIM_REVIEW and l and l.claim_id == c.id and c.status in ("Draft", "Submitted", "Returned"):
+        if l.excluded:
+            l.excluded, l.exclude_reason = False, ""
+            CL.log(db, c, user.display_name, "line included", f"{l.supplier} RM{l.amount:,.2f}")
+        elif reason.strip():
+            l.excluded, l.exclude_reason = True, reason.strip()[:400]
+            CL.log(db, c, user.display_name, "line excluded", f"{l.supplier} RM{l.amount:,.2f} — {reason.strip()[:200]}")
+        else:
+            request.session["flash_cl_err"] = "Say why the line is left out — the claimant will see it."
+        db.commit()
+    return RedirectResponse(f"/claims/{cid}", status_code=303)
+
+
+@app.post("/claims/{cid}/return")
+def claim_return(cid: int, request: Request, note: str = Form(""), db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    c = _claim_or_404(db, cid)
+    if user and user.role in CLAIM_REVIEW and c.status == "Submitted":
+        if not note.strip():
+            request.session["flash_cl_err"] = "Say what needs fixing."
+        else:
+            c.status, c.return_note = "Returned", note.strip()[:1000]
+            CL.log(db, c, user.display_name, "returned", note.strip()[:500])
+            db.commit()
+            request.session["flash_cl"] = f"{c.claim_no} returned to {c.claimant}."
+    return RedirectResponse(f"/claims/{cid}", status_code=303)
+
+
+@app.post("/claims/{cid}/approve")
+def claim_approve(cid: int, request: Request, db: Session = Depends(get_db)):
+    """Reviewer approves: each included line becomes a payment owed to the claimant."""
+    user = current_user(request, db)
+    c = _claim_or_404(db, cid)
+    if not user or user.role not in CLAIM_REVIEW or c.status != "Submitted":
+        return RedirectResponse(f"/claims/{cid}", status_code=303)
+    if c.claimant_user_id == user.id or c.claimant.strip().lower() == user.display_name.strip().lower():
+        request.session["flash_cl_err"] = "You can't approve your own claim — another reviewer has to."
+        return RedirectResponse(f"/claims/{cid}", status_code=303)
+    if c.total <= 0:
+        request.session["flash_cl_err"] = "Nothing left to reimburse — every line is excluded."
+        return RedirectResponse(f"/claims/{cid}", status_code=303)
+    n = CL.post(db, c, user, lambda: telegram_bot.next_counter(db, "PAY", "PAY-"), month_str)
+    CL.log(db, c, user.display_name, "approved", f"{n} lines posted · RM{c.total:,.2f} owed to {c.claimant}")
+    _claim_pdf(db, c)
+    db.commit()
+    ledger.sync_ledger(db)
+    request.session["flash_cl"] = (f"{c.claim_no} approved — {n} lines posted to their categories, "
+                                   f"RM {c.total:,.2f} owed to {c.claimant}. Create the voucher below.")
+    return RedirectResponse(f"/claims/{cid}", status_code=303)
+
+
+@app.post("/claims/{cid}/unpost")
+def claim_unpost(cid: int, request: Request, db: Session = Depends(get_db)):
+    """Undo an approval: its payments are removed and the claim goes back to
+    Submitted. Only while nothing is on a voucher yet."""
+    user = current_user(request, db)
+    c = _claim_or_404(db, cid)
+    if not user or user.role != "admin" or c.status != "Posted":
+        return RedirectResponse(f"/claims/{cid}", status_code=303)
+    why = CL.can_unpost(c)
+    if why:
+        request.session["flash_cl_err"] = why
+        return RedirectResponse(f"/claims/{cid}", status_code=303)
+    pays = sorted(c.payments, key=lambda p: p.id, reverse=True)
+    for l in c.lines:
+        l.payment_id = None
+    for p_ in pays:                         # newest first, so the numbers are handed back
+        no = p_.pay_no
+        db.delete(p_)
+        db.flush()
+        telegram_bot.rollback_counter(db, "PAY", no)
+    c.status, c.reviewed_by, c.reviewed_at = "Submitted", "", None
+    CL.log(db, c, user.display_name, "approval undone", f"{len(pays)} payments removed")
+    db.commit()
+    ledger.sync_ledger(db)
+    request.session["flash_cl"] = f"{c.claim_no} is back to Submitted — nothing is posted."
+    return RedirectResponse(f"/claims/{cid}", status_code=303)
+
+
+@app.post("/claims/{cid}/files")
+async def claim_files(cid: int, request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    c = _claim_or_404(db, cid)
+    if not user or not _claim_can_see(user, c) or user.role not in CLAIM_CREATE:
+        return RedirectResponse(f"/claims/{cid}", status_code=303)
+    f = await request.form()
+    n = 0
+    subdir = f"claims/{date.today():%Y-%m}"
+    os.makedirs(os.path.join(UPLOAD_DIR, subdir), exist_ok=True)
+    for up in f.getlist("files"):
+        if not getattr(up, "filename", ""):
+            continue
+        data = await up.read()
+        if not data:
+            continue
+        ext = os.path.splitext(up.filename)[1].lower()[:6] or ".jpg"
+        rel = f"{subdir}/c{c.id}_{datetime.now():%H%M%S}_{secrets.token_hex(3)}{ext}"
+        with open(os.path.join(UPLOAD_DIR, rel), "wb") as fh:
+            fh.write(data)
+        db.add(M.PettyClaimFile(claim_id=c.id, path=rel, name=up.filename[:200], uploaded_by=user.display_name))
+        n += 1
+    if n:
+        CL.log(db, c, user.display_name, "receipts added", f"{n} file(s)")
+        db.commit()
+        request.session["flash_cl"] = f"{n} receipt file(s) attached."
+    return RedirectResponse(f"/claims/{cid}", status_code=303)
+
+
+@app.post("/claims/{cid}/pdf")
+def claim_pdf_route(cid: int, request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    c = _claim_or_404(db, cid)
+    if not user or not _claim_can_see(user, c):
+        return RedirectResponse("/claims", status_code=303)
+    _claim_pdf(db, c)
+    db.commit()
+    return RedirectResponse(f"/files/{c.pdf_path}", status_code=303)
+
+
+@app.post("/claims/{cid}/delete")
+def claim_delete(cid: int, request: Request, db: Session = Depends(get_db)):
+    """Only a draft that was never submitted — it has no number."""
+    user = current_user(request, db)
+    c = _claim_or_404(db, cid)
+    if user and c.status == "Draft" and not c.claim_no and (user.role in CLAIM_REVIEW or _claim_mine(user, c)):
+        db.delete(c)
+        db.commit()
+        request.session["flash_cl"] = "Draft deleted."
+        return RedirectResponse("/claims", status_code=303)
+    request.session["flash_cl_err"] = "Only an unsubmitted draft can be deleted."
+    return RedirectResponse(f"/claims/{cid}", status_code=303)
 
 
 # ─────────────────────────── ATTENDANCE ───────────────────────────

@@ -172,6 +172,111 @@ def attendance_roster_from_payroll(db):
     print(f"  backfill: attendance roster started with {n} payroll staff")
 
 
+# ─────────────────────────── Karen's Aug & Sep 2026 claims ───────────────────────────
+# Ms Lee kept these two lists in Excel because the system had nowhere to put a
+# monthly claim. Loaded as DRAFTS exactly as she wrote them, so she reviews
+# rather than retypes 65 lines. A draft posts nothing.
+# (dd/mm/yyyy, paid to, what for, amount)
+_CLAIM_AUG = [
+    ("03/08/2026", "FORTUNE ELECTRICAL AND HARDWARE", "PENDANT LIGHT BULB REPLACEMENT (SIGNATURE ROOM)", 15.00),
+    ("07/08/2026", "FORTUNE ELECTRICAL AND HARDWARE", "TAPE FOR PACKING EQUIPMENTS/ ITEMS TO MOVE FROM USJ TO DAMANSARA UTAMA", 9.00),
+    ("07/08/2026", "HOUSES LIGHTINGS SDN BHD", "TRACK + TRACK LIGHTS FOR ACADEMY AREA", 156.00),
+    ("10/08/2026", "LALAMOVE", "TRANSPORT BANTING STANDS FROM USJ TO SPORTSINTEL (FOR LCW CUP EVENT)", 15.20),
+    ("11/08/2026", "BAIFU (M) SDN BHD", "ITEMS FOR CAT DAY (PRE OPENING SET UP)", 112.30),
+    ("13/08/2026", "BAIFU (M) SDN BHD", "ITEMS FOR CAT DAY (PRE OPENING SET UP)", 177.00),
+    ("14/08/2026", "SSF CREATIVE LIFE CENTRE SDN BHD", "ITEMS FOR CAT DAY (DECORATIVE ITEMS)", 70.00),
+    ("14/08/2026", "MR DIY SDN BHD", "ITEMS FOR CAT DAY (PRE OPENING SET UP)", 109.40),
+    ("14/08/2026", "BFO MEGASTORE SDN BHD", "PANTRY SINK AND TAP", 249.00),
+    ("14/08/2026", "LALAMOVE", "5 COMPUTER 5 MONITOR 5 KEYBOARDS & ACCESSORIES", 395.10),
+    ("15/08/2026", "NOAI ENTERPRISE", "HDTV CABLE FOR RECEPTION PC", 39.00),
+    ("16/08/2026", "TT PARCEL GLOBAL", "SHIPPING CHARGE FOR GROOMING ACCESSORIES PURCHASED FROM CHINA", 245.00),
+    ("16/08/2026", "POPULAR BOOK CO (M) SDN BHD", "KEYBOARD FOR RECEPTION", 99.00),
+    ("16/08/2026", "MR DIY SDN BHD", "ITEMS FOR CAT DAY (PRE OPENING SET UP)", 19.70),
+    ("17/08/2026", "AREST CAFE DAMANSARA UTAMA SDN BHD", "LUNCH MEETING WITH MEOWBULOUS", 91.40),
+    ("19/08/2026", "BOK MARKETING SDN BHD", "ITEMS FOR CAT DAY (PRE OPENING SET UP - HOTEL)", 168.20),
+    ("20/08/2026", "BAIFU (M) SDN BHD", "ITEMS FOR CAT DAY (PRE OPENING SET UP)", 295.00),
+    ("20/08/2026", "SSF CREATIVE LIFE CENTRE SDN BHD", "ITEMS FOR CAT DAY (PRE OPENING SET UP)", 153.50),
+    ("20/08/2026", "SSF CREATIVE LIFE CENTRE SDN BHD", "ITEMS FOR CAT DAY (PRE OPENING SET UP)", 20.00),
+    ("21/08/2026", "FORTUNE ELECTRICAL AND HARDWARE", "PENDANT LIGHT BULB REPLACEMENT (SIGNATURE ROOM)", 30.00),
+    ("24/08/2026", "TRENDCELL SDN BHD", "ITEMS FOR CAT DAY (PRE OPENING SET UP)", 33.65),
+    ("27/08/2026", "MICROSOFT", "WINDOWN11 PRO FOR OFFICE PC", 1299.00),
+    ("28/08/2026", "AA BEST PRINTING SDN BHD", "BEACH FLAGS 5 SETS FOR LCW CUP EVENT", 1000.00),
+    ("28/08/2026", "LALAMOVE", "TRANSPORTING BEACH FLAGS FROM PRINTING COMPANY TO STADIUM JUARA", 27.10),
+    ("31/08/2026", "AEON CO. (M) BHD", "ITEMS FOR CAT DAY (PRE OPENING SET UP - HOTEL)", 400.75),
+    ("31/08/2026", "AEON CO. (M) BHD", "ITEMS FOR CAT DAY (PRE OPENING SET UP)", 236.90),
+    ("31/08/2026", "ALPRO ALLIANCE SDN BHD", "DAILY CLEANING ITEMS FOR OPERATION", 153.50),
+    ("31/08/2026", "AEON DAISO BANDAR UTAMA", "DAILY CLEANING ITEMS FOR OPERATION", 59.00),
+]
+_CLAIM_SEP = [
+    ("10/08/2026", "THE MOVERS ONLINE (M) SDN BHD", "MOVING AND RELOCATING", 455.80),
+    ("23/08/2026", "JALI (MOVER SERVICE) 01169312001", "USJ TO CAT DAY", 300.00),
+    ("25/08/2026", "GRABFOOD", "MOVING LUNCH FOR STAFFS", 49.00),
+    ("25/08/2026", "LALAMOVE", "TRANSPSORTING ITEMS FROM USJ", 73.30),
+    ("01/09/2026", "KITCHENCHANT SDN BHD", "NO PARKING SIGNAGE", 120.00),
+    ("01/09/2026", "DILOOMA SDN BHD", "STICK VACUUM FOR BAORDING AREA", 104.00),
+    ("02/09/2026", "POPULAR BOOK CO.(M) SDN BHD", "KEY TAGS TO ORGANISE SHOP KEYS", 9.40),
+    ("02/09/2026", "MR D.I.Y. SDN BHD", "STORAGE ITEMS FOR SHOP", 46.50),
+    ("02/09/2026", "GRABFOOD", "LUNCH MEETING", 44.74),
+    ("04/09/2026", "TT PARCEL GLOBAL", "CHIPPING FEE FOR REPLACEMENT PARTS FOR THE CAGES", 421.00),
+    ("07/09/2026", "ENG LEE HARDWARE (M) SDN BHD", "OUTDOOR DUSTBIN", 148.40),
+    ("07/09/2026", "WUCHT BY CA IMPACT (M) SDN BHD", "CLEANER APRON AND CARRY CADDY", 59.30),
+    ("08/09/2026", "GRABFOOD", "DRINKS FOR MARKETING (JOANNE & XINE) TEAM MEETING", 60.30),
+    ("10/09/2026", "EADESS SDN BHD", "UTENSIL (CUP AND SAUCERS) FOR PANTRY AND GUESTS TOILET AMENITIES", 235.15),
+    ("11/09/2026", "NITORI RETAIL (M) SDN BHD", "UTENSIL FOR GUESTS", 164.80),
+    ("11/09/2026", "TRENDCELL SDN BHD", "CLEANING ITEMS", 55.10),
+    ("12/09/2026", "KITTON (M) SDN BHD", "EYEDROP WITH SERUM FOR FIZ (DEVON REX)", 95.00),
+    ("13/09/2026", "THE FOOD MERCHANT", "STANDBY STOCK FOR PANTRY (MINERAL WATER, CHILDREN DRINKS & SNACK)", 74.80),
+    ("14/09/2026", "JAS DAILY OMAKASE", "BOOKED 20 LUNCH BOX FOR EVENT ON 18/9/26 (LUNCH GATHERING ACTUAL ARRIVED 25PAX)", 378.00),
+    ("15/09/2026", "GRABFOOD", "MEETING WITH MARKETING TEAM", 85.70),
+    ("17/09/2026", "MR D.I.Y. SDN BHD", "REPLANISH KIDS DRINKS & CLEANING ITEMS", 59.20),
+    ("17/09/2026", "BEYOND ESSENTIAL SDN BHD", "BOARDING AREA CAT CLEANING ITEMS", 30.20),
+    ("18/09/2026", "GRABFOOD", "ADD LUNCH ORDER FOR TEH PETER TOTH TALK LUNCH EVENT (ACTUAL ARRIVED 25PAX)", 94.18),
+    ("16/09/2026", "ECO-SHOP MARKETING BERHAD", "GLASS CLEANER", 20.80),
+    ("21/09/2026", "ASHVERTISING MARKETING SDN BHD", "DIFFUSER REFILL 100ML - HILTONE VILLA", 69.00),
+    ("21/09/2026", "KITTON (M) SDN BHD", "MEDICATION FOR ORION (EYEINJURY)", 315.90),
+    ("21/09/2026", "SSF CREATIVE LIFE CENTRE SDN BHD", "AMENITIES FOR SHOP", 106.00),
+    ("21/09/2026", "EADESS SDN BHD", "SLIPPER FOR GUESTS TOILET (2 PAIRS)", 55.85),
+    ("21/09/2026", "SENTAI KITCHENWARE SDN BHD", "UTENSIL FOR GUESTS", 134.40),
+    ("23/09/2026", "REAL MEDIA SOLUTIONS", "CAT DAYNMENU SAMPLE PRODUCTION", 80.00),
+    ("23/09/2026", "KITTON (M) SDN BHD", "KENZO & MEI MEI (CAST & OHE) FOR BOTH CATS", 346.00),
+    ("23/09/2026", "ALL IT HYPERMARKET SDN BHD", "KEYBOARD & SOCKETS FOR CONCIERGE COUNTER", 178.00),
+    ("24/09/2026", "BRUNNIE PASTRY", "PARTY BOX (FOR HI TEA EVENT ON 27/9- REA GATHERING)", 200.00),
+    ("24/09/2026", "HYT FOOD INDUSTRIES SDN BHD", "MOONCAKE AS GIFT FOR CAT DAY NEIGHBOURS", 198.00),
+    ("24/09/2026", "UNIQBE BAKERY SDN BHD", "PRIVATE HI TEA GATHERING ON 27/9 (35PAX- REA GYMNASTS TEAM)", 554.00),
+    ("25/09/2026", "ECART SERVICES MALAYSIA SDN BHD", "TV STAND FOR EVENT USE", 135.52),
+    ("27/09/2026", "MR D.I.Y SDN BHD", "UTENSIL FOR SHOP", 94.60),
+]
+
+
+def karen_claims_aug_sep_2026(db):
+    key = "BACKFILL_CLAIMS_2608_2609"
+    if db.get(M.Setting, key):
+        return
+    from .claims import guess_category, log
+    karen = db.query(M.User).filter(M.User.username == "karen").first()
+    for period, rows, expect in (("Aug 2026", _CLAIM_AUG, 5678.70), ("Sep 2026", _CLAIM_SEP, 5651.94)):
+        total = round(sum(r[3] for r in rows), 2)
+        if abs(total - expect) > 0.005:          # a typo here must not become a wrong claim
+            print(f"  backfill: {period} claim adds to RM{total:,.2f}, list says RM{expect:,.2f} — NOT loaded")
+            continue
+        c = M.PettyClaim(claimant="Karen Sui", claimant_user_id=karen.id if karen else None,
+                         period=period, created_by="Eugene (from Ms Lee's list)",
+                         notes=f"Loaded from Ms Lee's {period} petty cash list (RM{expect:,.2f}). "
+                               "Review the categories and the flagged lines, then submit.")
+        db.add(c)
+        db.flush()
+        for i, (d, sup, desc, amt) in enumerate(rows):
+            db.add(M.PettyClaimLine(claim_id=c.id, position=i,
+                                    date=datetime.strptime(d, "%d/%m/%Y").date(),
+                                    supplier=sup, description=desc,
+                                    category=guess_category(sup, desc, amt), amount=amt))
+        log(db, c, "system", "created", f"{len(rows)} lines · RM{total:,.2f} · from Ms Lee's Excel list")
+        print(f"  backfill: draft claim {period} loaded — {len(rows)} lines, RM{total:,.2f}")
+    db.add(M.Setting(key=key, value=datetime.utcnow().isoformat(timespec="seconds")))
+    db.commit()
+
+
 def run_all(db):
     ar_lines_sept_2026(db)
     attendance_roster_from_payroll(db)
+    karen_claims_aug_sep_2026(db)

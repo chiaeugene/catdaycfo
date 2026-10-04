@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% set badge = {'Draft':'draft','Submitted':'submitted','Returned':'pending','Posted':'approved','Paid':'paid'} %}
+{% block content %}
+{% if flash %}<div class="panel" style="background:var(--green-bg);border-color:rgba(29,127,63,.3)"><div style="font-size:13px;color:var(--green);font-weight:700">✓ {{ flash }}</div></div>{% endif %}
+{% if flash_err %}<div class="panel" style="background:var(--amber-bg);border-color:var(--amber)"><div style="font-size:12.5px;color:var(--amber);font-weight:700">{{ flash_err }}</div></div>{% endif %}
+
+<div class="pagehead">
+  <h1><span class="mono">{{ c.claim_no or 'Draft claim' }}</span>
+    <span class="badge {{ badge.get(c.status, 'draft') }}" style="vertical-align:middle;margin-left:8px">{{ c.status }}</span></h1>
+  <div class="actions">
+    <a class="btn secondary" href="/claims">← All claims</a>
+    <form method="post" action="/claims/{{ c.id }}/pdf" class="inline"><button class="secondary" type="submit">{{ icon('file', 14) }} PDF</button></form>
+  </div>
+</div>
+
+{% if c.status == 'Returned' and c.return_note %}
+<div class="panel" style="background:var(--amber-bg);border-color:var(--amber)">
+  <b>Returned by {{ c.events[-1].who if c.events else 'reviewer' }}:</b> {{ c.return_note }}
+  <div class="muted" style="font-size:12px;margin-top:4px">Fix it with Edit, then submit again — the claim number stays the same.</div>
+</div>
+{% endif %}
+
+{# ── What happens next, always stated ── #}
+<div class="panel" style="padding:12px 18px">
+  {% if c.status == 'Draft' %}<b>Next:</b> check the lines, attach receipts, then <b>Submit for review</b>. Nothing is in the books yet.
+  {% elif c.status == 'Returned' %}<b>Next:</b> fix what was asked and submit again.
+  {% elif c.status == 'Submitted' %}<b>Next:</b> a reviewer checks the lines and approves. Nothing is in the books yet.
+  {% elif c.status == 'Posted' %}<b>Next:</b> create the voucher below, put it on a payment listing and pay {{ c.claimant }}. The expenses are already in the books, in their categories.
+  {% else %}<b>Done:</b> approved, paid to {{ c.claimant }}.{% endif %}
+</div>
+
+{# ── Reviewer ── #}
+{% if c.status == 'Submitted' and can_review %}
+<div class="panel" style="border:2px solid var(--brand);background:var(--amber-bg)">
+  <h2 style="margin-top:0">Review 审核</h2>
+  {% if warn.lines %}<div style="font-size:12.5px;font-weight:700;color:var(--red);margin-bottom:8px">⚠ {{ warn.lines|length }} line(s) need a look — marked below.</div>{% endif %}
+  <div class="actions" style="align-items:flex-start">
+    <form method="post" action="/claims/{{ c.id }}/approve" class="inline"
+          onsubmit="return confirm('Approve {{ c.claim_no }}? {{ c.lines|rejectattr('excluded')|list|length }} lines, RM {{ c.total|rm }}, will be posted as owed to {{ c.claimant }}.')">
+      <button type="submit" class="success" {% if self_review %}disabled title="You can't approve your own claim — another reviewer has to."{% endif %}>
+        {{ icon('check', 14) }} Approve &amp; post — RM {{ c.total|rm }}</button>
+    </form>
+    <form method="post" action="/claims/{{ c.id }}/return" class="inline">
+      <input name="note" required placeholder="What needs fixing" class="slim" style="width:240px">
+      <button type="submit" class="secondary">↩ Return to {{ c.claimant }}</button>
+    </form>
+  </div>
+  {% if self_review %}<div class="muted" style="font-size:12px;margin-top:6px">This is your own claim — another reviewer has to approve it.</div>{% endif %}
+  <div class="muted" style="font-size:12px;margin-top:6px">Wrong category? Use <b>Edit</b>. A line that shouldn't be paid? <b>Leave out</b> on that line, with the reason.</div>
+</div>
+{% endif %}
+
+{% if warn.claim %}
+<div class="panel" style="border-color:var(--amber)">
+  <b style="color:var(--amber)">⚠ {{ c.claimant }} already has payments in the system</b>
+  <div class="muted" style="font-size:12px;margin:4px 0 6px">Make sure this claim hasn't already been paid another way.</div>
+  {% for w in warn.claim %}<div style="font-size:12.5px">• {{ w }}</div>{% endfor %}
+</div>
+{% endif %}
+
+<div class="cards">
+  <div class="card"><div class="label">Claimed by 报销人</div><div class="value" style="font-size:16px">{{ c.claimant }}</div></div>
+  <div class="card"><div class="label">Period</div><div class="value" style="font-size:16px">{{ c.period }}</div></div>
+  <div class="card"><div class="label">Claimed</div><div class="value" style="font-size:16px">RM {{ c.total_claimed|rm }}</div></div>
+  <div class="card amber"><div class="label">To reimburse 应付</div><div class="value">RM {{ c.total|rm }}</div></div>
+</div>
+
+{% if by_cat %}
+<div class="panel" style="padding:12px 18px">
+  <span class="muted" style="font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.4px">Where it goes in the books</span>
+  <div class="docchips" style="margin-top:6px">
+    {% for k, v in by_cat %}<span class="docchip">{{ k }} · RM {{ v|rm }}</span>{% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<div class="panel">
+  <h2 style="margin-top:0">Lines 明细 ({{ c.lines|length }})</h2>
+  <div class="tablewrap">
+  <table>
+    <tr><th>#</th><th>Date</th><th>Paid to</th><th>What for</th><th>Category</th><th class="num">RM</th><th></th></tr>
+    {% for l in c.lines %}
+    <tr style="{{ 'opacity:.55' if l.excluded else '' }}">
+      <td>{{ loop.index }}</td>
+      <td style="white-space:nowrap">{{ l.date.strftime('%d/%m/%y') }}</td>
+      <td>{{ l.supplier }}</td>
+      <td>{{ l.description }}
+        {% for w in warn.lines.get(l.id, []) %}<div style="font-size:11.5px;color:var(--red);font-weight:600;margin-top:3px">⚠ {{ w }}</div>{% endfor %}
+        {% if l.excluded %}<div style="font-size:11.5px;font-weight:700;margin-top:3px">Left out: {{ l.exclude_reason }}</div>{% endif %}
+      </td>
+      <td>{{ l.category }}</td>
+      <td class="num" style="{{ 'text-decoration:line-through' if l.excluded else 'font-weight:700' }}">{{ l.amount|rm }}</td>
+      <td style="white-space:nowrap">
+        {% if l.payment_id %}<a class="badge approved" href="/payments?claim={{ c.id }}">posted</a>{% endif %}
+        {% if can_review and c.status in ['Draft','Submitted','Returned'] %}
+          {% if l.excluded %}
+          <form method="post" action="/claims/{{ c.id }}/line/{{ l.id }}/exclude" class="inline"><button class="small secondary" type="submit">Put back</button></form>
+          {% else %}
+          <details class="rowedit"><summary style="font-size:10.5px">leave out</summary>
+            <form method="post" action="/claims/{{ c.id }}/line/{{ l.id }}/exclude" class="inline" style="margin-top:4px">
+              <input name="reason" required placeholder="Why (e.g. paid directly by the company)" class="slim" style="width:230px">
+              <button class="small danger" type="submit">Leave out</button></form></details>
+          {% endif %}
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+    <tr><td colspan="5" class="num" style="font-weight:800">To reimburse</td><td class="num" style="font-weight:800">{{ c.total|rm }}</td><td></td></tr>
+  </table>
+  </div>
+</div>
+
+{# ── Paying it ── #}
+{% if c.status in ['Posted','Paid'] %}
+<div class="panel">
+  <h2 style="margin-top:0">Payment 付款</h2>
+  {% if open_pays and can_review %}
+  <form method="post" action="/vouchers/create" class="inline">
+    {% for p in open_pays %}<input type="hidden" name="pay_ids" value="{{ p.id }}">{% endfor %}
+    <input type="hidden" name="payee" value="{{ c.claimant }}">
+    <button type="submit">{{ icon('receipt', 14) }} Create the voucher — RM {{ open_pays|sum(attribute='amount')|rm }} to {{ c.claimant }}</button>
+  </form>
+  <div class="muted" style="font-size:12px;margin-top:6px">One voucher for all {{ open_pays|length }} lines. It then goes on a payment listing like any other voucher.</div>
+  {% endif %}
+  {% for v in vouchers %}
+  <div style="margin-top:8px"><a class="docchip" href="/vouchers">{{ icon('file', 12) }} {{ v.pv_no }} · RM {{ v.total|rm }} · {{ v.status }}</a>
+    {% if v.pdf_path %}<a class="docchip" href="/files/{{ v.pdf_path }}" target="_blank">PV PDF</a>{% endif %}</div>
+  {% endfor %}
+  <div style="margin-top:8px"><a href="/payments?claim={{ c.id }}">See the {{ c.payments|length }} payment lines →</a></div>
+</div>
+{% endif %}
+
+<div class="panel">
+  <h2 style="margin-top:0">Receipts 收据 ({{ c.files|length }})</h2>
+  <div class="docchips">
+    {% for f in c.files %}<a class="docchip" href="/files/{{ f.path }}" target="_blank">{{ icon('paperclip', 12) }} {{ f.name[:40] }}</a>{% endfor %}
+    {% if not c.files %}<span class="muted">None attached yet.</span>{% endif %}
+  </div>
+  {% if (mine or can_review) and user.role != 'viewer' %}
+  <form method="post" action="/claims/{{ c.id }}/files" enctype="multipart/form-data" class="inline" style="margin-top:10px">
+    <input type="file" name="files" multiple accept="image/*,.pdf" required>
+    <button class="small" type="submit">{{ icon('upload', 12) }} Attach</button>
+  </form>
+  <div class="muted" style="font-size:11.5px;margin-top:4px">Photos of the receipts, or one PDF scan of them all.</div>
+  {% endif %}
+</div>
+
+<div class="panel">
+  <h2 style="margin-top:0">Actions</h2>
+  <div class="actions">
+    {% if can_edit %}<a class="btn secondary" href="/claims/{{ c.id }}/edit">{{ icon('edit', 14) }} Edit lines &amp; categories</a>{% endif %}
+    {% if c.status in ['Draft','Returned'] and (mine or can_review) and user.role != 'viewer' %}
+    <form method="post" action="/claims/{{ c.id }}/submit" class="inline"><button type="submit">{{ icon('send', 14) }} {{ 'Submit again' if c.status == 'Returned' else 'Submit for review 提交' }}</button></form>
+    {% endif %}
+    {% if c.status == 'Draft' and not c.claim_no and (mine or can_review) and user.role != 'viewer' %}
+    <form method="post" action="/claims/{{ c.id }}/delete" class="inline" onsubmit="return confirm('Delete this draft?')"><button type="submit" class="danger">{{ icon('trash', 14) }} Delete draft</button></form>
+    {% endif %}
+    {% if c.status == 'Posted' and user.role == 'admin' %}
+    <form method="post" action="/claims/{{ c.id }}/unpost" class="inline"
+          onsubmit="return confirm('Undo the approval of {{ c.claim_no }}? Its {{ c.payments|length }} payment lines are removed and it goes back to Submitted.')">
+      <button type="submit" class="secondary" {% if unpost_block %}disabled title="{{ unpost_block }}"{% endif %}>↩ Undo approval</button>
+    </form>
+    {% if unpost_block %}<span class="muted" style="font-size:12px">{{ unpost_block }}</span>{% endif %}
+    {% endif %}
+  </div>
+</div>
+
+<div class="panel">
+  <h2 style="margin-top:0">History 记录</h2>
+  <table>
+    {% for e in c.events|reverse %}
+    <tr><td class="mono" style="white-space:nowrap;font-size:11.5px">{{ e.at|myt('%d/%m/%y %H:%M') }}</td>
+        <td style="white-space:nowrap"><b>{{ e.who }}</b></td>
+        <td><span class="badge draft">{{ e.action }}</span></td>
+        <td style="font-size:12.5px">{{ e.detail }}</td></tr>
+    {% endfor %}
+  </table>
+</div>
+{% endblock %}

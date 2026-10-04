@@ -23,7 +23,7 @@ from datetime import date
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
-from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, Table,
+from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, Table, KeepTogether,
                                 TableStyle, HRFlowable, Image as RLImage)
 from reportlab.lib.styles import ParagraphStyle
 
@@ -412,6 +412,67 @@ def voucher_pdf(pv_no: str, payee: str, items: list[dict], total: float,
 
     el.append(_sig_block(["Prepared By", "Approved By", "Received By"]))
     _footer(el, company, reg_no, pv_no)
+    doc.build(el)
+    return rel
+
+
+# ═══════════════════════ PETTY CASH CLAIM ═══════════════════════
+def claim_pdf(claim_no: str, head: dict, lines: list[dict], total: float,
+              excluded: list[dict] | None = None,
+              company="CATDAY SDN BHD", address="Uptown PJ", reg_no="") -> str:
+    """The claim as a document: every receipt with its date, shop, purpose and
+    category, and the total to reimburse. head: {claimant, period, status,
+    submitted, reviewed_by, reviewed_at}. lines/excluded: [{date, supplier,
+    description, category, amount, reason}]."""
+    subdir = f"claims/{date.today():%Y-%m}"
+    os.makedirs(os.path.join(UPLOAD_DIR, subdir), exist_ok=True)
+    rel = f"{subdir}/{claim_no}_{safe_name(head.get('claimant') or 'claim')}.pdf"
+    doc = _doc(rel)
+    el = [_brand_band(company, address, reg_no), Spacer(1, 9 * mm),
+          _title("PETTY CASH CLAIM"), Spacer(1, 5 * mm)]
+    el.append(_meta_block([
+        ("CLAIMED BY", head.get("claimant", "")),
+        ("CLAIM NO.", claim_no),
+        ("PERIOD", head.get("period", "")),
+    ]))
+    el.append(Spacer(1, 6 * mm))
+
+    # A claim runs to 30-40 lines: a slightly smaller face and columns sized to
+    # their content (a date and a category must never wrap mid-word).
+    C = ParagraphStyle("cl", parent=SMALL, fontSize=8.5, leading=11)
+    CR = ParagraphStyle("clr", parent=C, alignment=2)
+    data = [[Paragraph("#", TH), Paragraph("DATE", TH), Paragraph("PAID TO", TH),
+             Paragraph("FOR", TH), Paragraph("CATEGORY", TH), Paragraph("RM", TH_R)]]
+    for i, ln in enumerate(lines, 1):
+        data.append([Paragraph(str(i), C), Paragraph(ln["date"], C),
+                     Paragraph(ln["supplier"], C), Paragraph(ln["description"], C),
+                     Paragraph(ln["category"], C), Paragraph(f"{ln['amount']:,.2f}", CR)])
+    n = len(lines)
+    data.append(["", "", "", "", Paragraph("TOTAL", TOT), Paragraph(f"{total:,.2f}", TOT_R)])
+    t = _brand_table(data, [10 * mm, 19 * mm, 40 * mm, 57 * mm, 27 * mm, 23 * mm], n, [n + 1])
+    t.repeatRows = 1
+    el.append(t)
+
+    tail = []
+    if excluded:
+        tail.append(Spacer(1, 5 * mm))
+        tail.append(_brand_box("NOT REIMBURSED ON THIS CLAIM", [
+            [Paragraph(f"{x['date']} · {x['supplier']} · RM {x['amount']:,.2f}", C),
+             Paragraph(x.get("reason") or "-", C)] for x in excluded],
+            col_widths=[88 * mm, 88 * mm]))
+    tail.append(Spacer(1, 4 * mm))
+    if head.get("reviewed_by"):
+        tail.append(Paragraph(f"Reviewed and approved by {head['reviewed_by']} on "
+                              f"{head.get('reviewed_at', '')}. Reimbursed by payment voucher to "
+                              f"{head.get('claimant', '')}.", TINY))
+    else:
+        tail.append(Paragraph(f"Status: {head.get('status', '')}. Not yet approved — no payment "
+                              f"is due on this document.", TINY))
+    tail.append(_sig_block(["Claimed By", "Checked By", "Approved By"]))
+    # The sign-off travels as one block, so it never lands alone on a page
+    # with nothing above it but the previous page's total.
+    el.append(KeepTogether(tail))
+    _footer(el, company, reg_no, claim_no)
     doc.build(el)
     return rel
 

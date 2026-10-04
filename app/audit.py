@@ -31,9 +31,9 @@ APPROVER_PATH = re.compile(r"^/requests/\d+/decide$")
 # looks after stock. She never records money received -- payments are recorded
 # by the bookkeeper only after they show up in the bank -- and she can't see
 # the books. Files are limited to invoices and request photos.
-STOREKEEPER_PREFIXES = ("/receivables", "/requests", "/stock", "/attendance", "/files/invoices/",
-                        "/files/requests/", "/files/attendance/", "/static", "/login", "/logout",
-                        "/health")
+STOREKEEPER_PREFIXES = ("/receivables", "/requests", "/stock", "/attendance", "/claims",
+                        "/files/invoices/", "/files/requests/", "/files/attendance/",
+                        "/files/claims/", "/static", "/login", "/logout", "/health")
 # Staff clock in from their own phones with no login, so these must work for
 # anyone -- including someone who happens to be signed in as a confined role.
 PUBLIC_PREFIXES = ("/attendance/kiosk", "/attendance/scan", "/attendance/punch", "/approve/")
@@ -105,6 +105,15 @@ ACTION_PATTERNS = [
     (r"^POST /stock/recipe/new$", "Added service recipe"),
     (r"^POST /stock/recipe/\d+/delete$", "Deleted service recipe"),
     (r"^POST /receivables/new$", "Created customer invoice"),
+    (r"^POST /claims/new$", "Created petty cash claim"),
+    (r"^POST /claims/\d+/update$", "Edited petty cash claim"),
+    (r"^POST /claims/\d+/submit$", "Submitted petty cash claim"),
+    (r"^POST /claims/\d+/return$", "Returned petty cash claim"),
+    (r"^POST /claims/\d+/approve$", "Approved petty cash claim"),
+    (r"^POST /claims/\d+/unpost$", "Undid petty cash claim approval"),
+    (r"^POST /claims/\d+/line/\d+/exclude$", "Excluded/included a claim line"),
+    (r"^POST /claims/\d+/files$", "Attached receipts to a claim"),
+    (r"^POST /claims/\d+/delete$", "Deleted draft petty cash claim"),
     (r"^POST /attendance/punch$", "Staff clock-in/out"),
     (r"^POST /attendance/kiosk/setup$", "Set up attendance kiosk"),
     (r"^POST /attendance/people/new$", "Added staff to attendance"),
