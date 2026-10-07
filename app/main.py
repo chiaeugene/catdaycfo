@@ -366,6 +366,7 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     payroll_month = db.query(func.coalesce(func.sum(M.PayrollRun.total_cost), 0)) \
         .filter(M.PayrollRun.month == mo, M.PayrollRun.status == "Confirmed").scalar()
 
+    _sb = sales_breakdown(db, months=[mo])      # walk-in + invoiced, same as the P&L
     overdue_stat = 0
     paid_stat = {(s.month, s.kind) for s in db.query(M.StatutoryPaid).all()}
     for run in db.query(M.PayrollRun).filter(M.PayrollRun.status == "Confirmed").all():
@@ -387,8 +388,8 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
         "unmatched_bank": db.query(M.BankStatementLine)
             .filter(M.BankStatementLine.matched == False).count(),  # noqa: E712
         "overdue_stat": overdue_stat,
-        "sales_month": db.query(func.coalesce(func.sum(M.SalesEntry.amount), 0))
-            .filter(M.SalesEntry.month == mo).scalar(),
+        "sales_month": _sb["total"],
+        "sales_walkin": _sb["walkin"], "sales_invoiced": _sb["invoiced"],
         "expenses_month": pay_month + petty_month + payroll_month,
         "spend_split": {"payments": pay_month, "petty": petty_month, "payroll": payroll_month},
         "petty_balance": petty_bal,
@@ -3060,14 +3061,71 @@ def pettycash_new(request: Request, description: str = Form(...), category: str 
 
 
 # ─────────────────────────── SALES ───────────────────────────
+def sales_breakdown(db: Session, months=None, d_from=None, d_to=None) -> dict:
+    """What sales were, for a set of months or a date range.
+
+    Sales come from two places: walk-in takings (SalesEntry, mostly from the
+    daily Telegram report) and customer invoices (Receivables). The dashboard,
+    the Sales page and the P&L used to count only the first, while the Sales
+    Ledger and the trial balance counted both -- so the same month showed
+    different sales depending on the page. Everything now asks here.
+
+    Returns per-type walk-in / invoiced / total, walk-in by payment method,
+    and any invoice that looks like it is ALSO in the walk-in takings."""
+    def keep(d, month):
+        if months is not None:
+            return month in months
+        return (not d_from or d >= d_from) and (not d_to or d <= d_to)
+
+    walk = [e for e in db.query(M.SalesEntry).all() if keep(e.date, e.month)]
+    invs = [i for i in db.query(M.ARInvoice).filter(M.ARInvoice.status != "Void").all()
+            if keep(i.date, i.month or month_str(i.date))]
+    streams, methods = {}, {}
+    def bump(stream, key, amt):
+        row = streams.setdefault(stream or "Other", {"walkin": 0.0, "invoiced": 0.0})
+        row[key] = round(row[key] + amt, 2)
+    for e in walk:
+        bump(e.stream, "walkin", e.amount)
+        methods[e.method or "Cash"] = round(methods.get(e.method or "Cash", 0) + e.amount, 2)
+    for i in invs:
+        if i.lines:
+            for ln in i.lines:
+                bump(ln.stream, "invoiced", ln.amount)
+        else:
+            bump(i.stream, "invoiced", i.amount)
+    for row in streams.values():
+        row["total"] = round(row["walkin"] + row["invoiced"], 2)
+
+    # The same sale entered twice: invoiced by name, and again inside that
+    # day's takings. Flag an invoice when a walk-in entry of the same type, on
+    # the same day or the next, is for the invoice's amount or one of its lines.
+    dups = []
+    for i in invs:
+        amounts = {round(i.amount, 2)} | {round(ln.amount, 2) for ln in i.lines if ln.amount > 0}
+        types = {ln.stream for ln in i.lines} or {i.stream}
+        for e in walk:
+            if round(e.amount, 2) in amounts and e.stream in types and 0 <= (e.date - i.date).days <= 1:
+                dups.append({"inv": i, "sale": e})
+                break
+    ordered = {k: streams[k] for k in M.STREAMS if k in streams}
+    ordered.update({k: v for k, v in streams.items() if k not in ordered})
+    w = round(sum(e.amount for e in walk), 2)
+    v = round(sum(i.amount for i in invs), 2)
+    return {"streams": ordered, "walkin": w, "invoiced": v, "total": round(w + v, 2),
+            "methods": dict(sorted(methods.items(), key=lambda kv: -kv[1])),
+            "walk_rows": walk, "inv_rows": invs, "dups": dups,
+            "received": round(sum(i.received for i in invs), 2),
+            "owed": round(sum(i.outstanding for i in invs if i.outstanding > 0.005), 2)}
+
+
 @app.get("/sales", response_class=HTMLResponse)
 def sales(request: Request, db: Session = Depends(get_db)):
     entries = db.query(M.SalesEntry).order_by(M.SalesEntry.id.desc()).limit(300).all()
     mo = month_str()
-    by_stream = dict(db.query(M.SalesEntry.stream, func.sum(M.SalesEntry.amount))
-                     .filter(M.SalesEntry.month == mo).group_by(M.SalesEntry.stream).all())
+    sb = sales_breakdown(db, months=[mo])
+    by_stream = {k: v["walkin"] for k, v in sb["streams"].items() if v["walkin"]}
     return render(request, db, "sales.html", "sales", entries=entries,
-                  by_stream=by_stream, month=mo)
+                  by_stream=by_stream, month=mo, sb=sb)
 
 
 @app.post("/sales/new")
@@ -4733,33 +4791,38 @@ def stock_recipe_delete(rid: int, request: Request, db: Session = Depends(get_db
 
 # ─────────────────────────── SALES / PURCHASE LEDGERS ───────────────────────────
 @app.get("/reports/sales-ledger", response_class=HTMLResponse)
-def sales_ledger(request: Request, frm: str = "", to: str = "",
+def sales_ledger(request: Request, frm: str = "", to: str = "", month: str = "",
                  db: Session = Depends(get_db)):
-    """Sales day book: every cash sale and credit invoice in the period, with
-    per-stream totals — Weng Teng's 'sales ledger'."""
+    """Sales day book: every walk-in sale and customer invoice in the period,
+    with the breakdown by type, by walk-in vs invoiced, and by how walk-in
+    sales were paid."""
+    if month and not (frm or to):
+        try:
+            first = datetime.strptime(month, "%b %Y").date()
+            nxt = date(first.year + (first.month == 12), first.month % 12 + 1, 1)
+            frm, to = first.isoformat(), (nxt - timedelta(days=1)).isoformat()
+        except ValueError:
+            pass
     d_from, d_to = parse_date(frm) if frm else None, parse_date(to) if to else None
-
-    def in_range(d):
-        return (not d_from or d >= d_from) and (not d_to or d <= d_to)
-
+    sb = sales_breakdown(db, d_from=d_from, d_to=d_to)
     rows = []
-    for s in db.query(M.SalesEntry).all():
-        if in_range(s.date):
-            rows.append({"date": s.date, "ref": "Sale", "kind": "Cash sale",
-                         "party": s.recorded_by or "-", "stream": s.stream,
-                         "desc": s.description, "amount": s.amount})
-    for i in db.query(M.ARInvoice).filter(M.ARInvoice.status != "Void").all():
-        if in_range(i.date):
-            rows.append({"date": i.date, "ref": i.inv_no, "kind": "Credit invoice",
-                         "party": i.customer, "stream": i.stream,
-                         "desc": i.notes or "Customer invoice", "amount": i.amount})
+    for e in sb["walk_rows"]:
+        rows.append({"date": e.date, "ref": "Sale", "kind": "Walk-in", "party": e.recorded_by or "-",
+                     "stream": e.stream, "desc": e.description, "amount": e.amount, "method": e.method or "Cash"})
+    for i in sb["inv_rows"]:
+        if i.lines:
+            for ln in i.lines:
+                rows.append({"date": i.date, "ref": i.inv_no, "kind": "Invoice", "party": i.customer,
+                             "stream": ln.stream, "desc": ln.printed, "amount": ln.amount, "method": i.status})
+        else:
+            rows.append({"date": i.date, "ref": i.inv_no, "kind": "Invoice", "party": i.customer,
+                         "stream": i.stream, "desc": i.notes or "Customer invoice", "amount": i.amount,
+                         "method": i.status})
     rows.sort(key=lambda r: (r["date"], r["ref"]))
-    stream_totals = {}
-    for r in rows:
-        stream_totals[r["stream"]] = round(stream_totals.get(r["stream"], 0) + r["amount"], 2)
+    start = _accounts_start_month(db)
     return render(request, db, "sales_ledger.html", "salesledger",
-                  rows=rows, frm=frm, to=to, stream_totals=stream_totals,
-                  grand=round(sum(r["amount"] for r in rows), 2))
+                  rows=rows, frm=frm, to=to, sb=sb, months=_months_between(start, month_str())[::-1][:8],
+                  stream_totals={k: v["total"] for k, v in sb["streams"].items()}, grand=sb["total"])
 
 
 @app.get("/reports/purchase-ledger", response_class=HTMLResponse)
@@ -5023,10 +5086,12 @@ def pnl(request: Request, month: str = "", frm: str = "", to: str = "",
     months = all_months
 
     # Revenue
-    revenue = dict(db.query(M.SalesEntry.stream, func.sum(M.SalesEntry.amount))
-                   .filter(M.SalesEntry.month.in_(sel_months))
-                   .group_by(M.SalesEntry.stream).all())
-    total_rev = sum(revenue.values())
+    # Walk-in takings AND customer invoices. Revenue here used to be walk-in
+    # only, which left every invoice out of the P&L while the trial balance
+    # included it.
+    sb = sales_breakdown(db, months=sel_months)
+    revenue = {k: v["total"] for k, v in sb["streams"].items()}
+    total_rev = sb["total"]
 
     # Payments in month, by group
     pays = db.query(M.Payment).filter(M.Payment.month.in_(sel_months),
@@ -5080,7 +5145,7 @@ def pnl(request: Request, month: str = "", frm: str = "", to: str = "",
     return render(request, db, "pnl.html", "pnl", month=mo, months=months,
                   range_mode=range_mode, f_frm=frm, f_to=to,
                   sel_count=len(sel_months),
-                  revenue=revenue, total_rev=total_rev,
+                  revenue=revenue, total_rev=total_rev, sb=sb,
                   cogs=cogs, total_cogs=total_cogs, gross_profit=gross_profit,
                   opex=opex, total_opex=total_opex, other=other, total_other=total_other,
                   payroll_total=payroll_total,

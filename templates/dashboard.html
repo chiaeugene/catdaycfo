@@ -57,6 +57,7 @@
 <div class="cards">
   <a class="card green" href="/sales"><span class="go">→</span>
     <div class="label">Sales 销售</div><div class="value">RM {{ stats.sales_month|rm }}</div>
+    {% if stats.sales_invoiced %}<div class="hint">Walk-in {{ stats.sales_walkin|rm }} + invoiced {{ stats.sales_invoiced|rm }}</div>{% endif %}
     <div class="hint">Record &amp; review takings</div></a>
   <a class="card red" href="/pnl"><span class="go">→</span>
     <div class="label">Total spend 总支出</div><div class="value">RM {{ stats.expenses_month|rm }}</div>

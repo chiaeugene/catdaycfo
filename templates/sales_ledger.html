@@ -5,7 +5,7 @@
   <h1>Sales Ledger 销售分类账</h1>
   <button class="secondary" onclick="window.print()">{{ icon('file', 14) }} PDF / Print 打印</button>
 </div>
-<div class="sub">The sales day book: every cash sale and credit invoice in date order, with per-stream totals. Cash sales come from daily sales entries; credit invoices from <a href="/receivables">Receivables</a>.</div>
+<div class="sub">All sales in one place: walk-in takings (from the daily reports) and customer invoices (from <a href="/receivables">Receivables</a>). The dashboard, Sales page and Profit &amp; Loss use these same totals.</div>
 
 <div class="panel">
   <form method="get" action="/reports/sales-ledger">
@@ -15,33 +15,75 @@
       <div class="f-btn"><button type="submit">{{ icon('eye', 14) }} View</button></div>
     </div>
   </form>
+  <div class="filters" style="margin-top:10px">
+    {% for m in months %}<a href="/reports/sales-ledger?month={{ m|urlencode }}">{{ m }}</a>{% endfor %}
+    <a href="/reports/sales-ledger">All time</a>
+  </div>
 </div>
 
-<div class="cards">
-  {% for stream, total in stream_totals.items() %}
-  <div class="card"><div class="label">{{ stream }}</div><div class="value" style="font-size:17px">RM {{ total|rm }}</div></div>
+{% if sb.dups %}
+<div class="panel" style="background:var(--amber-bg);border-color:var(--amber)">
+  <b style="color:var(--amber)">⚠ Possibly counted twice 可能重复计算</b>
+  <div class="sub" style="margin:4px 0 8px">These invoices have a walk-in entry of the same type and amount on the same day or the next. If the daily report already included the invoiced sale, one of the two should be removed.</div>
+  {% for d in sb.dups %}
+  <div style="font-size:12.5px">• <b>{{ d.inv.inv_no }}</b> {{ d.inv.customer }} RM {{ d.inv.amount|rm }} ({{ d.inv.date.strftime('%d/%m') }}) ↔ walk-in {{ d.sale.stream }} RM {{ d.sale.amount|rm }} on {{ d.sale.date.strftime('%d/%m') }} — “{{ d.sale.description[:50] }}”</div>
   {% endfor %}
+</div>
+{% endif %}
+
+<div class="cards">
+  <div class="card"><div class="label">Walk-in 门市</div><div class="value" style="font-size:17px">RM {{ sb.walkin|rm }}</div></div>
+  <div class="card"><div class="label">Invoiced 发票</div><div class="value" style="font-size:17px">RM {{ sb.invoiced|rm }}</div>
+    <div class="hint">RM {{ sb.received|rm }} received · RM {{ sb.owed|rm }} owed</div></div>
   <div class="card green"><div class="label">Total sales 销售总额</div><div class="value" style="font-size:17px">RM {{ grand|rm }}</div></div>
+</div>
+
+<div class="panel">
+  <h2 style="margin-top:0">Breakdown by type 按类别</h2>
+  <div class="tablewrap">
+  <table>
+    <tr><th>Type</th><th class="num">Walk-in</th><th class="num">Invoiced</th><th class="num">Total</th><th class="num">Share</th></tr>
+    {% for stream, r in sb.streams.items() %}
+    <tr><td><b>{{ stream }}</b></td><td class="num">{{ r.walkin|rm if r.walkin else '—' }}</td><td class="num">{{ r.invoiced|rm if r.invoiced else '—' }}</td>
+        <td class="num" style="font-weight:700">{{ r.total|rm }}</td><td class="num">{{ ((r.total / grand * 100)|round(1)) if grand else 0 }}%</td></tr>
+    {% else %}
+    <tr><td colspan="5" class="empty">No sales in this period.</td></tr>
+    {% endfor %}
+    {% if sb.streams %}
+    <tr class="total-row"><td>TOTAL</td><td class="num">{{ sb.walkin|rm }}</td><td class="num">{{ sb.invoiced|rm }}</td><td class="num">{{ grand|rm }}</td><td></td></tr>
+    {% endif %}
+  </table>
+  </div>
+  {% if sb.methods %}
+  <div style="margin-top:12px;font-size:12px;font-weight:700">How walk-in sales were paid 门市付款方式</div>
+  <div class="docchips" style="margin-top:4px">
+    {% for m, amt in sb.methods.items() %}<span class="docchip">{{ m }} · RM {{ amt|rm }}</span>{% endfor %}
+  </div>
+  {% endif %}
+  {% if sb.streams.get('Membership') and sb.streams['Membership'].invoiced %}
+  <div class="sub" style="margin-top:10px">Membership includes prepaid plans (RM {{ sb.streams['Membership'].invoiced|rm }} invoiced): paid for now, delivered over the coming months.</div>
+  {% endif %}
 </div>
 
 <div class="tablewrap">
   <table>
-    <tr><th>Date</th><th>Ref</th><th>Type</th><th>Party / recorded by</th><th>Stream</th><th>Description</th><th class="num">Amount</th></tr>
+    <tr><th>Date</th><th>Ref</th><th>Source</th><th>Customer / recorded by</th><th>Type</th><th>Description</th><th>Paid by / status</th><th class="num">Amount</th></tr>
     {% for r in rows %}
     <tr>
       <td>{{ r.date.strftime('%d/%m/%y') }}</td>
       <td class="mono">{{ r.ref }}</td>
-      <td><span class="badge {{ 'draft' if r.kind == 'Cash sale' else 'pending' }}">{{ r.kind }}</span></td>
+      <td><span class="badge {{ 'draft' if r.kind == 'Walk-in' else 'pending' }}">{{ r.kind }}</span></td>
       <td>{{ r.party }}</td>
       <td>{{ r.stream }}</td>
-      <td style="color:var(--muted)">{{ r.desc[:60] }}</td>
+      <td style="color:var(--muted)">{{ r.desc[:70] }}</td>
+      <td style="font-size:12px">{{ r.method }}</td>
       <td class="num" style="font-weight:700">{{ r.amount|rm }}</td>
     </tr>
     {% else %}
-    <tr><td colspan="7" class="empty">No sales in this period.</td></tr>
+    <tr><td colspan="8" class="empty">No sales in this period.</td></tr>
     {% endfor %}
     {% if rows %}
-    <tr class="total-row"><td colspan="6">TOTAL</td><td class="num">{{ grand|rm }}</td></tr>
+    <tr class="total-row"><td colspan="7">TOTAL</td><td class="num">{{ grand|rm }}</td></tr>
     {% endif %}
   </table>
 </div>

@@ -66,11 +66,22 @@
 <table>
   <tr class="section-row"><td>REVENUE 营收</td><td class="num"></td></tr>
   {% for stream, amt in revenue.items() %}
-  <tr><td style="padding-left:28px">{{ stream }}</td><td class="num">{{ amt|rm }}</td></tr>
+  <tr><td style="padding-left:28px">{{ stream }}
+    {% set r = sb.streams[stream] %}
+    {% if r.invoiced and r.walkin %}<span style="color:var(--muted);font-size:11.5px"> · walk-in {{ r.walkin|rm }} + invoiced {{ r.invoiced|rm }}</span>
+    {% elif r.invoiced %}<span style="color:var(--muted);font-size:11.5px"> · invoiced</span>{% endif %}
+  </td><td class="num">{{ amt|rm }}</td></tr>
   {% else %}
   <tr><td style="padding-left:28px;color:var(--muted)">No sales recorded for {{ month }}</td><td class="num">0.00</td></tr>
   {% endfor %}
   <tr class="total-row"><td>Total Revenue 总营收</td><td class="num">{{ total_rev|rm }}</td></tr>
+  {% if sb.invoiced %}
+  <tr><td colspan="2" style="padding-left:28px;color:var(--muted);font-size:11.5px">
+    Walk-in sales RM {{ sb.walkin|rm }} + customer invoices RM {{ sb.invoiced|rm }} (of which RM {{ sb.owed|rm }} not yet paid).
+    <a href="/reports/sales-ledger?month={{ month|urlencode }}">See the breakdown →</a>
+    {% if sb.dups %}<b style="color:var(--red)"> ⚠ {{ sb.dups|length }} invoice(s) may also be in the walk-in takings — check the Sales Ledger.</b>{% endif %}
+  </td></tr>
+  {% endif %}
 
   <tr class="section-row"><td>COST OF SALES 销售成本 (COGS)</td><td class="num"></td></tr>
   {{ breakdown_rows(cogs) }}

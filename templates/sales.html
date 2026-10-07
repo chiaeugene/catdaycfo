@@ -5,7 +5,7 @@
   <h1>Sales Record 销售记录</h1>
   <a class="btn secondary" href="/export/sales.csv">{{ icon('file', 14) }} Export CSV</a>
 </div>
-<div class="sub">Daily takings by revenue stream — {{ month }}</div>
+<div class="sub">Walk-in takings by revenue stream — {{ month }}. Customer invoices are in <a href="/receivables">Receivables</a>; both together are in the <a href="/reports/sales-ledger?month={{ month|urlencode }}">Sales Ledger</a>.</div>
 
 <div class="cards">
   {% for stream in M.STREAMS %}
@@ -13,7 +13,11 @@
     <div class="card green"><div class="label">{{ stream }}</div><div class="value">RM {{ by_stream[stream]|rm }}</div></div>
     {% endif %}
   {% endfor %}
-  <div class="card blue"><div class="label">Total — {{ month }} 本月总计</div><div class="value">RM {{ by_stream.values()|sum|rm }}</div></div>
+  <div class="card blue"><div class="label">Walk-in total — {{ month }} 门市合计</div><div class="value">RM {{ by_stream.values()|sum|rm }}</div></div>
+  {% if sb.invoiced %}
+  <div class="card"><div class="label">Invoiced 发票</div><div class="value">RM {{ sb.invoiced|rm }}</div><div class="hint"><a href="/receivables">Receivables →</a></div></div>
+  <div class="card green"><div class="label">All sales — {{ month }} 全部销售</div><div class="value">RM {{ sb.total|rm }}</div></div>
+  {% endif %}
 </div>
 
 <div class="panel">
