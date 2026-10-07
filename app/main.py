@@ -3096,15 +3096,25 @@ def sales_breakdown(db: Session, months=None, d_from=None, d_to=None) -> dict:
     for row in streams.values():
         row["total"] = round(row["walkin"] + row["invoiced"], 2)
 
-    # The same sale entered twice: invoiced by name, and again inside that
-    # day's takings. Flag an invoice when a walk-in entry of the same type, on
-    # the same day or the next, is for the invoice's amount or one of its lines.
+    # The same sale entered twice: invoiced by name, and again inside a day's
+    # takings. Flag an invoice when a walk-in entry of the same type is for the
+    # invoice's amount, one of its lines, or its subtotal for that type. The
+    # invoice is often written a day or two after the service, so the walk-in
+    # entry may be dated up to three days before it, or the day after.
     dups = []
     for i in invs:
-        amounts = {round(i.amount, 2)} | {round(ln.amount, 2) for ln in i.lines if ln.amount > 0}
-        types = {ln.stream for ln in i.lines} or {i.stream}
+        by_type = {}
+        for ln in i.lines:
+            if ln.amount > 0:
+                by_type.setdefault(ln.stream, set()).add(round(ln.amount, 2))
+        for st in list(by_type):
+            by_type[st].add(round(sum(ln.amount for ln in i.lines if ln.stream == st and ln.amount > 0), 2))
+        if not by_type:
+            by_type[i.stream] = set()
+        for st in by_type:
+            by_type[st].add(round(i.amount, 2))
         for e in walk:
-            if round(e.amount, 2) in amounts and e.stream in types and 0 <= (e.date - i.date).days <= 1:
+            if round(e.amount, 2) in by_type.get(e.stream, ()) and -3 <= (e.date - i.date).days <= 1:
                 dups.append({"inv": i, "sale": e})
                 break
     ordered = {k: streams[k] for k in M.STREAMS if k in streams}

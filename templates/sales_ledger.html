@@ -24,7 +24,7 @@
 {% if sb.dups %}
 <div class="panel" style="background:var(--amber-bg);border-color:var(--amber)">
   <b style="color:var(--amber)">⚠ Possibly counted twice 可能重复计算</b>
-  <div class="sub" style="margin:4px 0 8px">These invoices have a walk-in entry of the same type and amount on the same day or the next. If the daily report already included the invoiced sale, one of the two should be removed.</div>
+  <div class="sub" style="margin:4px 0 8px">These invoices have a walk-in entry of the same type and amount within a few days (up to three days before the invoice, or the day after). If the daily report already included the invoiced sale, one of the two should be removed.</div>
   {% for d in sb.dups %}
   <div style="font-size:12.5px">• <b>{{ d.inv.inv_no }}</b> {{ d.inv.customer }} RM {{ d.inv.amount|rm }} ({{ d.inv.date.strftime('%d/%m') }}) ↔ walk-in {{ d.sale.stream }} RM {{ d.sale.amount|rm }} on {{ d.sale.date.strftime('%d/%m') }} — “{{ d.sale.description[:50] }}”</div>
   {% endfor %}
