@@ -43,6 +43,7 @@ MIGRATIONS = [
     "ALTER TABLE payments ADD COLUMN request_id INTEGER",
     "ALTER TABLE payments ADD COLUMN claim_id INTEGER",
     "ALTER TABLE petty_claim_lines ADD COLUMN query TEXT DEFAULT ''",
+    "ALTER TABLE sales ADD COLUMN pos_ref VARCHAR(64) DEFAULT ''",
 ]
 
 

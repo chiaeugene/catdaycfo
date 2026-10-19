@@ -21,6 +21,7 @@ from .auth import hash_password, verify_password, current_user
 from . import telegram_bot, pdfgen, claude_ai, ledger, backup, audit, requests_logic as RQ
 from . import attendance as ATT
 from . import claims as CL
+from . import pos_sync
 from .audit import AccessControlMiddleware
 from .statutory import calc_statutory
 
@@ -86,6 +87,9 @@ def _start_backup_scheduler(interval_hours: int = 24) -> None:
 
 _start_backup_scheduler()
 
+from .database import SessionLocal as _SessionLocal  # noqa: E402
+pos_sync.start_scheduler(_SessionLocal)
+
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "catdayhook")
 BASE_URL = os.environ.get("BASE_URL", "https://catday-system.onrender.com").rstrip("/")
 # URL-safe token derived from the secret — base64 secrets contain +/= which
@@ -138,6 +142,7 @@ NAV_GROUPS = [
         ("araging", "/reports/ar-aging", "list", "AR Aging", ("admin", "manager", "viewer")),
         ("gl", "/reports/gl", "list", "General Ledger", ("admin", "manager", "viewer")),
         ("salesledger", "/reports/sales-ledger", "cart", "Sales Ledger", ("admin", "manager", "viewer")),
+        ("pos", "/pos", "cart", "POS Sync", ("admin", "manager", "viewer")),
         ("purchledger", "/reports/purchase-ledger", "card", "Purchase Ledger", ("admin", "manager", "viewer")),
         ("tax", "/reports/tax", "receipt", "SST / Tax", ("admin", "manager", "viewer")),
         ("einvoice", "/reports/einvoice-readiness", "receipt", "e-Invoice Readiness", ("admin", "viewer")),
@@ -3117,6 +3122,19 @@ def sales_breakdown(db: Session, months=None, d_from=None, d_to=None) -> dict:
             if round(e.amount, 2) in by_type.get(e.stream, ()) and -3 <= (e.date - i.date).days <= 1:
                 dups.append({"inv": i, "sale": e})
                 break
+    # The same sale twice the other way round: the POS sync posted it, and a
+    # daily report verified afterwards also included it.
+    from types import SimpleNamespace
+    pos_rows = [e for e in walk if e.pos_ref and e.recorded_by == "POS sync"]
+    for e in walk:
+        if e.pos_ref:
+            continue
+        for p in pos_rows:
+            if abs(e.amount - p.amount) < 0.005 and abs((e.date - p.date).days) <= 1:
+                no = (p.description or "POS").split(" — ")[0]
+                dups.append({"inv": SimpleNamespace(inv_no=no, customer="(from the POS)",
+                                                    amount=p.amount, date=p.date), "sale": e})
+                break
     ordered = {k: streams[k] for k in M.STREAMS if k in streams}
     ordered.update({k: v for k, v in streams.items() if k not in ordered})
     w = round(sum(e.amount for e in walk), 2)
@@ -3126,6 +3144,32 @@ def sales_breakdown(db: Session, months=None, d_from=None, d_to=None) -> dict:
             "walk_rows": walk, "inv_rows": invs, "dups": dups,
             "received": round(sum(i.received for i in invs), 2),
             "owed": round(sum(i.outstanding for i in invs if i.outstanding > 0.005), 2)}
+
+
+# ─────────────────────────── POS SYNC ───────────────────────────
+@app.get("/pos", response_class=HTMLResponse)
+def pos_page(request: Request, show: str = "", db: Session = Depends(get_db)):
+    q = db.query(M.PosInvoice).order_by(M.PosInvoice.date.desc(), M.PosInvoice.id.desc())
+    if show:
+        q = q.filter(M.PosInvoice.outcome == show)
+    rows = q.limit(500).all()
+    counts = dict(db.query(M.PosInvoice.outcome, func.count(M.PosInvoice.id))
+                  .group_by(M.PosInvoice.outcome).all())
+    user = current_user(request, db)
+    return render(request, db, "pos.html", "pos", rows=rows, counts=counts, show=show,
+                  status=pos_sync.last_status(db), configured=pos_sync.configured(),
+                  every=pos_sync.SYNC_HOURS, base=pos_sync.BASE,
+                  can_sync=bool(user and user.role in ("admin", "manager")),
+                  json=__import__("json"))
+
+
+@app.post("/pos/sync")
+def pos_sync_now(request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user or user.role not in ("admin", "manager"):
+        return RedirectResponse("/", status_code=302)
+    pos_sync.run(db, who=user.display_name)
+    return RedirectResponse("/pos", status_code=303)
 
 
 @app.get("/sales", response_class=HTMLResponse)

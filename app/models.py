@@ -582,6 +582,10 @@ class SalesEntry(Base):
     # entry per day — revenue split by service, money split by payment method —
     # instead of assuming every row landed in the bank.
     document_id: Mapped[int] = mapped_column(ForeignKey("documents.id"), nullable=True)
+    # The POS invoice this row is (posted from it, or matched to it). Blank for
+    # sales the POS never saw. Lets the POS sync run every few hours without
+    # ever entering the same sale twice.
+    pos_ref: Mapped[str] = mapped_column(String(64), default="")
 
 
 class StockItem(Base):
@@ -1044,6 +1048,34 @@ class JournalLine(Base):
     credit: Mapped[float] = mapped_column(Float, default=0.0)
     description: Mapped[str] = mapped_column(String(200), default="")
     account = relationship("Account")
+
+
+class PosInvoice(Base):
+    """One invoice as last seen in the POS (crm.catday.pet), and what the sync
+    did with it: posted it as a sale, matched it to a sale or invoice already
+    here, or set it aside for a person to look at. Read-only copy — nothing is
+    ever written back to the POS."""
+    __tablename__ = "pos_invoices"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    pos_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    invoice_no: Mapped[str] = mapped_column(String(40), default="")
+    date: Mapped[date] = mapped_column(Date, default=date.today)
+    customer: Mapped[str] = mapped_column(String(150), default="")
+    cat: Mapped[str] = mapped_column(String(100), default="")
+    status: Mapped[str] = mapped_column(String(20), default="")
+    total: Mapped[float] = mapped_column(Float, default=0.0)
+    paid: Mapped[float] = mapped_column(Float, default=0.0)
+    method: Mapped[str] = mapped_column(String(60), default="")
+    reference: Mapped[str] = mapped_column(String(200), default="")
+    items: Mapped[str] = mapped_column(Text, default="")
+    streams_json: Mapped[str] = mapped_column(Text, default="{}")
+    sig: Mapped[str] = mapped_column(String(64), default="")
+    # posted / matched / review / voided / skipped
+    outcome: Mapped[str] = mapped_column(String(20), default="")
+    note: Mapped[str] = mapped_column(Text, default="")
+    ar_invoice_id: Mapped[int] = mapped_column(ForeignKey("ar_invoices.id"), nullable=True)
+    first_seen: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    synced_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
 class Setting(Base):

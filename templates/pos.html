@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% set badge = {'posted':'approved','matched':'paid','review':'pending','voided':'draft','skipped':'draft'} %}
+{% set label = {'posted':'Entered 已录入','matched':'Already here 已存在','review':'Check 需核对','voided':'Voided 作废','skipped':'Not entered 未录入'} %}
+{% block content %}
+<div class="pagehead">
+  <h1>POS Sync POS 同步</h1>
+  <div class="actions">
+    {% if can_sync and configured %}
+    <form method="post" action="/pos/sync" style="margin:0"><button class="btn">{{ icon('play', 14) }} Sync now 立即同步</button></form>
+    {% endif %}
+  </div>
+</div>
+<div class="sub">Sales made in the POS ({{ base.replace('https://','') }}) come into the <a href="/reports/sales-ledger">Sales Ledger</a> automatically, every {{ '%g'|format(every) }} hours.
+  A sale already here — from a daily report or one of our invoices — is linked, never entered twice. Nothing is written back to the POS.
+  <span class="muted">POS 的销售每 {{ '%g'|format(every) }} 小时自动进入销售分类账；已有的记录只会对上，不会重复录入。</span></div>
+
+{% if not configured %}
+<div class="panel" style="background:var(--amber-bg);border-color:var(--amber)">
+  <b style="color:var(--amber)">Not switched on yet 尚未启用</b>
+  <div class="sub" style="margin-top:4px">Needs a read-only POS account. In Render → catday-system → Environment, add <span class="mono">POS_EMAIL</span> and <span class="mono">POS_PASSWORD</span> for that account, then save (the service restarts and the first sync runs within two minutes).</div>
+</div>
+{% endif %}
+
+{% if status %}
+<div class="panel" {% if not status.ok %}style="background:var(--red-bg);border-color:var(--red)"{% endif %}>
+  {% if status.ok %}
+  <b>Last sync 上次同步:</b> {{ status.at[:16].replace('T',' ') }} UTC by {{ status.by }} — {{ status.seen }} POS invoices read;
+  {{ status.new }} new, {{ status.posted }} entered, {{ status.matched }} already here, {{ status.review }} to check, {{ status.unchanged }} unchanged.
+  {% else %}
+  <b style="color:var(--red)">Last sync failed 同步失败</b> ({{ status.at[:16].replace('T',' ') }} UTC): {{ status.error }}
+  {% endif %}
+</div>
+{% endif %}
+
+<div class="filters">
+  <a href="/pos" class="{% if not show %}on{% endif %}">All {{ counts.values()|sum }}</a>
+  {% for k in ['review','posted','matched','voided','skipped'] %}{% if counts.get(k) %}
+  <a href="/pos?show={{ k }}" class="{% if show == k %}on{% endif %}">{{ label[k] }} {{ counts[k] }}</a>
+  {% endif %}{% endfor %}
+</div>
+
+<div class="tablewrap">
+<table>
+  <tr><th>Date</th><th>POS invoice</th><th>Customer / cat</th><th>Items</th><th>Paid by</th><th class="num">RM</th><th>Result</th></tr>
+  {% for r in rows %}
+  <tr>
+    <td style="white-space:nowrap">{{ r.date.strftime('%d/%m/%y') }}</td>
+    <td class="mono" style="font-size:12px">{{ r.invoice_no }}</td>
+    <td>{{ r.customer }}{% if r.cat %} <span class="muted">/ {{ r.cat }}</span>{% endif %}</td>
+    <td style="font-size:12px;max-width:260px">{{ r.items }}
+      {% set st = json.loads(r.streams_json or '{}') %}{% if st|length and (st|length > 1 or 'Grooming' not in st) %}<div class="muted" style="font-size:11px">as {% for k, v in st.items() %}{{ k }} {{ v|rm }}{% if not loop.last %}, {% endif %}{% endfor %}</div>{% endif %}</td>
+    <td style="font-size:12px">{{ r.method or '—' }}{% if r.reference %}<div class="muted mono" style="font-size:10.5px">{{ r.reference }}</div>{% endif %}</td>
+    <td class="num">{{ r.total|rm }}</td>
+    <td style="font-size:12px;max-width:300px"><span class="badge {{ badge.get(r.outcome,'draft') }}">{{ label.get(r.outcome, r.outcome) }}</span>
+      <div class="muted" style="margin-top:3px">{{ r.note }}{% if r.ar_invoice_id %} <a href="/receivables?q={{ r.customer.split()[0] if r.customer else '' }}">Open in Receivables →</a>{% endif %}</div></td>
+  </tr>
+  {% else %}
+  <tr><td colspan="7" class="muted" style="padding:20px;text-align:center">Nothing synced yet.</td></tr>
+  {% endfor %}
+</table>
+</div>
+{% endblock %}
