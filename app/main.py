@@ -5475,7 +5475,7 @@ def global_search(request: Request, q: str = "", db: Session = Depends(get_db)):
 
 
 @app.get("/health")
-def health():
+def health(db: Session = Depends(get_db)):
     # RENDER_GIT_COMMIT is set by Render at deploy time — lets us verify
     # from outside exactly which commit is serving.
     # `brand` reports whether the cat day fonts and logo actually loaded in
@@ -5485,4 +5485,9 @@ def health():
     return {"status": "ok", "app": "CATDAY System",
             "build": os.environ.get("RENDER_GIT_COMMIT", "local")[:10],
             "brand": {"fonts": pdfgen.DISPLAY_F.startswith("Gliker"),
-                      "logo": os.path.exists(pdfgen.LOGO_CREAM)}}
+                      "logo": os.path.exists(pdfgen.LOGO_CREAM)},
+            # Whether the POS sync is switched on and when it last ran — no
+            # names, amounts or credentials, just enough to confirm it works.
+            "pos_sync": {"on": pos_sync.configured(),
+                         **{k: v for k, v in pos_sync.last_status(db).items()
+                            if k in ("ok", "at", "by")}}}
