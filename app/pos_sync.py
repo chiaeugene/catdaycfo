@@ -99,6 +99,9 @@ def stream_for(line: dict, source: str) -> str:
     Grooming — the POS counts them as Grooming, which overstates the month."""
     desc = (line.get("description") or "").lower()
     qty = _num(line.get("quantity")) or 1
+    # Stored-value top-up: money in advance, like a plan.
+    if any(w in desc for w in ("top-up", "top up", "topup", "wallet", "stored value", "credit reload"))             or "STORED_VALUE" in source or "TOP_UP" in source:
+        return "Membership"
     if line.get("hotelBookingId") or source == "HOTEL_BOOKING" or \
             any(w in desc for w in ("stay", "boarding", "night", "haven", "nook", "penthouse")):
         return "Boarding"
@@ -108,6 +111,11 @@ def stream_for(line: dict, source: str) -> str:
     if line.get("productId"):
         return "Retail"
     return "Grooming"
+
+
+def _is_prepaid_method(name: str) -> bool:
+    n = (name or "").lower()
+    return any(w in n for w in ("stored", "wallet", "voucher", "credit", "package"))
 
 
 def method_for(name: str) -> str:
@@ -144,6 +152,9 @@ def summarise(inv: dict, payments: list) -> dict:
     for p in pays:
         by_method[p.get("methodName") or "?"] = by_method.get(p.get("methodName") or "?", 0) + _num(p.get("amount"))
     main = max(by_method, key=by_method.get) if by_method else ""
+    # Paid from the customer's stored value or a voucher: that money came in
+    # (and was counted) when the wallet was topped up or the plan was sold.
+    prepaid_paid = round(sum(a for m, a in by_method.items() if _is_prepaid_method(m)), 2)
     items = "; ".join(f"{(ln.get('description') or '').strip()}"
                       + (f" ×{_num(ln.get('quantity')):g}" if _num(ln.get("quantity")) > 1 else "")
                       for ln in lines)
@@ -159,9 +170,11 @@ def summarise(inv: dict, payments: list) -> dict:
         "reference": ", ".join(p.get("referenceNo") or "" for p in pays if p.get("referenceNo")),
         "paid_on": _myt_date(pays[0].get("paidAt")) if pays else None,
         "items": items, "streams": streams,
+        "prepaid_paid": prepaid_paid, "package_covered": bool(inv.get("packageCovered")),
     }
     out["sig"] = hashlib.sha1(json.dumps(
-        [out["status"], out["total"], out["paid"], out["method"], sorted(streams.items()), str(out["date"])],
+        [out["status"], out["total"], out["paid"], out["method"], sorted(streams.items()), str(out["date"]),
+         out["package_covered"]],
         default=str).encode()).hexdigest()
     return out
 
@@ -257,6 +270,14 @@ def _decide(db, s: dict, rec, sync_from: date):
     if s["status"] != "PAID" or s["paid"] + 0.005 < s["total"]:
         return "review", (f"Not fully paid in the POS (RM{s['paid']:,.2f} of RM{s['total']:,.2f}). "
                           "If the customer owes the rest, raise it in Receivables.")
+    if s["package_covered"] or s["total"] < 0.005:
+        return "skipped", "Covered by a care package — no new sale (the package was counted when sold)."
+    if s["prepaid_paid"] >= s["total"] - 0.005:
+        return "skipped", ("Paid from stored value / voucher — no new money; the top-up was "
+                           "counted when it was paid.")
+    if s["prepaid_paid"] > 0.005:
+        return "review", (f"Part paid from stored value / voucher (RM{s['prepaid_paid']:,.2f}) and part "
+                          f"in money — enter only the RM{s['total'] - s['prepaid_paid']:,.2f} paid in money.")
     walk = _find_walkin(db, s)
     if len(walk) == 1:
         walk[0].pos_ref = s["pos_id"]
