@@ -194,11 +194,12 @@
     const start = (from || to).padStart(to.length, ' ');
     const target = to.padStart(start.length, ' ');
     el.textContent = '';
+    el.setAttribute('role', 'text'); el.setAttribute('aria-label', to);
     const strips = [];
     [...target].forEach((ch, i) => {
       const s0 = start[i];
       if (/\d/.test(ch) || /\d/.test(s0)) {
-        const w = document.createElement('span'); w.className = 'roll-d';
+        const w = document.createElement('span'); w.className = 'roll-d'; w.setAttribute('aria-hidden', 'true');
         const col = document.createElement('span');
         for (let d = 0; d <= 9; d++) { const x = document.createElement('span'); x.textContent = d; col.appendChild(x); }
         w.appendChild(col); el.appendChild(w);
@@ -207,7 +208,7 @@
         if (ch === ' ') w.style.opacity = 0;   // a leading digit that vanished
         strips.push({ col, b });
       } else {
-        const x = document.createElement('span'); x.className = 'roll-s'; x.textContent = ch.trim() ? ch : '';
+        const x = document.createElement('span'); x.className = 'roll-s'; x.setAttribute('aria-hidden', 'true'); x.textContent = ch.trim() ? ch : '';
         el.appendChild(x);
       }
     });
