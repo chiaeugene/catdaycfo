@@ -1602,6 +1602,11 @@ def listing_delete(lid: int, request: Request, db: Session = Depends(get_db)):
         return RedirectResponse("/listings", status_code=303)
     for v in list(l.vouchers):         # vouchers survive, just come off the listing
         v.listing_id = None
+    # Its approver links go with it — a link can't point at a listing that no
+    # longer exists (this FK made deleting any shared listing a server error).
+    for sh in list(l.shares):
+        db.delete(sh)
+    db.flush()
     no = l.pl_no
     db.delete(l)
     gave_back = telegram_bot.rollback_counter(db, "PL", no)
