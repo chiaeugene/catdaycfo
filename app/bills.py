@@ -333,6 +333,9 @@ def handle_callback(db: Session, data: str, cq_id: str, frm: dict, chat_id, mess
     user = db.query(M.User).filter(M.User.telegram_id == from_id).first()
     who = (user.display_name if user else
            " ".join(filter(None, [frm.get("first_name"), frm.get("last_name")])) or from_id)
+    if data.startswith("bill:sub:"):
+        _submit(db, data, cq_id, who, chat_id, message_id)
+        return
     try:
         _, action, did = data.split(":", 2)
         doc = db.get(M.Document, int(did))
@@ -360,7 +363,7 @@ def handle_callback(db: Session, data: str, cq_id: str, frm: dict, chat_id, mess
                     + f"\n\n✅ Verified by {_md(doc.verified_by)}"
                     + f"\n📋 *{_md(msg)}*" * ok
                     + f"\n🗂 {pl.pl_no}: {n} voucher{'s' if n != 1 else ''} · RM {pl.total:,.2f} · {pl.status}",
-                    buttons=[[{"text": f"🔗 Open {pl.pl_no}", "url": f"{BASE_URL}/listings"}]])
+                    buttons=listing_buttons(pl))
     else:
         tg_answer_callback(cq_id)
 
@@ -443,3 +446,72 @@ def repost_open_bills(db: Session, chat_id) -> None:
         tg_send(chat_id, summary_text(doc).rsplit("\n\n", 1)[0]
                 + f"\n\n✅ Verified by {_md(doc.verified_by)} — tap to raise the PV.",
                 buttons=pv_buttons(doc))
+
+
+# ───────────────────────── Submit from Telegram ─────────────────────────
+def listing_buttons(pl):
+    from .telegram_bot import BASE_URL
+    rows = []
+    if pl.status == "Draft":
+        rows.append([{"text": f"📤 Submit {pl.pl_no} for approval 提交审批",
+                      "callback_data": f"bill:sub:{pl.id}"}])
+    rows.append([{"text": f"🔗 Open {pl.pl_no}", "url": f"{BASE_URL}/listings"}])
+    return rows
+
+
+def submit_listing(db: Session, pl, who: str) -> tuple[bool, str, str]:
+    """Draft → Submitted, plus a fresh approver link (older links revoked),
+    exactly as the web Submit + 'Approver link' buttons do. Returns
+    (ok, message, approver_url)."""
+    import secrets
+    from datetime import timedelta
+    from .telegram_bot import BASE_URL
+    from .main import SHARE_DEFAULT_DAYS
+    if pl.status != "Draft":
+        return False, f"{pl.pl_no} is already {pl.status.lower()}", ""
+    if not pl.vouchers:
+        return False, f"{pl.pl_no} has no vouchers", ""
+    pl.status = "Submitted"
+    for old in pl.shares:
+        old.revoked = True
+    sh = M.ListingShare(listing_id=pl.id, token=secrets.token_urlsafe(24),
+                        created_by=f"{who} {TAG}",
+                        expires_at=datetime.utcnow() + timedelta(days=SHARE_DEFAULT_DAYS))
+    db.add(sh)
+    db.commit()
+    return True, f"{pl.pl_no} submitted", f"{BASE_URL}/approve/{sh.token}"
+
+
+def listing_text(pl) -> str:
+    lines = [f"📤 *{pl.pl_no} submitted for approval* 已提交审批", ""]
+    for v in sorted(pl.vouchers, key=lambda v: v.pv_no):
+        due = [p.due_date for p in v.payments if p.due_date]
+        lines.append(f"• {v.pv_no} {_md(v.payee)} — *RM {v.total:,.2f}*"
+                     + (f" · due {min(due):%d/%m}" if due else ""))
+        if v.pay_ref:
+            lines.append(f"   {_md(v.pay_ref)}")
+    lines += ["", f"*Total RM {pl.total:,.2f}* · {len(pl.vouchers)} voucher"
+                  + ("s" if len(pl.vouchers) != 1 else "")]
+    return "\n".join(lines)
+
+
+def _submit(db: Session, data: str, cq_id: str, who: str, chat_id, message_id):
+    from .telegram_bot import tg_answer_callback, tg_edit_buttons, tg_send
+    try:
+        pl = db.get(M.Listing, int(data.rsplit(":", 1)[1]))
+    except ValueError:
+        pl = None
+    if not pl:
+        tg_answer_callback(cq_id, "That listing no longer exists", alert=True)
+        return
+    ok, msg, url = submit_listing(db, pl, who)
+    tg_answer_callback(cq_id, "📤 Submitted" if ok else msg, alert=not ok)
+    if not ok:
+        return
+    if chat_id and message_id:   # drop the Submit button from the message tapped
+        tg_edit_buttons(chat_id, message_id, listing_buttons(pl))
+    if chat_id:
+        tg_send(chat_id, listing_text(pl) + f"\n📤 by {_md(who)}"
+                "\n\nApprover link (forward to the approver, valid 14 days) 审批链接：",
+                buttons=[[{"text": "✅ Open for approval 打开审批", "url": url}]])
+        tg_send(chat_id, f"`{url}`")   # tap-to-copy; code format keeps _ in the token safe

@@ -116,6 +116,16 @@ def tg_edit(chat_id, message_id, text: str, buttons=None):
     httpx.post(f"https://api.telegram.org/bot{token}/editMessageText", json=payload, timeout=30)
 
 
+def tg_edit_buttons(chat_id, message_id, buttons=None):
+    """Change only the buttons under a message, leaving its text as it is."""
+    token = bot_token()
+    if not token:
+        return
+    httpx.post(f"https://api.telegram.org/bot{token}/editMessageReplyMarkup",
+               json={"chat_id": str(chat_id), "message_id": message_id,
+                     "reply_markup": {"inline_keyboard": buttons or []}}, timeout=30)
+
+
 def request_buttons(pr_id: int):
     """Approve is one tap. Return and Reject need a reason, so they open the
     web page where there is somewhere to type it."""
