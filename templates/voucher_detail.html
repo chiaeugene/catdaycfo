@@ -47,6 +47,15 @@
     {% if v.pay_ref %}
     <div class="kv"><span>Pay by 付款方式</span><b class="mono">{{ v.pay_ref }}</b></div>
     <div style="color:var(--muted);font-size:12px">Paid with the bill's own JomPAY / account reference, not a transfer to the supplier's account.</div>
+    {% if user.role in ('admin', 'manager') and v.status != 'Paid' %}
+    <details style="margin-top:8px"><summary style="font-size:12px;cursor:pointer">Edit payment details 修改付款资料</summary>
+      <form method="post" action="/vouchers/{{ v.id }}/pay-ref" style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">
+        <input name="pay_ref" value="{{ v.pay_ref }}" class="mono" style="flex:1;min-width:260px">
+        <button class="small">Save &amp; re-issue PDFs</button>
+      </form>
+      <div style="color:var(--muted);font-size:11px;margin-top:4px">Keep the format: JomPAY · Biller 5454 · Ref-1 210496583000</div>
+    </details>
+    {% endif %}
     {% elif supplier %}
     <div class="kv"><span>Supplier</span><b><a href="/suppliers/{{ supplier.id }}">{{ supplier.name }}</a></b></div>
     <div class="kv"><span>Bank 银行</span><b>{{ supplier.bank_name or '—' }}</b></div>

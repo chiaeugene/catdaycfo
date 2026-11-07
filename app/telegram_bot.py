@@ -371,6 +371,10 @@ def handle_update(update: dict, db: Session):
         if text.lower().startswith(("/template", "/report", "/daily")):
             tg_send(chat_id, DAILY_TEMPLATE)   # answer this one even in a group
             return
+        if text.lower().startswith("/listing"):
+            from . import bills
+            bills.repost_listing(db, chat_id, text, from_name)
+            return
         if text.lower().startswith("/bills"):
             from . import bills
             bills.repost_open_bills(db, chat_id)

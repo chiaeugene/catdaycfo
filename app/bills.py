@@ -160,6 +160,8 @@ def summary_text(doc, db: Session | None = None) -> str:
         late = (date.today() - due).days
         lines.append(f"⏰ Due 到期: {due:%d/%m/%Y}" + (f"  ⚠️ *OVERDUE {late} days 已逾期*" if late > 0 else ""))
     if not nothing_to_pay(doc, pl):
+        if ref and db is not None:
+            ref = resolve_ref(db, doc.supplier, ref)
         lines.append(f"💳 Pay by 付款: {_md(ref)}" if ref
                      else "💳 Pay by 付款: bank transfer to the supplier's account on file")
     if doc.category:
@@ -225,6 +227,7 @@ def verify_bill(db: Session, doc, who: str) -> tuple[bool, str]:
                       status="Categorized" if category else "Unsorted",
                       notes=f"from {doc.doc_no} ({doc.sender}) · verified in Telegram by {who}")
         apply_bill_fields(p, pl)
+        p.pay_ref = resolve_ref(db, doc.supplier, p.pay_ref)
         db.add(p)
         db.flush()
         return p
@@ -483,7 +486,10 @@ def submit_listing(db: Session, pl, who: str) -> tuple[bool, str, str]:
 
 
 def listing_text(pl) -> str:
-    lines = [f"📤 *{pl.pl_no} submitted for approval* 已提交审批", ""]
+    head = {"Draft": f"📋 *{pl.pl_no} — still open (draft)* 未提交",
+            "Processed": f"✅ *{pl.pl_no} — processed (paid)* 已付款"}.get(
+        pl.status, f"📤 *{pl.pl_no} submitted for approval* 已提交审批")
+    lines = [head, ""]
     for v in sorted(pl.vouchers, key=lambda v: v.pv_no):
         due = [p.due_date for p in v.payments if p.due_date]
         lines.append(f"• {v.pv_no} {_md(v.payee)} — *RM {v.total:,.2f}*"
@@ -558,10 +564,62 @@ def _submit(db: Session, data: str, cq_id: str, who: str, chat_id, message_id):
         tg_edit_buttons(chat_id, message_id, listing_buttons(pl))
     if not chat_id:
         return
-    tg_send(chat_id, listing_text(pl) + f"\n📤 Closed & submitted by {_md(who)}"
-            "\n🔒 No more bills go on this listing — the next PV starts a new one."
-            "\n💸 Mark it paid in the system once the bank run is done."
-            "\n\nApprover link (valid 14 days) 审批链接：",
+    send_listing(db, pl, chat_id, url,
+                 f"\n📤 Closed & submitted by {_md(who)}"
+                 "\n🔒 No more bills go on this listing — the next PV starts a new one."
+                 "\n💸 Mark it paid in the system once the bank run is done.")
+
+
+# ───────────────────────── masked account numbers ─────────────────────────
+def resolve_ref(db: Session, supplier: str, pay_ref: str) -> str:
+    """Bills print the account number partly masked (TNB: 2104965830XX). If we
+    already know the full number for this supplier — from the supplier record
+    or an earlier voucher — put it back; otherwise leave it as printed."""
+    import re
+    m = re.search(r"Ref-1 (\S+)", pay_ref or "")
+    if not m or not re.search(r"[Xx*]", m.group(1)):
+        return pay_ref
+    masked = m.group(1)
+    known = re.match(r"[0-9]+", masked)
+    prefix = known.group(0) if known else ""
+    texts = []
+    for s in db.query(M.Supplier).all():
+        if _same_supplier(s.name, supplier):
+            texts += [s.bank_name or "", s.account_no or "", s.notes or ""]
+    for v in db.query(M.Voucher).all():
+        if _same_supplier(v.payee, supplier):
+            texts.append(v.pay_ref or "")
+    for p in db.query(M.Payment).filter(M.Payment.pay_ref != "").all():
+        if _same_supplier(p.supplier, supplier):
+            texts.append(p.pay_ref or "")
+    for t in texts:
+        for digits in re.findall(r"[0-9]{6,}", t):
+            if len(digits) == len(masked) and prefix and digits.startswith(prefix):
+                return pay_ref.replace(f"Ref-1 {masked}", f"Ref-1 {digits}")
+    return pay_ref
+
+
+# ───────────────────────── /listing PL-xxxx: post again ─────────────────────────
+def live_link(db: Session, pl, who: str) -> str:
+    """The listing's current approver link; a new one only if none is live."""
+    import secrets
+    from datetime import timedelta
+    from .telegram_bot import BASE_URL
+    from .main import SHARE_DEFAULT_DAYS
+    sh = next((s for s in sorted(pl.shares, key=lambda s: s.id, reverse=True) if s.live), None)
+    if not sh:
+        sh = M.ListingShare(listing_id=pl.id, token=secrets.token_urlsafe(24),
+                            created_by=f"{who} {TAG}",
+                            expires_at=datetime.utcnow() + timedelta(days=SHARE_DEFAULT_DAYS))
+        db.add(sh)
+        db.commit()
+    return f"{BASE_URL}/approve/{sh.token}"
+
+
+def send_listing(db: Session, pl, chat_id, url: str, note: str) -> None:
+    import os
+    from .telegram_bot import tg_send, tg_send_document, UPLOAD_DIR
+    tg_send(chat_id, listing_text(pl) + note + "\n\nApprover link (valid 14 days) 审批链接：",
             buttons=[[{"text": "✅ Open for approval 打开审批", "url": url}]])
     tg_send(chat_id, f"`{url}`")   # tap-to-copy; code format keeps _ in the token safe
     try:
@@ -571,3 +629,18 @@ def _submit(db: Session, data: str, cq_id: str, who: str, chat_id, message_id):
     if rel:
         tg_send_document(chat_id, os.path.join(UPLOAD_DIR, rel), f"{pl.pl_no}.pdf",
                          f"{pl.pl_no} — listing + {len(pl.vouchers)} voucher(s)")
+
+
+def repost_listing(db: Session, chat_id, text: str, who: str) -> None:
+    import re
+    from .telegram_bot import tg_send
+    m = re.search(r"PL-\d{4}-\d{3}", text.upper())
+    if not m:
+        tg_send(chat_id, "Which listing? e.g. `/listing PL-2611-004`")
+        return
+    pl = db.query(M.Listing).filter(M.Listing.pl_no == m.group(0)).first()
+    if not pl:
+        tg_send(chat_id, f"{m.group(0)} not found.")
+        return
+    send_listing(db, pl, chat_id, live_link(db, pl, who),
+                 f"\n🔁 Re-sent ({pl.status}) — this is the current version.")

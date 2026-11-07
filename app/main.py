@@ -1261,28 +1261,35 @@ async def create_voucher(request: Request, db: Session = Depends(get_db)):
     return RedirectResponse("/vouchers", status_code=302)
 
 
-def issue_voucher(db: Session, pays: list, payee: str, created_by: str) -> M.Voucher:
-    """One voucher for one payee's payments, PDF included. Shared by the web
-    form and the Telegram 'Raise PV' button so both produce the same voucher.
-    Caller commits."""
-    pv_no = telegram_bot.next_counter(db, "PV", "PV-")
+def _voucher_pdf(db: Session, pv_no: str, payee: str, pays: list, pay_ref: str) -> str:
+    """Render a voucher PDF from its payments. Used when a voucher is issued
+    and again whenever its payment details are corrected."""
     total = round(sum(p.amount for p in pays), 2)
     items = [{"date": f"{p.date:%d/%m/%y}", "description": p.description, "amount": p.amount,
               "invoice_no": p.invoice_no,
               "doc_url": f"{BASE_URL}/files/{p.documents[0].file_path}" if p.documents else ""}
              for p in pays]
     settings = {s.key: s.value for s in db.query(M.Setting).all()}
-    # A bill paid by JomPAY / virtual account carries its own instruction;
-    # otherwise the voucher pays the supplier's bank account on file.
-    pay_ref = " | ".join(dict.fromkeys(p.pay_ref for p in pays if p.pay_ref))
     sup = find_supplier(db, payee)
     bank = ({"bank_name": sup.bank_name, "account_no": sup.account_no,
              "account_holder": sup.account_holder} if sup else None)
-    rel = pdfgen.voucher_pdf(pv_no, payee, items, total,
-                             company=settings.get("COMPANY_NAME", "CATDAY SDN BHD"),
-                             address=settings.get("COMPANY_ADDRESS", "Uptown PJ"),
-                             reg_no=settings.get("COMPANY_ROC", ""),
-                             bank=None if pay_ref else bank, pay_ref=pay_ref)
+    return pdfgen.voucher_pdf(pv_no, payee, items, total,
+                              company=settings.get("COMPANY_NAME", "CATDAY SDN BHD"),
+                              address=settings.get("COMPANY_ADDRESS", "Uptown PJ"),
+                              reg_no=settings.get("COMPANY_ROC", ""),
+                              bank=None if pay_ref else bank, pay_ref=pay_ref)
+
+
+def issue_voucher(db: Session, pays: list, payee: str, created_by: str) -> M.Voucher:
+    """One voucher for one payee's payments, PDF included. Shared by the web
+    form and the Telegram 'Raise PV' button so both produce the same voucher.
+    Caller commits."""
+    pv_no = telegram_bot.next_counter(db, "PV", "PV-")
+    total = round(sum(p.amount for p in pays), 2)
+    # A bill paid by JomPAY / virtual account carries its own instruction;
+    # otherwise the voucher pays the supplier's bank account on file.
+    pay_ref = " | ".join(dict.fromkeys(p.pay_ref for p in pays if p.pay_ref))
+    rel = _voucher_pdf(db, pv_no, payee, pays, pay_ref)
     pv = M.Voucher(pv_no=pv_no, payee=payee, total=total, pdf_path=rel,
                    created_by=created_by, pay_ref=pay_ref)
     db.add(pv)
@@ -1291,6 +1298,38 @@ def issue_voucher(db: Session, pays: list, payee: str, created_by: str) -> M.Vou
         p.voucher_id = pv.id
         p.status = "On Voucher"
     return pv
+
+
+@app.post("/vouchers/{vid}/pay-ref")
+def voucher_pay_ref(vid: int, request: Request, pay_ref: str = Form(""),
+                    db: Session = Depends(get_db)):
+    """Correct how a voucher is paid (e.g. a JomPAY Ref-1 printed masked on the
+    bill). Updates the voucher and its payments, then re-issues the voucher PDF
+    and its listing's PDF so nothing printed disagrees with the record."""
+    user = current_user(request, db)
+    if not user or user.role not in ("admin", "manager"):
+        return RedirectResponse("/", status_code=302)
+    v = db.get(M.Voucher, vid)
+    if not v:
+        return RedirectResponse("/vouchers", status_code=303)
+    if v.status == "Paid":
+        request.session["flash_del"] = f"{v.pv_no} is already paid — payment details can't change."
+        return RedirectResponse(f"/vouchers/{vid}", status_code=303)
+    new = " ".join(pay_ref.split())
+    old = v.pay_ref
+    v.pay_ref = new
+    for p in v.payments:
+        p.pay_ref = new
+    v.pdf_path = _voucher_pdf(db, v.pv_no, v.payee, list(v.payments), new)
+    if v.listing:
+        _refresh_listing(db, v.listing)
+    db.commit()
+    audit.log_action(db, user, f"{v.pv_no} payment details: '{old}' → '{new}'",
+                     path=f"/vouchers/{vid}/pay-ref")
+    request.session["flash_del"] = (f"{v.pv_no} payment details updated; voucher PDF"
+                                    + (f" and {v.listing.pl_no} PDF" if v.listing else "")
+                                    + " re-issued.")
+    return RedirectResponse(f"/vouchers/{vid}", status_code=303)
 
 
 @app.post("/vouchers/{vid}/action")
