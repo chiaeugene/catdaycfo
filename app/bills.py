@@ -508,26 +508,6 @@ def _listing_from(db: Session, data: str):
         return None
 
 
-def listing_pack(pl) -> str:
-    """One PDF for the approver: the listing page, then every voucher on it.
-    Returns the path relative to UPLOAD_DIR ("" if nothing to merge)."""
-    import os
-    from pypdf import PdfWriter
-    from .telegram_bot import UPLOAD_DIR
-    parts = [pl.pdf_path] + [v.pdf_path for v in sorted(pl.vouchers, key=lambda v: v.pv_no)]
-    parts = [p for p in parts if p and os.path.exists(os.path.join(UPLOAD_DIR, p))]
-    if not parts:
-        return ""
-    w = PdfWriter()
-    for p in parts:
-        w.append(os.path.join(UPLOAD_DIR, p))
-    rel = f"listings/{date.today():%Y-%m}/{pl.pl_no}_pack.pdf"
-    os.makedirs(os.path.dirname(os.path.join(UPLOAD_DIR, rel)), exist_ok=True)
-    with open(os.path.join(UPLOAD_DIR, rel), "wb") as f:
-        w.write(f)
-    return rel
-
-
 def _submit(db: Session, data: str, cq_id: str, who: str, chat_id, message_id):
     """bill:sub  → ask to confirm (closing a listing is a deliberate act)
        bill:subno → put the buttons back
@@ -622,13 +602,9 @@ def send_listing(db: Session, pl, chat_id, url: str, note: str) -> None:
     tg_send(chat_id, listing_text(pl) + note + "\n\nApprover link (valid 14 days) 审批链接：",
             buttons=[[{"text": "✅ Open for approval 打开审批", "url": url}]])
     tg_send(chat_id, f"`{url}`")   # tap-to-copy; code format keeps _ in the token safe
-    try:
-        rel = listing_pack(pl)
-    except Exception:
-        rel = pl.pdf_path    # merge failed: at least the listing itself
-    if rel:
-        tg_send_document(chat_id, os.path.join(UPLOAD_DIR, rel), f"{pl.pl_no}.pdf",
-                         f"{pl.pl_no} — listing + {len(pl.vouchers)} voucher(s)")
+    if pl.pdf_path:   # the listing page only; vouchers stay behind the approver link
+        tg_send_document(chat_id, os.path.join(UPLOAD_DIR, pl.pdf_path), f"{pl.pl_no}.pdf",
+                         f"{pl.pl_no} — {len(pl.vouchers)} voucher(s) · RM {pl.total:,.2f}")
 
 
 def repost_listing(db: Session, chat_id, text: str, who: str) -> None:
