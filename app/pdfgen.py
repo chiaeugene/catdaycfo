@@ -575,6 +575,16 @@ def request_pdf(pr_no: str, req: dict, lines: list[dict], total: float,
 
 
 # ═══════════════════════════ PAYMENT LISTING ═══════════════════════════
+def _payee_cell(v: dict) -> str:
+    """Payee on the first line; what the payment is for underneath, small and
+    muted, so the listing explains itself without opening each voucher."""
+    from xml.sax.saxutils import escape
+    out = escape(v["payee"] or "")
+    if v.get("desc"):
+        out += f'<br/><font size="7" color="#7A6A58">{escape(v["desc"])}</font>'
+    return out
+
+
 def listing_pdf(pl_no: str, vouchers: list[dict], total: float,
                 company="CATDAY SDN BHD", address="Uptown PJ", reg_no="") -> str:
     """vouchers: [{pv_no, date, payee, total, bank}] where bank is a
@@ -599,13 +609,13 @@ def listing_pdf(pl_no: str, vouchers: list[dict], total: float,
              Paragraph("AMOUNT (RM)", TH_R)]]
     for i, v in enumerate(vouchers, 1):
         data.append([Paragraph(str(i), BODY), Paragraph(v["pv_no"], BODY),
-                     Paragraph(v["date"], BODY), Paragraph(v["payee"], SMALL),
+                     Paragraph(v["date"], BODY), Paragraph(_payee_cell(v), SMALL),
                      Paragraph(v.get("bank") or "-", SMALL),
                      Paragraph(f"{v['total']:,.2f}", BODY_R)])
     n = len(vouchers)
     data.append(["", "", "", "", Paragraph("GRAND TOTAL", TOT),
                  Paragraph(f"{total:,.2f}", TOT_R)])
-    el.append(_brand_table(data, [13 * mm, 23 * mm, 20 * mm, 43 * mm, 45 * mm, 32 * mm],
+    el.append(_brand_table(data, [10 * mm, 20 * mm, 18 * mm, 57 * mm, 42 * mm, 29 * mm],
                            n, [n + 1]))
 
     el.append(_sig_block(["Prepared By", "Approved By"]))

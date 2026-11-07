@@ -1711,8 +1711,19 @@ def _refresh_listing(db: Session, pl: M.Listing) -> None:
         s = banks.get(payee.strip().lower())
         return f"{s.bank_name} {s.account_no}" if s and (s.bank_name or s.account_no) else ""
 
+    def desc(v):
+        # Each payment's own description (bill no. first if there is one), joined.
+        bits = []
+        for p in v.payments:
+            d = " ".join((p.description or "").split())
+            d = d if len(d) <= 70 else d[:67].rstrip() + "…"
+            line = " · ".join(x for x in (p.invoice_no, d) if x)
+            if line and line not in bits:
+                bits.append(line)
+        return "; ".join(bits)
+
     vdata = [{"pv_no": v.pv_no, "date": f"{v.date:%d/%m/%y}", "payee": v.payee,
-              "total": v.total, "bank": v.pay_ref or bank_line(v.payee)}
+              "total": v.total, "bank": v.pay_ref or bank_line(v.payee), "desc": desc(v)}
              for v in pvs]
     settings = {s.key: s.value for s in db.query(M.Setting).all()}
     pl.pdf_path = pdfgen.listing_pdf(
@@ -1794,6 +1805,21 @@ def listing_remove(lid: int, vid: int, request: Request, db: Session = Depends(g
     return RedirectResponse("/listings", status_code=303)
 
 
+@app.get("/listings/{lid}/pdf")
+def listing_pdf_fresh(lid: int, request: Request, db: Session = Depends(get_db)):
+    """The listing PDF, re-issued on every open so it never lags the listing
+    (or a change to how listings print)."""
+    if not current_user(request, db):
+        return RedirectResponse("/login", status_code=302)
+    pl = db.get(M.Listing, lid)
+    if not pl:
+        raise HTTPException(404)
+    _refresh_listing(db, pl)
+    db.commit()
+    full = os.path.join(UPLOAD_DIR, pl.pdf_path)
+    return FileResponse(full, filename=f"{pl.pl_no}.pdf", content_disposition_type="inline")
+
+
 @app.get("/listings/{lid}/pack")
 def listing_pack_pdf(lid: int, request: Request, db: Session = Depends(get_db)):
     """One PDF: the listing page, then every payment voucher on it (PV order),
@@ -1804,6 +1830,8 @@ def listing_pack_pdf(lid: int, request: Request, db: Session = Depends(get_db)):
     if not pl:
         raise HTTPException(404)
     from pypdf import PdfWriter
+    _refresh_listing(db, pl)      # always the listing as it stands now
+    db.commit()
     parts = [pl.pdf_path] + [v.pdf_path for v in sorted(pl.vouchers, key=lambda v: v.pv_no)]
     parts = [os.path.join(UPLOAD_DIR, p) for p in parts if p]
     parts = [p for p in parts if os.path.exists(p)]

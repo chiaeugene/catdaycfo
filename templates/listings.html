@@ -30,7 +30,7 @@
     <td>{{ l.date.strftime('%d/%m/%y') }}</td>
     <td class="num" style="font-weight:700">{{ l.total|rm }}</td>
     <td><span class="badge {{ l.status|lower }}">{{ l.status }}</span></td>
-    <td><a class="docchip" href="/files/{{ l.pdf_path }}" target="_blank">{{ icon('file', 12) }} Listing PDF</a>
+    <td><a class="docchip" href="/listings/{{ l.id }}/pdf" target="_blank">{{ icon('file', 12) }} Listing PDF</a>
       <a class="docchip" href="/listings/{{ l.id }}/pack" target="_blank" title="Listing page followed by every payment voucher on it">{{ icon('file', 12) }} + PVs</a></td>
     <td>{{ l.prepared_by }}</td>
     <td>
