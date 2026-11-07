@@ -116,6 +116,17 @@ def tg_edit(chat_id, message_id, text: str, buttons=None):
     httpx.post(f"https://api.telegram.org/bot{token}/editMessageText", json=payload, timeout=30)
 
 
+def tg_send_document(chat_id, path: str, filename: str, caption: str = ""):
+    """Post a file (e.g. a listing PDF pack) into the chat."""
+    token = bot_token()
+    if not token or not os.path.exists(path):
+        return
+    with open(path, "rb") as f:
+        httpx.post(f"https://api.telegram.org/bot{token}/sendDocument",
+                   data={"chat_id": str(chat_id), "caption": caption[:1000]},
+                   files={"document": (filename, f, "application/pdf")}, timeout=60)
+
+
 def tg_edit_buttons(chat_id, message_id, buttons=None):
     """Change only the buttons under a message, leaving its text as it is."""
     token = bot_token()

@@ -333,11 +333,8 @@ def handle_callback(db: Session, data: str, cq_id: str, frm: dict, chat_id, mess
     user = db.query(M.User).filter(M.User.telegram_id == from_id).first()
     who = (user.display_name if user else
            " ".join(filter(None, [frm.get("first_name"), frm.get("last_name")])) or from_id)
-    if data.startswith("bill:sub:"):
+    if data.startswith(("bill:sub:", "bill:subok:", "bill:subno:")):
         _submit(db, data, cq_id, who, chat_id, message_id)
-        return
-    if data.startswith("bill:paid:"):
-        _paid(db, data, cq_id, user, chat_id, message_id, from_id)
         return
     try:
         _, action, did = data.split(":", 2)
@@ -456,7 +453,7 @@ def listing_buttons(pl):
     from .telegram_bot import BASE_URL
     rows = []
     if pl.status == "Draft":
-        rows.append([{"text": f"📤 Submit {pl.pl_no} for approval 提交审批",
+        rows.append([{"text": f"📤 Close & submit {pl.pl_no} — no more bills 结单提交",
                       "callback_data": f"bill:sub:{pl.id}"}])
     rows.append([{"text": f"🔗 Open {pl.pl_no}", "url": f"{BASE_URL}/listings"}])
     return rows
@@ -498,83 +495,79 @@ def listing_text(pl) -> str:
     return "\n".join(lines)
 
 
+def _listing_from(db: Session, data: str):
+    try:
+        return db.get(M.Listing, int(data.rsplit(":", 1)[1]))
+    except ValueError:
+        return None
+
+
+def listing_pack(pl) -> str:
+    """One PDF for the approver: the listing page, then every voucher on it.
+    Returns the path relative to UPLOAD_DIR ("" if nothing to merge)."""
+    import os
+    from pypdf import PdfWriter
+    from .telegram_bot import UPLOAD_DIR
+    parts = [pl.pdf_path] + [v.pdf_path for v in sorted(pl.vouchers, key=lambda v: v.pv_no)]
+    parts = [p for p in parts if p and os.path.exists(os.path.join(UPLOAD_DIR, p))]
+    if not parts:
+        return ""
+    w = PdfWriter()
+    for p in parts:
+        w.append(os.path.join(UPLOAD_DIR, p))
+    rel = f"listings/{date.today():%Y-%m}/{pl.pl_no}_pack.pdf"
+    os.makedirs(os.path.dirname(os.path.join(UPLOAD_DIR, rel)), exist_ok=True)
+    with open(os.path.join(UPLOAD_DIR, rel), "wb") as f:
+        w.write(f)
+    return rel
+
+
 def _submit(db: Session, data: str, cq_id: str, who: str, chat_id, message_id):
-    from .telegram_bot import tg_answer_callback, tg_edit_buttons, tg_send
-    try:
-        pl = db.get(M.Listing, int(data.rsplit(":", 1)[1]))
-    except ValueError:
-        pl = None
+    """bill:sub  → ask to confirm (closing a listing is a deliberate act)
+       bill:subno → put the buttons back
+       bill:subok → close + submit, send summary, approver link and PDF pack."""
+    from .telegram_bot import (tg_answer_callback, tg_edit_buttons, tg_send,
+                               tg_send_document, UPLOAD_DIR)
+    import os
+    pl = _listing_from(db, data)
     if not pl:
         tg_answer_callback(cq_id, "That listing no longer exists", alert=True)
         return
-    ok, msg, url = submit_listing(db, pl, who)
-    tg_answer_callback(cq_id, "📤 Submitted" if ok else msg, alert=not ok)
-    if not ok:
+    step = data.split(":")[1]
+    if step == "sub":
+        if pl.status != "Draft":
+            tg_answer_callback(cq_id, f"{pl.pl_no} is already {pl.status.lower()}", alert=True)
+            return
+        n = len(pl.vouchers)
+        tg_answer_callback(cq_id)
+        tg_edit_buttons(chat_id, message_id, [
+            [{"text": f"✅ Yes — close {pl.pl_no} ({n} PV, RM {pl.total:,.2f})",
+              "callback_data": f"bill:subok:{pl.id}"}],
+            [{"text": "✖ Cancel 取消", "callback_data": f"bill:subno:{pl.id}"}]])
         return
-    if chat_id and message_id:   # drop the Submit button from the message tapped
+    if step == "subno":
+        tg_answer_callback(cq_id, "Not submitted — still open")
         tg_edit_buttons(chat_id, message_id, listing_buttons(pl))
-    if chat_id:
-        tg_send(chat_id, listing_text(pl) + f"\n📤 by {_md(who)}"
-                "\n\nApprover link (forward to the approver, valid 14 days) 审批链接：",
-                buttons=[[{"text": "✅ Open for approval 打开审批", "url": url}],
-                         [{"text": f"💸 Paid — mark {pl.pl_no} processed 已付款",
-                           "callback_data": f"bill:paid:{pl.id}"}]])
-        tg_send(chat_id, f"`{url}`")   # tap-to-copy; code format keeps _ in the token safe
-
-
-# ───────────────────────── Paid / Processed from Telegram ─────────────────────────
-def pay_listing(db: Session, pl, user) -> tuple[bool, str]:
-    """The bank run has gone out: every voucher on the listing → Paid (that is
-    what posts Dr Accounts Payable / Cr Bank), and the listing → Processed.
-    All or nothing — one blocked voucher stops the lot, so the books never
-    show a listing half paid. Same approval-limit rule as the web."""
-    from .main import _approval_limit
-    from . import ledger
-    if pl.status == "Processed":
-        return False, f"{pl.pl_no} is already processed"
-    if pl.status != "Submitted":
-        return False, f"Submit {pl.pl_no} first"
-    vs = [v for v in pl.vouchers if v.status not in ("Paid", "Void")]
-    limit = _approval_limit(db)
-    me = user.display_name.strip()
-    for v in vs:
-        if limit >= 0 and v.total >= limit and v.status != "Approved" \
-                and (v.created_by or "").replace(TAG, "").strip() == me:
-            return False, (f"{v.pv_no} RM {v.total:,.2f} is at or above the RM {limit:,.2f} "
-                           f"approval limit and was raised by you — someone else must mark it paid")
-    for v in vs:
-        if limit >= 0 and v.total >= limit and v.status != "Approved":
-            v.status, v.approved_by = "Approved", me
-        v.status = "Paid"
-        for p in v.payments:
-            p.status = "Paid"
-    pl.status = "Processed"
-    db.commit()
-    ledger.sync_ledger(db)
-    return True, f"{pl.pl_no} processed — {len(vs)} voucher{'s' if len(vs) != 1 else ''} paid, RM {pl.total:,.2f}"
-
-
-def _paid(db: Session, data: str, cq_id: str, user, chat_id, message_id, from_id=""):
-    from .telegram_bot import tg_answer_callback, tg_edit_buttons, tg_send, BASE_URL
-    if not user or not user.active or user.role not in ("admin", "manager"):
-        tg_answer_callback(cq_id, "⛔ Only an admin or manager whose Telegram is linked in the "
-                                  "system can mark a listing paid. Your Telegram ID: " + str(from_id) +
-                                  " (add it under Settings → Users).", alert=True)
         return
-    try:
-        pl = db.get(M.Listing, int(data.rsplit(":", 1)[1]))
-    except ValueError:
-        pl = None
-    if not pl:
-        tg_answer_callback(cq_id, "That listing no longer exists", alert=True)
-        return
-    ok, msg = pay_listing(db, pl, user)
-    tg_answer_callback(cq_id, "💸 Marked paid" if ok else msg, alert=not ok)
+
+    ok, msg, url = submit_listing(db, pl, who)
+    tg_answer_callback(cq_id, "📤 Closed & submitted" if ok else msg, alert=not ok)
     if not ok:
         return
     if chat_id and message_id:
-        tg_edit_buttons(chat_id, message_id, [[{"text": f"🔗 Open {pl.pl_no}", "url": f"{BASE_URL}/listings"}]])
-    if chat_id:
-        tg_send(chat_id, f"💸 *{_md(msg)}* 已付款\n✅ by {_md(user.display_name)}\n\n"
-                         "Books updated: each bill moved from owing to paid from the bank. "
-                         "Next bill raised starts a new listing.")
+        tg_edit_buttons(chat_id, message_id, listing_buttons(pl))
+    if not chat_id:
+        return
+    tg_send(chat_id, listing_text(pl) + f"\n📤 Closed & submitted by {_md(who)}"
+            "\n🔒 No more bills go on this listing — the next PV starts a new one."
+            "\n💸 Mark it paid in the system once the bank run is done."
+            "\n\nApprover link (valid 14 days) 审批链接：",
+            buttons=[[{"text": "✅ Open for approval 打开审批", "url": url}]])
+    tg_send(chat_id, f"`{url}`")   # tap-to-copy; code format keeps _ in the token safe
+    try:
+        rel = listing_pack(pl)
+    except Exception:
+        rel = pl.pdf_path    # merge failed: at least the listing itself
+    if rel:
+        tg_send_document(chat_id, os.path.join(UPLOAD_DIR, rel), f"{pl.pl_no}.pdf",
+                         f"{pl.pl_no} — listing + {len(pl.vouchers)} voucher(s)")
