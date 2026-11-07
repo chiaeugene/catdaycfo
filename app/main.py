@@ -126,6 +126,7 @@ NAV_GROUPS = [
         ("payments", "/payments", "card", "Payments", ("admin", "manager", "viewer")),
         ("vouchers", "/vouchers", "receipt", "Vouchers", ("admin", "manager", "viewer")),
         ("listings", "/listings", "list", "Listings", ("admin", "manager", "viewer")),
+        ("pending", "/payments/pending", "clock", "Pending Payments 待付款", ("admin", "manager", "viewer")),
         ("suppliers", "/suppliers", "landmark", "Suppliers", ("admin", "manager", "viewer")),
     ]),
     ("Every month 每月", [
@@ -934,6 +935,93 @@ def new_payment(request: Request, supplier: str = Form(""), description: str = F
     return RedirectResponse("/payments", status_code=302)
 
 
+# ─────────────────── PENDING PAYMENTS (vouchers on a listing, not yet paid) ───────────────────
+# Defined before /payments/{pid} so "pending" is never read as a payment id.
+@app.get("/payments/pending", response_class=HTMLResponse)
+def pending_payments(request: Request, show: str = "", db: Session = Depends(get_db)):
+    """Everything raised for payment and not yet paid, in one place: every
+    voucher on a listing that is not Paid or Void, soonest due first."""
+    if not current_user(request, db):
+        return RedirectResponse("/login", status_code=302)
+    today = date.today()
+    vs = (db.query(M.Voucher).filter(M.Voucher.listing_id.isnot(None),
+                                     M.Voucher.status.notin_(["Paid", "Void"])).all())
+    banks = supplier_map(db, [v.payee for v in vs])
+    limit = _approval_limit(db)
+    rows = []
+    for v in vs:
+        dues = [p.due_date for p in v.payments if p.due_date]
+        due = min(dues) if dues else None
+        days = (due - today).days if due else None
+        s = banks.get((v.payee or "").strip().lower())
+        pay_by = v.pay_ref or (f"{s.bank_name} · {s.account_no}" if s and (s.bank_name or s.account_no) else "")
+        rows.append({"v": v, "pl": v.listing, "due": due, "days": days, "pay_by": pay_by,
+                     "needs_appr": limit >= 0 and v.total >= limit and v.status != "Approved",
+                     "bills": [p.invoice_no for p in v.payments if p.invoice_no]})
+    overdue = [r for r in rows if r["days"] is not None and r["days"] < 0]
+    soon = [r for r in rows if r["days"] is not None and 0 <= r["days"] <= 7]
+    stats = {"total": round(sum(r["v"].total for r in rows), 2), "count": len(rows),
+             "overdue": round(sum(r["v"].total for r in overdue), 2), "overdue_n": len(overdue),
+             "soon": round(sum(r["v"].total for r in soon), 2), "soon_n": len(soon),
+             "listings": len({r["pl"].id for r in rows})}
+    if show == "overdue":
+        rows = overdue
+    elif show == "week":
+        rows = soon
+    elif show in ("Draft", "Submitted", "Processed"):
+        rows = [r for r in rows if r["pl"].status == show]
+    # Group by listing; listings with the most urgent bill first.
+    groups = {}
+    for r in rows:
+        groups.setdefault(r["pl"].id, {"pl": r["pl"], "rows": []})["rows"].append(r)
+    far = date.max
+    for g in groups.values():
+        g["rows"].sort(key=lambda r: (r["due"] or far, r["v"].pv_no))
+        g["total"] = round(sum(r["v"].total for r in g["rows"]), 2)
+        g["first_due"] = g["rows"][0]["due"] or far
+        g["blocked"] = [r["v"].pv_no for r in g["rows"] if r["needs_appr"]]
+    ordered = sorted(groups.values(), key=lambda g: (g["first_due"], g["pl"].pl_no))
+    return render(request, db, "pending.html", "pending", groups=ordered, stats=stats, show=show,
+                  today=today, limit=limit,
+                  flash_paid=request.session.pop("flash_paid", None),
+                  flash_appr=request.session.pop("flash_appr", None))
+
+
+@app.post("/payments/pending/listing/{lid}/paid")
+def pending_listing_paid(lid: int, request: Request, db: Session = Depends(get_db)):
+    """The bank run for this listing went out: every voucher on it → Paid and
+    the listing → Processed. All or nothing, under the same approval rule as a
+    single voucher — anything over the limit must be approved first."""
+    user = current_user(request, db)
+    if not user or user.role not in ("admin", "manager"):
+        return RedirectResponse("/", status_code=302)
+    pl = db.get(M.Listing, lid)
+    back = "/payments/pending"
+    if not pl:
+        return RedirectResponse(back, status_code=303)
+    limit = _approval_limit(db)
+    todo = [v for v in pl.vouchers if v.status not in ("Paid", "Void")]
+    blocked = [v.pv_no for v in todo if limit >= 0 and v.total >= limit and v.status != "Approved"]
+    if blocked:
+        request.session["flash_appr"] = (
+            f"{', '.join(blocked)} {'is' if len(blocked) == 1 else 'are'} at or above the "
+            f"RM {limit:,.2f} approval limit — approve {'it' if len(blocked) == 1 else 'them'} "
+            f"first (a second person, not whoever raised it). Nothing on {pl.pl_no} was changed.")
+        return RedirectResponse(back, status_code=303)
+    amount = round(sum(v.total for v in todo), 2)
+    for v in todo:
+        v.status = "Paid"
+        for p in v.payments:
+            p.status = "Paid"
+    pl.status = "Processed"
+    db.commit()
+    ledger.sync_ledger(db)
+    request.session["flash_paid"] = {
+        "text": f"{pl.pl_no} paid & processed — {len(todo)} voucher{'s' if len(todo) != 1 else ''}",
+        "amount": amount}
+    return RedirectResponse(back, status_code=303)
+
+
 @app.get("/payments/{pid}", response_class=HTMLResponse)
 def payment_detail(pid: int, request: Request, db: Session = Depends(get_db)):
     """One payment, everything attached to it — so every report can deep-link here."""
@@ -1334,10 +1422,12 @@ def voucher_pay_ref(vid: int, request: Request, pay_ref: str = Form(""),
 
 @app.post("/vouchers/{vid}/action")
 def voucher_action(vid: int, request: Request, action: str = Form(...),
-                   db: Session = Depends(get_db)):
+                   next: str = Form(""), db: Session = Depends(get_db)):
     user = current_user(request, db)
     if not user or user.role not in ("admin", "manager"):
         return RedirectResponse("/", status_code=302)
+    # Pending Payments posts here too and wants to come back to itself.
+    dest = next if next.startswith("/payments/pending") else "/vouchers"
     v = db.get(M.Voucher, vid)
     if v:
         limit = _approval_limit(db)
@@ -1345,12 +1435,12 @@ def voucher_action(vid: int, request: Request, action: str = Form(...),
         if action == "approve" and v.status == "Draft":
             # Segregation of duties: whoever raised the voucher can't also be the
             # one who approves it once real money is involved.
-            if needs_approval and (v.created_by or "").strip() == user.display_name.strip():
+            if needs_approval and (v.created_by or "").replace("(Telegram)", "").strip() == user.display_name.strip():
                 request.session["flash_appr"] = (
                     f"{v.pv_no} is RM {v.total:,.2f}, at or above the RM {limit:,.2f} "
                     "approval limit — it needs a second person to approve it, not the "
                     "person who created it.")
-                return RedirectResponse("/vouchers", status_code=303)
+                return RedirectResponse(dest, status_code=303)
             v.status, v.approved_by = "Approved", user.display_name
         elif action == "paid" and v.status in ("Draft", "Approved"):
             # Paying straight from Draft used to be allowed at any amount, so
@@ -1359,10 +1449,12 @@ def voucher_action(vid: int, request: Request, action: str = Form(...),
                 request.session["flash_appr"] = (
                     f"{v.pv_no} is RM {v.total:,.2f}, at or above the RM {limit:,.2f} "
                     "approval limit — it must be approved before it can be marked paid.")
-                return RedirectResponse("/vouchers", status_code=303)
+                return RedirectResponse(dest, status_code=303)
             v.status = "Paid"
             for p in v.payments:
                 p.status = "Paid"
+            request.session["flash_paid"] = {"text": f"{v.pv_no} {v.payee} marked paid",
+                                             "amount": round(v.total, 2)}
         elif action == "void" and v.status != "Paid":
             v.status = "Void"
             for p in v.payments:
@@ -1371,7 +1463,7 @@ def voucher_action(vid: int, request: Request, action: str = Form(...),
         # Derive immediately so the books match the screen the moment the status
         # changes, rather than whenever an accounting page next happens to sync.
         ledger.sync_ledger(db)
-    return RedirectResponse("/vouchers", status_code=302)
+    return RedirectResponse(dest, status_code=303 if dest != "/vouchers" else 302)
 
 
 

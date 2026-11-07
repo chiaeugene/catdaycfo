@@ -1,0 +1,227 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block content %}
+<style>
+  /* Pending Payments — premium-motion rules 1, 3, 5, 6. Only transform/opacity animate. */
+  .pp-cards .card .value { display: flex; align-items: baseline; gap: 2px; white-space: nowrap; }
+  .pp-label { flex-wrap: wrap; }
+  @media (max-width: 640px) {
+    .pp-cards { grid-template-columns: 1fr 1fr; }
+    .pp-cards > :first-child { grid-column: 1 / -1; }
+    .pp-cards .card .value { font-size: 22px; }
+  }
+  .pp-cards .card .cur { opacity: .45; font-size: .62em; margin-right: 3px; font-weight: 700; }
+  .pp-cards .card.red .value { color: var(--red); }
+  .pp-cards .card.amber .value { color: var(--amber); }
+  .pp-label { display: flex; align-items: center; gap: 8px; }
+  .chip { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 100px; border: 1px solid currentColor;
+          color: var(--red); opacity: 0; transform: translateY(2px);
+          transition: opacity 300ms var(--ease-out), transform 300ms var(--ease-out); font-variant-numeric: tabular-nums; }
+  .chip.on { opacity: 1; transform: none; }
+  /* rule 3: each digit is a 0–9 strip clipped to one line */
+  .roll-d { display: inline-block; height: 1em; overflow: hidden; line-height: 1; vertical-align: -0.08em; }
+  .roll-d > span { display: flex; flex-direction: column; transition: transform 600ms var(--ease-spring); }
+  .roll-d > span > span { height: 1em; line-height: 1; }
+  .roll-s { opacity: .55; }
+
+  .pl-group { margin-bottom: 16px; }
+  .pl-group > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+                        padding: 14px 18px; border-radius: var(--r-md); background: var(--card); border: 1px solid var(--hairline);
+                        box-shadow: var(--shadow-sm); transition: transform 320ms var(--ease-bounce); }
+  .pl-group > summary::-webkit-details-marker { display: none; }
+  .pl-group > summary:active { transform: scale(.98); transition-duration: 90ms; transition-timing-function: var(--ease-out); }
+  .pl-group[open] > summary { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+  .pl-group .caret { transition: transform 350ms var(--ease-out); opacity: .5; }
+  .pl-group[open] .caret { transform: rotate(90deg); }
+  .pl-no { font-weight: 800; font-size: 15px; font-variant-numeric: tabular-nums; }
+  .pl-meta { color: var(--muted); font-size: 12px; }
+  .pl-total { margin-left: auto; font-weight: 800; font-variant-numeric: tabular-nums; }
+  /* rule 5: fast, then slow — the body arrives from just under its header */
+  .pl-body { border: 1px solid var(--hairline); border-top: none; border-radius: 0 0 var(--r-md) var(--r-md);
+             background: var(--card); overflow-x: auto; }
+  .pl-group[open] .pl-body { animation: pp-open 350ms var(--ease-out) both; }
+  @keyframes pp-open { from { opacity: 0; transform: translateY(-6px) scale(.995); } to { opacity: 1; transform: none; } }
+  .pl-body table { margin: 0; }
+  .pl-actions { display: flex; gap: 8px; align-items: center; justify-content: flex-end; padding: 12px 16px; border-top: 1px solid var(--hairline); flex-wrap: wrap; }
+  .due { font-size: 12px; font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .due.late { color: var(--red); } .due.soon { color: var(--amber); } .due.ok { color: var(--muted); font-weight: 600; }
+  .payby { font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; font-size: 11.5px; letter-spacing: .2px; color: var(--ink-2); }
+  .payby.none { color: var(--red); font-family: inherit; }
+  .rowbtns { display: flex; gap: 6px; justify-content: flex-end; }
+  .rowbtns form { margin: 0; }
+
+  /* rule 6: draw the win — ring clockwise from the top, then the tick */
+  .win { position: fixed; right: 20px; bottom: 20px; z-index: 60; display: flex; align-items: center; gap: 12px;
+         background: var(--card); color: var(--ink); border: 1px solid var(--hairline); box-shadow: var(--shadow-md);
+         border-radius: 14px; padding: 12px 18px 12px 12px; font-weight: 700; font-size: 13px;
+         animation: win-in 350ms var(--ease-out) both, win-out 200ms var(--ease-in) 3.6s forwards; }
+  .win svg { width: 40px; height: 40px; color: var(--green); filter: drop-shadow(0 0 6px var(--green-bg)); }
+  .win .ring { stroke-dasharray: 1; stroke-dashoffset: 1; transform: rotate(-90deg); transform-origin: 26px 26px;
+               animation: draw 280ms var(--ease-draw) forwards; }
+  .win .tick { stroke-dasharray: 1; stroke-dashoffset: 1; animation: draw 190ms var(--ease-draw) 280ms forwards; }
+  @keyframes draw { to { stroke-dashoffset: 0; } }
+  @keyframes win-in { from { opacity: 0; transform: translateY(8px) scale(.97); } to { opacity: 1; transform: none; } }
+  @keyframes win-out { to { opacity: 0; transform: translateY(6px); } }
+
+  @media (prefers-reduced-motion: reduce) {
+    .roll-d > span, .chip, .pl-group .caret, .pl-group > summary { transition: none; }
+    .pl-group[open] .pl-body { animation: none; }
+    .win { animation: win-out 200ms linear 3.6s forwards; }
+    .win .ring, .win .tick { animation: none; stroke-dashoffset: 0; }
+  }
+</style>
+
+<div class="pagehead">
+  <h1>Pending Payments 待付款</h1>
+  <div class="actions"><a class="btn secondary" href="/listings">{{ icon('list', 14) }} Listings</a></div>
+</div>
+<div class="sub">Every voucher on a payment listing that hasn't been paid yet, soonest due first.
+  Mark it paid here once the money has gone out — that is what moves it out of “owing” in the books.
+  <span class="muted">所有已列入付款清单但尚未付款的凭单。付款后在此标记。</span></div>
+
+{% if flash_appr %}
+<div class="panel" style="background:var(--amber-bg);border-color:var(--amber)">
+  <div style="font-size:12.5px;color:var(--amber);font-weight:700">🔒 {{ flash_appr }}</div>
+</div>
+{% endif %}
+
+<div class="cards pp-cards">
+  <div class="card">
+    <div class="label pp-label">To pay 待付总额
+      {% if flash_paid %}<span class="chip" id="pp-chip">−RM {{ '{:,.2f}'.format(flash_paid.amount) }}</span>{% endif %}</div>
+    <div class="value"><span class="cur">RM</span><span class="roll" data-value="{{ '%.2f'|format(stats.total) }}"
+      {% if flash_paid %}data-from="{{ '%.2f'|format(stats.total + flash_paid.amount) }}"{% endif %}></span></div>
+    <div class="hint">{{ stats.count }} voucher{{ 's' if stats.count != 1 }} · {{ stats.listings }} listing{{ 's' if stats.listings != 1 }}</div>
+  </div>
+  <a class="card {{ 'red' if stats.overdue_n else '' }}" href="/payments/pending?show=overdue">
+    <div class="label">Overdue 已逾期</div>
+    <div class="value"><span class="cur">RM</span><span class="roll" data-value="{{ '%.2f'|format(stats.overdue) }}"></span></div>
+    <div class="hint">{{ stats.overdue_n }} bill{{ 's' if stats.overdue_n != 1 }} past due date</div>
+  </a>
+  <a class="card {{ 'amber' if stats.soon_n else '' }}" href="/payments/pending?show=week">
+    <div class="label">Due in 7 days 7天内到期</div>
+    <div class="value"><span class="cur">RM</span><span class="roll" data-value="{{ '%.2f'|format(stats.soon) }}"></span></div>
+    <div class="hint">{{ stats.soon_n }} bill{{ 's' if stats.soon_n != 1 }}</div>
+  </a>
+</div>
+
+<div class="filters">
+  <a href="/payments/pending" class="{% if not show %}on{% endif %}">All</a>
+  <a href="/payments/pending?show=overdue" class="{% if show == 'overdue' %}on{% endif %}">Overdue</a>
+  <a href="/payments/pending?show=week" class="{% if show == 'week' %}on{% endif %}">Due in 7 days</a>
+  <a href="/payments/pending?show=Submitted" class="{% if show == 'Submitted' %}on{% endif %}">Submitted listings</a>
+  <a href="/payments/pending?show=Draft" class="{% if show == 'Draft' %}on{% endif %}">Draft listings</a>
+</div>
+
+{% for g in groups %}
+{% set pl = g.pl %}
+<details class="pl-group" open>
+  <summary>
+    <span class="caret">{{ icon('play', 10) }}</span>
+    <span class="pl-no">{{ pl.pl_no }}</span>
+    <span class="badge {{ pl.status|lower }}">{{ pl.status }}</span>
+    <span class="pl-meta">{{ pl.date.strftime('%d/%m/%y') }} · {{ pl.prepared_by }} · {{ g.rows|length }} unpaid</span>
+    <span class="pl-total">RM {{ g.total|rm }}</span>
+  </summary>
+  <div class="pl-body">
+    <table>
+      <tr><th>Due 到期</th><th>PV</th><th>Payee 收款方</th><th>Pay by 付款方式</th><th>Bill no.</th><th class="num">RM</th><th></th></tr>
+      {% for r in g.rows %}{% set v = r.v %}
+      <tr>
+        <td>{% if r.due %}
+          <span class="due {{ 'late' if r.days < 0 else 'soon' if r.days <= 7 else 'ok' }}">
+            {{ r.due.strftime('%d/%m/%y') }}<br>
+            {% if r.days < 0 %}{{ -r.days }}d overdue{% elif r.days == 0 %}today{% else %}in {{ r.days }}d{% endif %}</span>
+          {% else %}<span class="due ok">—</span>{% endif %}</td>
+        <td style="white-space:nowrap"><a class="mono" href="/vouchers/{{ v.id }}">{{ v.pv_no }}</a>
+          {% if v.status == 'Approved' %}<div class="muted" style="font-size:11px">approved{% if v.approved_by %} · {{ v.approved_by }}{% endif %}</div>{% endif %}</td>
+        <td>{{ v.payee }}</td>
+        <td>{% if r.pay_by %}<span class="payby">{{ r.pay_by }}</span>
+          {% else %}<span class="payby none">No bank details — <a href="/suppliers">add</a></span>{% endif %}</td>
+        <td class="mono" style="font-size:11.5px">{{ r.bills|join(', ') or '—' }}</td>
+        <td class="num"><b>{{ v.total|rm }}</b></td>
+        <td>{% if user.role in ('admin', 'manager') %}<div class="rowbtns">
+          {% if r.needs_appr and v.status == 'Draft' %}
+          <form method="post" action="/vouchers/{{ v.id }}/action">
+            <input type="hidden" name="action" value="approve"><input type="hidden" name="next" value="/payments/pending">
+            <button class="small secondary" title="Over the RM {{ '{:,.0f}'.format(limit) }} limit — a second person approves">Approve</button></form>
+          {% else %}
+          <form method="post" action="/vouchers/{{ v.id }}/action"
+                onsubmit="return confirm('Mark {{ v.pv_no }} ({{ v.payee|e }}, RM {{ v.total|rm }}) as paid?')">
+            <input type="hidden" name="action" value="paid"><input type="hidden" name="next" value="/payments/pending">
+            <button class="small">{{ icon('check', 12) }} Paid</button></form>
+          {% endif %}
+        </div>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% if user.role in ('admin', 'manager') %}
+    <div class="pl-actions">
+      {% if g.blocked %}<span class="muted" style="font-size:12px">Approve {{ g.blocked|join(', ') }} first — over the RM {{ '{:,.0f}'.format(limit) }} limit.</span>{% endif %}
+      <a class="btn small secondary" href="/listings">{{ icon('file', 12) }} Listing</a>
+      <form method="post" action="/payments/pending/listing/{{ pl.id }}/paid" style="margin:0"
+            onsubmit="return confirm('The bank run for {{ pl.pl_no }} has gone out?\n\nMarks all {{ g.rows|length }} voucher(s) paid (RM {{ g.total|rm }}) and the listing Processed.')">
+        <button class="small success" {% if g.blocked %}disabled{% endif %}>{{ icon('check', 12) }} All paid · mark {{ pl.pl_no }} processed</button>
+      </form>
+    </div>
+    {% endif %}
+  </div>
+</details>
+{% else %}
+<div class="panel" style="text-align:center;padding:34px">
+  <div style="font-weight:800;font-size:15px">Nothing waiting to be paid 暂无待付款项</div>
+  <div class="muted" style="margin-top:4px">{% if show %}No bills match this filter. <a href="/payments/pending">Show all</a>{% else %}Every voucher on a listing has been paid.{% endif %}</div>
+</div>
+{% endfor %}
+
+{% if flash_paid %}
+<div class="win" role="status">
+  <svg viewBox="0 0 52 52" aria-hidden="true">
+    <circle class="ring" cx="26" cy="26" r="23" fill="none" stroke="currentColor" stroke-width="3" pathLength="1"/>
+    <path class="tick" d="M15 27l7 7 15-16" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" pathLength="1"/>
+  </svg>
+  <div>{{ flash_paid.text }}<div class="muted" style="font-weight:600;font-size:12px">RM {{ '{:,.2f}'.format(flash_paid.amount) }} moved to paid</div></div>
+</div>
+{% endif %}
+
+<script>
+/* rule 3 — roll, don't jump: digits roll right-to-left 100 ms apart; separators stay still. */
+(function () {
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const fmt = n => Number(n).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  document.querySelectorAll('.roll').forEach(el => {
+    const to = fmt(el.dataset.value), from = el.dataset.from ? fmt(el.dataset.from) : null;
+    const start = (from || to).padStart(to.length, ' ');
+    const target = to.padStart(start.length, ' ');
+    el.textContent = '';
+    const strips = [];
+    [...target].forEach((ch, i) => {
+      const s0 = start[i];
+      if (/\d/.test(ch) || /\d/.test(s0)) {
+        const w = document.createElement('span'); w.className = 'roll-d';
+        const col = document.createElement('span');
+        for (let d = 0; d <= 9; d++) { const x = document.createElement('span'); x.textContent = d; col.appendChild(x); }
+        w.appendChild(col); el.appendChild(w);
+        const a = /\d/.test(s0) ? +s0 : 0, b = /\d/.test(ch) ? +ch : 0;
+        col.style.transform = `translateY(-${(from && !reduce ? a : b)}em)`;
+        if (ch === ' ') w.style.opacity = 0;   // a leading digit that vanished
+        strips.push({ col, b });
+      } else {
+        const x = document.createElement('span'); x.className = 'roll-s'; x.textContent = ch.trim() ? ch : '';
+        el.appendChild(x);
+      }
+    });
+    if (from && !reduce) {
+      const chip = document.getElementById('pp-chip');
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        strips.slice().reverse().forEach((s, k) => {
+          s.col.style.transitionDelay = (k * 100) + 'ms';
+          s.col.style.transform = `translateY(-${s.b}em)`;
+        });
+        if (chip) { chip.classList.add('on'); setTimeout(() => chip.classList.remove('on'), 2200); }
+      }));
+    }
+  });
+})();
+</script>
+{% endblock %}
