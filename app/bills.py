@@ -336,6 +336,9 @@ def handle_callback(db: Session, data: str, cq_id: str, frm: dict, chat_id, mess
     if data.startswith("bill:sub:"):
         _submit(db, data, cq_id, who, chat_id, message_id)
         return
+    if data.startswith("bill:paid:"):
+        _paid(db, data, cq_id, user, chat_id, message_id, from_id)
+        return
     try:
         _, action, did = data.split(":", 2)
         doc = db.get(M.Document, int(did))
@@ -513,5 +516,65 @@ def _submit(db: Session, data: str, cq_id: str, who: str, chat_id, message_id):
     if chat_id:
         tg_send(chat_id, listing_text(pl) + f"\n📤 by {_md(who)}"
                 "\n\nApprover link (forward to the approver, valid 14 days) 审批链接：",
-                buttons=[[{"text": "✅ Open for approval 打开审批", "url": url}]])
+                buttons=[[{"text": "✅ Open for approval 打开审批", "url": url}],
+                         [{"text": f"💸 Paid — mark {pl.pl_no} processed 已付款",
+                           "callback_data": f"bill:paid:{pl.id}"}]])
         tg_send(chat_id, f"`{url}`")   # tap-to-copy; code format keeps _ in the token safe
+
+
+# ───────────────────────── Paid / Processed from Telegram ─────────────────────────
+def pay_listing(db: Session, pl, user) -> tuple[bool, str]:
+    """The bank run has gone out: every voucher on the listing → Paid (that is
+    what posts Dr Accounts Payable / Cr Bank), and the listing → Processed.
+    All or nothing — one blocked voucher stops the lot, so the books never
+    show a listing half paid. Same approval-limit rule as the web."""
+    from .main import _approval_limit
+    from . import ledger
+    if pl.status == "Processed":
+        return False, f"{pl.pl_no} is already processed"
+    if pl.status != "Submitted":
+        return False, f"Submit {pl.pl_no} first"
+    vs = [v for v in pl.vouchers if v.status not in ("Paid", "Void")]
+    limit = _approval_limit(db)
+    me = user.display_name.strip()
+    for v in vs:
+        if limit >= 0 and v.total >= limit and v.status != "Approved" \
+                and (v.created_by or "").replace(TAG, "").strip() == me:
+            return False, (f"{v.pv_no} RM {v.total:,.2f} is at or above the RM {limit:,.2f} "
+                           f"approval limit and was raised by you — someone else must mark it paid")
+    for v in vs:
+        if limit >= 0 and v.total >= limit and v.status != "Approved":
+            v.status, v.approved_by = "Approved", me
+        v.status = "Paid"
+        for p in v.payments:
+            p.status = "Paid"
+    pl.status = "Processed"
+    db.commit()
+    ledger.sync_ledger(db)
+    return True, f"{pl.pl_no} processed — {len(vs)} voucher{'s' if len(vs) != 1 else ''} paid, RM {pl.total:,.2f}"
+
+
+def _paid(db: Session, data: str, cq_id: str, user, chat_id, message_id, from_id=""):
+    from .telegram_bot import tg_answer_callback, tg_edit_buttons, tg_send, BASE_URL
+    if not user or not user.active or user.role not in ("admin", "manager"):
+        tg_answer_callback(cq_id, "⛔ Only an admin or manager whose Telegram is linked in the "
+                                  "system can mark a listing paid. Your Telegram ID: " + str(from_id) +
+                                  " (add it under Settings → Users).", alert=True)
+        return
+    try:
+        pl = db.get(M.Listing, int(data.rsplit(":", 1)[1]))
+    except ValueError:
+        pl = None
+    if not pl:
+        tg_answer_callback(cq_id, "That listing no longer exists", alert=True)
+        return
+    ok, msg = pay_listing(db, pl, user)
+    tg_answer_callback(cq_id, "💸 Marked paid" if ok else msg, alert=not ok)
+    if not ok:
+        return
+    if chat_id and message_id:
+        tg_edit_buttons(chat_id, message_id, [[{"text": f"🔗 Open {pl.pl_no}", "url": f"{BASE_URL}/listings"}]])
+    if chat_id:
+        tg_send(chat_id, f"💸 *{_md(msg)}* 已付款\n✅ by {_md(user.display_name)}\n\n"
+                         "Books updated: each bill moved from owing to paid from the bank. "
+                         "Next bill raised starts a new listing.")
