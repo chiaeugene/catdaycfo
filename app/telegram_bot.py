@@ -134,6 +134,10 @@ def handle_callback(cq: dict, db: Session):
     chat_id = msg.get("chat", {}).get("id")
     message_id = msg.get("message_id")
 
+    if data.startswith("bill:"):
+        from . import bills
+        bills.handle_callback(db, data, cq_id, frm, chat_id, message_id)
+        return
     if not data.startswith("pr:"):
         tg_answer_callback(cq_id)
         return
@@ -392,12 +396,24 @@ def handle_update(update: dict, db: Session):
         category=cls.get("category", ""), invoice_no=cls.get("invoice_no", ""),
         doc_date=doc_date,
         payload_json=json.dumps({"tax_type": cls.get("tax_type", "None"),
-                                 "supplier_bank": cls.get("supplier_bank") or {}}),
+                                 "supplier_bank": cls.get("supplier_bank") or {},
+                                 "due_date": cls.get("due_date") or "",
+                                 "jompay": cls.get("jompay") or {},
+                                 "pay_to_account": cls.get("pay_to_account") or {},
+                                 "previous_balance": cls.get("previous_balance") or 0,
+                                 "amount_due": cls.get("amount_due")}),
         file_path=rel_path, mime=mime, ai_classified=cls.get("ai", False),
         status="Pending",
     )
     db.add(doc)
     db.commit()
+
+    # A bill to pay (supplier invoice / utility bill) gets the one-tap path:
+    # Verify here, then Raise PV & listing — no trip to the website.
+    from . import bills
+    if bills.is_payable(doc):
+        tg_send(chat_id, bills.summary_text(doc, db), buttons=bills.verify_buttons(doc))
+        return
 
     tg_send(chat_id,
         "✅ *Received!  已收到！*\n\n"

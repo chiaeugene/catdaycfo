@@ -361,9 +361,11 @@ def invoice_pdf(inv_no: str, customer: str, cust_address: str, cust_contact: str
 # ═══════════════════════════ PAYMENT VOUCHER ═══════════════════════════
 def voucher_pdf(pv_no: str, payee: str, items: list[dict], total: float,
                 company="CATDAY SDN BHD", address="Uptown PJ", reg_no="",
-                bank: dict | None = None) -> str:
+                bank: dict | None = None, pay_ref: str = "") -> str:
     """items: [{date, description, amount, invoice_no, doc_url}]. bank:
-    {bank_name, account_no, account_holder} or None."""
+    {bank_name, account_no, account_holder} or None. pay_ref: a bill's own
+    payment instruction ("JomPAY · Biller code 5454 · Ref-1 ..."), printed
+    instead of the bank box."""
     subdir = f"vouchers/{date.today():%Y-%m}"
     os.makedirs(os.path.join(UPLOAD_DIR, subdir), exist_ok=True)
     rel = f"{subdir}/{pv_no}_{safe_name(payee)}.pdf"
@@ -378,7 +380,16 @@ def voucher_pdf(pv_no: str, payee: str, items: list[dict], total: float,
     ]))
     el.append(Spacer(1, 7 * mm))
 
-    if bank and (bank.get("bank_name") or bank.get("account_no")):
+    if pay_ref:
+        rows = []
+        for one in pay_ref.split(" | "):
+            parts = [x.strip() for x in one.split(" · ")]
+            rows.append([Paragraph("Pay by", LBL), Paragraph(parts[0], VAL)])
+            for x in parts[1:]:
+                k, _, v = x.partition(" ")
+                rows.append([Paragraph({"Biller": "Biller code"}.get(k, k), LBL), Paragraph(v or "-", VAL)])
+        el.append(_brand_box("PAYMENT DETAILS", rows))
+    elif bank and (bank.get("bank_name") or bank.get("account_no")):
         el.append(_brand_box("BANK TRANSFER DETAILS", [
             [Paragraph("Bank", LBL), Paragraph(bank.get("bank_name") or "-", VAL)],
             [Paragraph("Account No.", LBL), Paragraph(bank.get("account_no") or "-", VAL)],

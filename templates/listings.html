@@ -91,9 +91,13 @@ The voucher itself is kept — it just becomes unlisted and can go on another li
           {% endif %}
         </div>
         {% set sup = banks.get(v.payee.strip().lower()) %}
-        <div style="font-size:11.5px;font-weight:600;margin-bottom:5px;color:{{ 'var(--ink-2)' if sup and sup.account_no else 'var(--muted)' }}">
+        <div style="font-size:11.5px;font-weight:600;margin-bottom:5px;color:{{ 'var(--ink-2)' if v.pay_ref or (sup and sup.account_no) else 'var(--muted)' }}">
           {{ icon('landmark', 12) }}
-          {% if sup and (sup.bank_name or sup.account_no) %}
+          {% if v.pay_ref %}
+          <span class="mono" style="letter-spacing:.3px">{{ v.pay_ref }}</span>
+          {% set due = v.payments|selectattr('due_date')|map(attribute='due_date')|list %}
+          {% if due %} · due {{ (due|min).strftime('%d/%m/%y') }}{% endif %}
+          {% elif sup and (sup.bank_name or sup.account_no) %}
           {{ sup.bank_name }} · <span class="mono" style="letter-spacing:.5px">{{ sup.account_no }}</span> · {{ sup.account_holder or v.payee }}
           {% else %}
           No bank details on file — <a href="/suppliers">add to Suppliers</a>

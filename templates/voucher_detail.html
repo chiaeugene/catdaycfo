@@ -44,7 +44,10 @@
 <div class="grid2">
   <div class="panel">
     <h2>Payee bank details 收款方银行</h2>
-    {% if supplier %}
+    {% if v.pay_ref %}
+    <div class="kv"><span>Pay by 付款方式</span><b class="mono">{{ v.pay_ref }}</b></div>
+    <div style="color:var(--muted);font-size:12px">Paid with the bill's own JomPAY / account reference, not a transfer to the supplier's account.</div>
+    {% elif supplier %}
     <div class="kv"><span>Supplier</span><b><a href="/suppliers/{{ supplier.id }}">{{ supplier.name }}</a></b></div>
     <div class="kv"><span>Bank 银行</span><b>{{ supplier.bank_name or '—' }}</b></div>
     <div class="kv"><span>Account No. 账号</span><b class="mono">{{ supplier.account_no or 'not on file' }}</b></div>

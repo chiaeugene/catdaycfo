@@ -55,6 +55,19 @@ PROMPT = (
     'into — usually near "Please make payment to", an "Account no." line, or a bank footer — as '
     '{"bank_name": str, "account_no": str, "account_holder": str}, all "" if not shown. '
     'This is the payee\'s account so we can pay them; never our own company\'s account.\n'
+    '"due_date": the "pay before" / due date printed on the bill as "yyyy-mm-dd", or "",\n'
+    '"jompay": for a bill payable by JomPAY (utilities, telco: TNB, Air Selangor, Unifi/TM...) '
+    '{"biller_code": str, "ref1": str, "ref2": str} exactly as printed next to "Biller Code", '
+    '"Ref-1" and "Ref-2"; all "" if there is no JomPAY box,\n'
+    '"amount_due": what we actually have to pay now — "Jumlah Perlu Dibayar", "Total Amount '
+    'Payable", "Total outstanding" — as a number. It can be less than the charges when a credit '
+    'or advance payment covers them (e.g. previous balance -99.00 → outstanding 0.00),\n'
+    '"pay_to_account": a virtual account the bill says to pay into with its own reference '
+    '(e.g. "Coway-CIMB Virtual Account") as {"bank_name": str, "account_no": str, '
+    '"reference": str}, all "" if none,\n'
+    '"previous_balance": the UNPAID balance from earlier bills that is included in the total '
+    'amount ("Baki Belum Dijelaskan", "Tunggakan", outstanding previous balance) as a number; '
+    '0 if the previous balance was already paid or there is none.\n'
 )
 
 
@@ -87,7 +100,7 @@ def _classify_claude(data: bytes, mime: str, caption: str, key: str,
         headers={"x-api-key": key, "anthropic-version": "2023-06-01"},
         json={
             "model": "claude-haiku-4-5-20251001",
-            "max_tokens": 500,
+            "max_tokens": 900,
             "messages": [{"role": "user", "content": [block, {"type": "text", "text": text}]}],
         },
         timeout=60,
@@ -100,6 +113,13 @@ def _classify_claude(data: bytes, mime: str, caption: str, key: str,
     out["amount"] = float(out.get("amount") or 0)
     out.setdefault("date", "")
     out.setdefault("supplier_bank", {})
+    out.setdefault("due_date", "")
+    out["jompay"] = out.get("jompay") or {}
+    out["pay_to_account"] = out.get("pay_to_account") or {}
+    try:
+        out["previous_balance"] = float(out.get("previous_balance") or 0)
+    except (TypeError, ValueError):
+        out["previous_balance"] = 0.0
     if out.get("tax_type") not in TAX_TYPES:
         out["tax_type"] = "None"
     return out

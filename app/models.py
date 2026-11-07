@@ -206,6 +206,11 @@ class Payment(Base):
     # "supplier" is then the claimant being reimbursed; the shop is in the
     # description. One claim becomes one voucher.
     claim_id: Mapped[int | None] = mapped_column(ForeignKey("petty_claims.id"), nullable=True)
+    # How this bill is paid when it is NOT a transfer to the supplier's bank
+    # account on file — utilities are paid by JomPAY, and the Ref-1 is the
+    # account number on that particular bill. e.g. "JomPAY 5454 · Ref-1 2104965830XX".
+    pay_ref: Mapped[str] = mapped_column(String(200), default="")
+    due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     documents = relationship("Document", backref="payment", foreign_keys="Document.payment_id")
 
 
@@ -221,6 +226,9 @@ class Voucher(Base):
     created_by: Mapped[str] = mapped_column(String(100), default="")
     approved_by: Mapped[str] = mapped_column(String(100), default="")
     listing_id: Mapped[int | None] = mapped_column(ForeignKey("listings.id"), nullable=True)
+    # Payment instruction copied from its payments (JomPAY biller + Ref-1, or a
+    # virtual account). Blank = pay the supplier's bank account on file.
+    pay_ref: Mapped[str] = mapped_column(String(200), default="")
     payments = relationship("Payment", backref="voucher", foreign_keys="Payment.voucher_id")
 
 

@@ -609,6 +609,8 @@ async def verify_document(doc_id: int, request: Request, db: Session = Depends(g
                       tax_type=tax_type, tax_amount=tax_of(tax_type, amount),
                       status="Categorized" if category else "Unsorted",
                       notes=f"from {doc.doc_no} ({doc.sender})")
+        from . import bills
+        bills.apply_bill_fields(p, bills.payload(doc))   # JomPAY ref + due date, if a bill
         db.add(p)
         db.flush()
         doc.payment_id = p.id
@@ -1254,14 +1256,25 @@ async def create_voucher(request: Request, db: Session = Depends(get_db)):
     if payee and supplier_name and payee.strip().lower() != supplier_name.strip().lower():
         return RedirectResponse("/payments?error=payee_mismatch", status_code=302)
     payee = payee or supplier_name or "Payee"
+    issue_voucher(db, pays, payee, user.display_name if user else "")
+    db.commit()
+    return RedirectResponse("/vouchers", status_code=302)
 
+
+def issue_voucher(db: Session, pays: list, payee: str, created_by: str) -> M.Voucher:
+    """One voucher for one payee's payments, PDF included. Shared by the web
+    form and the Telegram 'Raise PV' button so both produce the same voucher.
+    Caller commits."""
     pv_no = telegram_bot.next_counter(db, "PV", "PV-")
-    total = sum(p.amount for p in pays)
+    total = round(sum(p.amount for p in pays), 2)
     items = [{"date": f"{p.date:%d/%m/%y}", "description": p.description, "amount": p.amount,
               "invoice_no": p.invoice_no,
               "doc_url": f"{BASE_URL}/files/{p.documents[0].file_path}" if p.documents else ""}
              for p in pays]
     settings = {s.key: s.value for s in db.query(M.Setting).all()}
+    # A bill paid by JomPAY / virtual account carries its own instruction;
+    # otherwise the voucher pays the supplier's bank account on file.
+    pay_ref = " | ".join(dict.fromkeys(p.pay_ref for p in pays if p.pay_ref))
     sup = find_supplier(db, payee)
     bank = ({"bank_name": sup.bank_name, "account_no": sup.account_no,
              "account_holder": sup.account_holder} if sup else None)
@@ -1269,16 +1282,15 @@ async def create_voucher(request: Request, db: Session = Depends(get_db)):
                              company=settings.get("COMPANY_NAME", "CATDAY SDN BHD"),
                              address=settings.get("COMPANY_ADDRESS", "Uptown PJ"),
                              reg_no=settings.get("COMPANY_ROC", ""),
-                             bank=bank)
+                             bank=None if pay_ref else bank, pay_ref=pay_ref)
     pv = M.Voucher(pv_no=pv_no, payee=payee, total=total, pdf_path=rel,
-                   created_by=user.display_name if user else "")
+                   created_by=created_by, pay_ref=pay_ref)
     db.add(pv)
     db.flush()
     for p in pays:
         p.voucher_id = pv.id
         p.status = "On Voucher"
-    db.commit()
-    return RedirectResponse("/vouchers", status_code=302)
+    return pv
 
 
 @app.post("/vouchers/{vid}/action")
@@ -1556,7 +1568,7 @@ def _refresh_listing(db: Session, pl: M.Listing) -> None:
     are on it right now. Called on create and after every add/remove, so the
     printed listing can never disagree with the rows on screen."""
     pvs = sorted(pl.vouchers, key=lambda v: v.pv_no)
-    pl.total = sum(v.total for v in pvs)
+    pl.total = round(sum(v.total for v in pvs), 2)
     banks = supplier_map(db, [v.payee for v in pvs])
 
     def bank_line(payee):
@@ -1564,7 +1576,7 @@ def _refresh_listing(db: Session, pl: M.Listing) -> None:
         return f"{s.bank_name} {s.account_no}" if s and (s.bank_name or s.account_no) else ""
 
     vdata = [{"pv_no": v.pv_no, "date": f"{v.date:%d/%m/%y}", "payee": v.payee,
-              "total": v.total, "bank": bank_line(v.payee)}
+              "total": v.total, "bank": v.pay_ref or bank_line(v.payee)}
              for v in pvs]
     settings = {s.key: s.value for s in db.query(M.Setting).all()}
     pl.pdf_path = pdfgen.listing_pdf(
@@ -1665,6 +1677,8 @@ def listing_bank_file(lid: int, bank: str, request: Request, db: Session = Depen
     w = csv.writer(buf)
     w.writerow(fmt["cols"])
     for v in pl.vouchers:
+        if (v.pay_ref or "").startswith("JomPAY"):
+            continue   # bill payment, keyed in by biller code + Ref-1 — not a transfer
         s = sup_by.get(v.payee.strip().lower())
         acct = (s.account_no if s else "").replace(" ", "")
         holder = (s.account_holder if s and s.account_holder else v.payee)

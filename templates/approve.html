@@ -93,7 +93,16 @@
       </div>
     </div>
 
-    {% if sup and (sup.bank_name or sup.account_no) %}
+    {% if v.pay_ref %}
+    <div class="pv-bank">
+      {% for one in v.pay_ref.split(' | ') %}{% set parts = one.split(' · ') %}
+      <b>{{ parts[0] }}</b><br>
+      <span class="acct">{{ parts[1:]|join(' · ') }}</span><br>
+      {% endfor %}
+      {% set due = v.payments|selectattr('due_date')|map(attribute='due_date')|list %}
+      {% if due %}Due {{ (due|min).strftime('%d/%m/%Y') }}{% endif %}
+    </div>
+    {% elif sup and (sup.bank_name or sup.account_no) %}
     <div class="pv-bank">
       <b>{{ sup.bank_name or 'Bank not named' }}</b><br>
       <span class="acct">{{ sup.account_no or 'No account number' }}</span><br>
