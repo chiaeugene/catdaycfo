@@ -67,6 +67,26 @@ def previous_balance(doc, pl: dict) -> float:
     return prev if 0 < prev < (doc.amount or 0) else 0.0
 
 
+def _same_supplier(a: str, b: str) -> bool:
+    a, b = (a or "").strip().lower(), (b or "").strip().lower()
+    return bool(a and b) and (a == b or a in b or b in a)
+
+
+def find_earlier(db: Session, doc, prev: float, exclude_id=None) -> list:
+    """Payments already in our books for the unpaid balance a bill carries.
+    The earlier bill is often recorded with a small fee on top (Air Selangor
+    RM 278.10 + RM 3.00 notice fee = PAY-0017 RM 281.10), so allow a few
+    ringgit over, and only payments dated on or before this bill. Closest first."""
+    if not prev:
+        return []
+    cut = doc.doc_date or date.today()
+    out = [p for p in db.query(M.Payment).filter(M.Payment.status != "Void").all()
+           if p.id != exclude_id and _same_supplier(p.supplier, doc.supplier)
+           and prev - 0.01 <= (p.amount or 0) <= prev + 15
+           and (p.date is None or p.date <= cut)]
+    return sorted(out, key=lambda p: (abs((p.amount or 0) - prev), p.voucher_id is not None))
+
+
 def amount_due(doc, pl: dict) -> float:
     """What the bill says is payable now; falls back to the total read."""
     v = pl.get("amount_due")
@@ -125,6 +145,13 @@ def summary_text(doc, db: Session | None = None) -> str:
     if prev:
         lines.append(f"    incl. RM {prev:,.2f} unpaid from an earlier bill 含前期欠款")
         lines.append(f"    this bill's own charges RM {doc.amount - prev:,.2f}")
+        if db is not None:
+            on_pv = [p for p in find_earlier(db, doc, prev) if p.voucher_id]
+            if on_pv:
+                v = db.get(M.Voucher, on_pv[0].voucher_id)
+                lines.append(f"    ↳ the RM {prev:,.2f} is already on {v.pv_no if v else 'a voucher'} "
+                             f"({on_pv[0].pay_no} RM {on_pv[0].amount:,.2f}) — "
+                             f"this PV will pay *RM {doc.amount - prev:,.2f}* only")
     if doc.doc_date:
         lines.append(f"📅 Bill date 账单日期: {doc.doc_date:%d/%m/%Y} · books 入账: {bill_month(doc, pl)}")
     if due:
@@ -206,10 +233,7 @@ def verify_bill(db: Session, doc, who: str) -> tuple[bool, str]:
     if prev:
         # The earlier bill may already be in our books (then it must not be
         # expensed again) — reuse that payment if it is still unpaid.
-        earlier = [p for p in db.query(M.Payment).filter(M.Payment.status != "Void",
-                                                         M.Payment.id != main_p.id).all()
-                   if (p.supplier or "").strip().lower() == doc.supplier.strip().lower()
-                   and abs((p.amount or 0) - prev) < 0.01]
+        earlier = find_earlier(db, doc, prev, exclude_id=main_p.id)
         free = [p for p in earlier if p.voucher_id is None]
         if free:
             p = free[0]
@@ -219,7 +243,7 @@ def verify_bill(db: Session, doc, who: str) -> tuple[bool, str]:
         elif earlier:
             v = db.get(M.Voucher, earlier[0].voucher_id)
             notes.append(f"earlier RM {prev:,.2f} is already on {v.pv_no if v else 'a voucher'}"
-                         " — pay it from there")
+                         f" ({earlier[0].pay_no}) — not paid again here")
         else:
             p = new_payment(prev, f"Unpaid balance from previous {doc.supplier} bill "
                                   f"(carried in {doc.invoice_no or doc.doc_no})")
