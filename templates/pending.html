@@ -214,13 +214,12 @@
     });
     if (from && !reduce) {
       const chip = document.getElementById('pp-chip');
-      requestAnimationFrame(() => requestAnimationFrame(() => {
-        strips.slice().reverse().forEach((s, k) => {
-          s.col.style.transitionDelay = (k * 100) + 'ms';
-          s.col.style.transform = `translateY(-${s.b}em)`;
-        });
-        if (chip) { chip.classList.add('on'); setTimeout(() => chip.classList.remove('on'), 2200); }
-      }));
+      void el.offsetWidth;   // commit the start position, then roll (no rAF: it stalls in background tabs)
+      strips.slice().reverse().forEach((s, k) => {
+        s.col.style.transitionDelay = (k * 100) + 'ms';
+        s.col.style.transform = `translateY(-${s.b}em)`;
+      });
+      if (chip) { chip.classList.add('on'); setTimeout(() => chip.classList.remove('on'), 2200); }
     }
   });
 })();

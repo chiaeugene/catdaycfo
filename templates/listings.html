@@ -7,6 +7,15 @@
 </div>
 {% endif %}
 <div class="pagehead"><h1>Payment Listings 付款清单</h1></div>
+{% if flash_merge %}
+<div class="mrg-win" role="status">
+  <svg viewBox="0 0 52 52" aria-hidden="true">
+    <circle class="ring" cx="26" cy="26" r="23" fill="none" stroke="currentColor" stroke-width="3" pathLength="1"/>
+    <path class="tick" d="M15 27l7 7 15-16" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" pathLength="1"/>
+  </svg>
+  <div>{{ flash_merge.text }}<div class="muted" style="font-weight:600;font-size:12px">{{ flash_merge.detail }}</div></div>
+</div>
+{% endif %}
 <div class="sub">Voucher batches for approval and bank processing — every voucher expands to its payments and original documents, so the person making the bank transaction can verify each line.</div>
 
 <div class="panel" style="padding:14px 18px">
@@ -22,11 +31,17 @@
 
 <div class="tablewrap">
 <table>
-  <tr><th>PL #</th><th>Date</th><th class="num">Total</th>
+  <tr><th style="width:34px">{% if user.role in ('admin','manager') %}<span class="sr-only">Select to merge</span>{% endif %}</th><th>PL #</th><th>Date</th><th class="num">Total</th>
       <th>Status</th><th>PDF</th><th>Prepared By</th><th>Actions</th></tr>
   {% for l in listings %}
   <tr>
-    <td class="mono"><b>{{ l.pl_no }}</b></td>
+    <td>{% if user.role in ('admin','manager') %}
+      <input type="checkbox" class="mrg-pick" value="{{ l.id }}" name="ids" form="merge-form"
+             data-pl="{{ l.pl_no }}" data-total="{{ '%.2f'|format(l.total) }}" data-n="{{ l.vouchers|length }}"
+             aria-label="Select {{ l.pl_no }} to merge"
+             {% if l.status == 'Processed' %}disabled title="Paid listings can't be merged"{% endif %}>
+    {% endif %}</td>
+    <td class="mono" style="white-space:nowrap"><b>{{ l.pl_no }}</b></td>
     <td>{{ l.date.strftime('%d/%m/%y') }}</td>
     <td class="num" style="font-weight:700">{{ l.total|rm }}</td>
     <td><span class="badge {{ l.status|lower }}">{{ l.status }}</span></td>
@@ -69,7 +84,7 @@
     </td>
   </tr>
   <tr class="subrow">
-    <td colspan="7" style="padding-bottom:14px">
+    <td colspan="8" style="padding-bottom:14px">
       {% set locked = locked_reason(l) %}
       {% for v in l.vouchers %}
       <div style="margin:4px 0 8px">
@@ -124,7 +139,7 @@ The voucher itself is kept — it just becomes unlisted and can go on another li
     </td>
   </tr>
   {% else %}
-  <tr><td colspan="7" class="empty">No listings yet — tick vouchers on the Vouchers page and click Create Payment Listing.</td></tr>
+  <tr><td colspan="8" class="empty">No listings yet — tick vouchers on the Vouchers page and click Create Payment Listing.</td></tr>
   {% endfor %}
 </table>
 </div>
@@ -275,4 +290,141 @@ The voucher itself is kept — it just becomes unlisted and can go on another li
   // in front of the preparer instead of one click away.
   document.querySelectorAll('dialog[data-open="1"]').forEach(function (d) { d.showModal(); });
 </script>
+{% if user.role in ('admin', 'manager') %}
+<form id="merge-form" method="post" action="/listings/merge" class="mrg-bar" aria-hidden="true">
+  <div class="mrg-info">
+    <span class="mrg-title">Merge <b class="mrg-n">0</b> listings</span>
+    <span class="mrg-sum"><span class="cur">RM</span><span class="mrg-total" aria-live="polite">0.00</span>
+      <span class="mrg-chip" aria-hidden="true"></span></span>
+    <span class="muted mrg-v"></span>
+  </div>
+  <label class="mrg-keep">Keep 保留
+    <select name="keep" class="mrg-keep-sel"></select></label>
+  <button type="button" class="small secondary mrg-clear">Clear</button>
+  <button type="submit" class="small mrg-go">{{ icon('list', 12) }} Merge 合并</button>
+</form>
+<style>
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .mrg-pick { width: 17px; height: 17px; accent-color: var(--brand); cursor: pointer; }
+  /* rule 5: the bar arrives fast-then-slow from below, leaves quicker */
+  .mrg-bar { position: fixed; left: 0; right: 0; margin: 0 auto; width: max-content; bottom: 18px; z-index: 50; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+             max-width: calc(100vw - 32px); padding: 12px 16px; border-radius: 16px;
+             background: var(--card); border: 1px solid var(--line); box-shadow: var(--shadow-lg);
+             transform: translateY(140%); opacity: 0; pointer-events: none;
+             transition: transform 200ms var(--ease-in), opacity 200ms var(--ease-in); }
+  .mrg-bar.on { transform: none; opacity: 1; pointer-events: auto;
+                transition: transform 350ms var(--ease-out), opacity 350ms var(--ease-out); }
+  .mrg-info { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .mrg-title { font-size: 13px; }
+  .mrg-sum { font-weight: 800; font-size: 17px; font-variant-numeric: tabular-nums; display: inline-flex; align-items: baseline; gap: 2px; }
+  .mrg-sum .cur { opacity: .45; font-size: .7em; margin-right: 3px; }
+  .mrg-v { font-size: 12px; }
+  .mrg-keep { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; margin: 0; }
+  .mrg-keep select { height: 31px; min-width: 130px; }
+  .mrg-chip { font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 100px; border: 1px solid currentColor;
+              margin-left: 6px; opacity: 0; transform: translateY(2px); transition: opacity 300ms var(--ease-out), transform 300ms var(--ease-out); }
+  .mrg-chip.on { opacity: 1; transform: none; }
+  .mrg-chip.up { color: var(--green); } .mrg-chip.down { color: var(--red); }
+  /* rule 3: digit strips */
+  .roll-d { display: inline-block; height: 1em; overflow: hidden; line-height: 1; vertical-align: -0.08em; }
+  .roll-d > span { display: flex; flex-direction: column; transition: transform 600ms var(--ease-spring); }
+  .roll-d > span > span { height: 1em; line-height: 1; }
+  .roll-s { opacity: .6; }
+  /* rule 6: draw the win */
+  .mrg-win { position: fixed; right: 20px; bottom: 20px; z-index: 60; display: flex; align-items: center; gap: 12px;
+             background: var(--card); color: var(--ink); border: 1px solid var(--hairline); box-shadow: var(--shadow-md);
+             border-radius: 14px; padding: 12px 18px 12px 12px; font-weight: 700; font-size: 13px;
+             animation: mw-in 350ms var(--ease-out) both, mw-out 200ms var(--ease-in) 4s forwards; }
+  .mrg-win svg { width: 40px; height: 40px; color: var(--green); filter: drop-shadow(0 0 6px var(--green-bg)); }
+  .mrg-win .ring { stroke-dasharray: 1; stroke-dashoffset: 1; transform: rotate(-90deg); transform-origin: 26px 26px; animation: mw-draw 280ms var(--ease-draw) forwards; }
+  .mrg-win .tick { stroke-dasharray: 1; stroke-dashoffset: 1; animation: mw-draw 190ms var(--ease-draw) 280ms forwards; }
+  @keyframes mw-draw { to { stroke-dashoffset: 0; } }
+  @keyframes mw-in { from { opacity: 0; transform: translateY(8px) scale(.97); } to { opacity: 1; transform: none; } }
+  @keyframes mw-out { to { opacity: 0; transform: translateY(6px); visibility: hidden; } }
+  @media (prefers-reduced-motion: reduce) {
+    .mrg-bar, .mrg-bar.on, .mrg-chip, .roll-d > span { transition: opacity 150ms linear; }
+    .mrg-win { animation: mw-out 200ms linear 4s forwards; }
+    .mrg-win .ring, .mrg-win .tick { animation: none; stroke-dashoffset: 0; }
+  }
+  @media (max-width: 640px) { .mrg-bar { left: 16px; right: 16px; width: auto; } }
+</style>
+<script>
+(function () {
+  const bar = document.getElementById('merge-form');
+  if (!bar) return;
+  const picks = [...document.querySelectorAll('.mrg-pick')];
+  const sel = bar.querySelector('.mrg-keep-sel'), totalEl = bar.querySelector('.mrg-total');
+  const chip = bar.querySelector('.mrg-chip');
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const fmt = n => Number(n).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  let shown = 0, chipT;
+
+  // rule 3 — roll, don't jump: digits roll right-to-left, 100 ms apart
+  function roll(from, to) {
+    const a = fmt(from), b = fmt(to), len = Math.max(a.length, b.length);
+    const A = a.padStart(len, ' '), B = b.padStart(len, ' ');
+    totalEl.textContent = ''; totalEl.setAttribute('aria-label', 'RM ' + b);
+    const cols = [];
+    for (let i = 0; i < len; i++) {
+      const x = A[i], y = B[i];
+      if (/\d/.test(x) || /\d/.test(y)) {
+        const w = document.createElement('span'); w.className = 'roll-d'; w.setAttribute('aria-hidden', 'true');
+        const c = document.createElement('span');
+        for (let d = 0; d <= 9; d++) { const s = document.createElement('span'); s.textContent = d; c.appendChild(s); }
+        w.appendChild(c); totalEl.appendChild(w);
+        c.style.transform = 'translateY(-' + (reduce ? (+y || 0) : (+x || 0)) + 'em)';
+        if (y === ' ') w.style.width = '0';
+        cols.push({ c: c, y: +y || 0 });
+      } else {
+        const s = document.createElement('span'); s.className = 'roll-s'; s.setAttribute('aria-hidden', 'true');
+        s.textContent = y.trim(); totalEl.appendChild(s);
+      }
+    }
+    if (reduce) return;
+    void totalEl.offsetWidth;   // commit the start position, then roll (no rAF: it stalls in background tabs)
+    cols.slice().reverse().forEach((o, k) => {
+      o.c.style.transitionDelay = (k * 100) + 'ms'; o.c.style.transform = 'translateY(-' + o.y + 'em)';
+    });
+  }
+
+  function update(changed) {
+    const on = picks.filter(p => p.checked);
+    const total = Math.round(on.reduce((s, p) => s + Number(p.dataset.total), 0) * 100) / 100;
+    const nv = on.reduce((s, p) => s + Number(p.dataset.n), 0);
+    bar.querySelector('.mrg-n').textContent = on.length;
+    bar.querySelector('.mrg-v').textContent = nv + ' voucher' + (nv === 1 ? '' : 's');
+    const keep = sel.value;
+    sel.innerHTML = '';
+    on.slice().sort((x, y) => x.dataset.pl.localeCompare(y.dataset.pl)).forEach(p => {
+      const o = document.createElement('option'); o.value = p.value; o.textContent = p.dataset.pl; sel.appendChild(o);
+    });
+    if (on.some(p => p.value === keep)) sel.value = keep;
+    if (total !== shown) {
+      roll(shown, total);
+      if (changed && on.length) {
+        const d = total - shown;
+        chip.textContent = (d > 0 ? '+' : '−') + 'RM ' + fmt(Math.abs(d));
+        chip.className = 'mrg-chip on ' + (d > 0 ? 'up' : 'down');
+        clearTimeout(chipT); chipT = setTimeout(() => chip.classList.remove('on'), 2000);
+      }
+      shown = total;
+    }
+    const open = on.length >= 2;
+    bar.classList.toggle('on', open);
+    bar.setAttribute('aria-hidden', open ? 'false' : 'true');
+  }
+
+  picks.forEach(p => p.addEventListener('change', () => update(true)));
+  bar.querySelector('.mrg-clear').addEventListener('click', () => { picks.forEach(p => { p.checked = false; }); update(false); });
+  bar.addEventListener('submit', e => {
+    const on = picks.filter(p => p.checked), keep = sel.options[sel.selectedIndex].text;
+    const rest = on.map(p => p.dataset.pl).filter(x => x !== keep);
+    const msg = 'Merge ' + rest.join(', ') + ' into ' + keep + '?\n\nAll ' + bar.querySelector('.mrg-v').textContent
+      + ' move onto ' + keep + ' (RM ' + fmt(shown) + '). ' + rest.join(', ') + ' will be deleted, with their approver links.';
+    if (!confirm(msg)) e.preventDefault();
+  });
+  update(false);
+})();
+</script>
+{% endif %}
 {% endblock %}

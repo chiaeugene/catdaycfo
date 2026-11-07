@@ -1669,6 +1669,7 @@ def listings(request: Request, q: str = "", status: str = "", db: Session = Depe
             live_share[pl.id] = sh
     return render(request, db, "listings.html", "listings",
                   flash_del=request.session.pop("flash_del", None), listings=pls, banks=banks,
+                  flash_merge=request.session.pop("flash_merge", None),
                   unlisted=unlisted, live_share=live_share,
                   share_open=request.session.pop("share_open", None),
                   base_url=str(request.base_url).rstrip("/"),
@@ -1741,6 +1742,69 @@ def listing_locked_reason(pl: M.Listing) -> str:
         return ("Already processed — the bank run has gone out. "
                 "Use ↩ Undo processed first if it really needs changing.")
     return ""
+
+
+@app.post("/listings/merge")
+async def listings_merge(request: Request, db: Session = Depends(get_db)):
+    """Merge several listings into one. Every voucher moves onto the listing
+    being kept, which is re-issued with the new grand total; the emptied
+    listings are deleted with their approver links. A paid (Processed)
+    listing is a record of money that left the bank and is never merged."""
+    user = current_user(request, db)
+    if not user or user.role not in ("admin", "manager"):
+        return RedirectResponse("/", status_code=302)
+    form = await request.form()
+    ids = sorted({int(x) for x in form.getlist("ids") if str(x).isdigit()})
+    keep_id = int(form.get("keep") or 0)
+    pls = db.query(M.Listing).filter(M.Listing.id.in_(ids)).all()
+    keep = next((p for p in pls if p.id == keep_id), None)
+    if len(pls) < 2 or not keep:
+        request.session["flash_del"] = "Tick at least two listings and choose which one to keep."
+        return RedirectResponse("/listings", status_code=303)
+    paid = [p.pl_no for p in pls if p.status == "Processed"]
+    if paid:
+        request.session["flash_del"] = (f"{', '.join(paid)} {'is' if len(paid) == 1 else 'are'} already "
+                                        "processed (paid) — paid listings are never merged. Nothing changed.")
+        return RedirectResponse("/listings", status_code=303)
+    others = sorted([p for p in pls if p.id != keep.id], key=lambda p: p.pl_no)
+    moved = 0
+    for pl in others:
+        for v in list(pl.vouchers):
+            # Move through the relationship, not just the FK: the old listing's
+            # in-memory collection must let go, or deleting it below would
+            # null these vouchers' listing_id and orphan them.
+            keep.vouchers.append(v)
+            moved += 1
+    db.flush()
+    gone = []
+    for pl in others:
+        db.refresh(pl)
+        if pl.vouchers:            # belt and braces: never delete a listing still holding vouchers
+            db.rollback()
+            request.session["flash_del"] = f"Merge stopped — {pl.pl_no} still had vouchers. Nothing changed."
+            return RedirectResponse("/listings", status_code=303)
+        for sh in list(pl.shares):
+            db.delete(sh)
+        db.flush()
+        gone.append(pl.pl_no)
+        db.delete(pl)
+        db.flush()
+    was = keep.status
+    if keep.status == "Submitted":
+        keep.status = "Draft"     # contents changed → it needs approving again
+    db.flush()
+    db.refresh(keep)
+    _refresh_listing(db, keep)
+    db.commit()
+    audit.log_action(db, user, f"Merged {', '.join(gone)} into {keep.pl_no} "
+                               f"({moved} vouchers moved, total RM {keep.total:,.2f})",
+                     path="/listings/merge")
+    request.session["flash_merge"] = {
+        "text": f"Merged {', '.join(gone)} into {keep.pl_no}",
+        "detail": f"{len(keep.vouchers)} vouchers · RM {keep.total:,.2f}"
+                  + (" · back to Draft for re-approval" if was == "Submitted" else ""),
+        "pl": keep.pl_no}
+    return RedirectResponse(f"/listings?q={keep.pl_no}", status_code=303)
 
 
 @app.post("/listings/{lid}/add")
