@@ -76,14 +76,16 @@ def find_earlier(db: Session, doc, prev: float, exclude_id=None) -> list:
     """Payments already in our books for the unpaid balance a bill carries.
     The earlier bill is often recorded with a small fee on top (Air Selangor
     RM 278.10 + RM 3.00 notice fee = PAY-0017 RM 281.10), so allow a few
-    ringgit over, and only payments dated on or before this bill. Closest first."""
+    ringgit over. Not filtered by date: the earlier payment is often dated the
+    day it was PAID (PAY-0017, 25 Sep), after this bill was issued (10 Sep).
+    Payments raised from this same bill don't count. Closest first."""
     if not prev:
         return []
-    cut = doc.doc_date or date.today()
+    inv = (doc.invoice_no or "").strip().lower()
     out = [p for p in db.query(M.Payment).filter(M.Payment.status != "Void").all()
            if p.id != exclude_id and _same_supplier(p.supplier, doc.supplier)
            and prev - 0.01 <= (p.amount or 0) <= prev + 15
-           and (p.date is None or p.date <= cut)]
+           and not (inv and (p.invoice_no or "").strip().lower() == inv)]
     return sorted(out, key=lambda p: (abs((p.amount or 0) - prev), p.voucher_id is not None))
 
 
