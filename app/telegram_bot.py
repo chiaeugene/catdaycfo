@@ -350,6 +350,10 @@ def handle_update(update: dict, db: Session):
         if text.lower().startswith(("/template", "/report", "/daily")):
             tg_send(chat_id, DAILY_TEMPLATE)   # answer this one even in a group
             return
+        if text.lower().startswith("/bills"):
+            from . import bills
+            bills.repost_open_bills(db, chat_id)
+            return
         if not text or text.startswith("/"):
             if not is_group:            # greetings/commands: reply only in private
                 tg_send(chat_id, HELP_TEXT)

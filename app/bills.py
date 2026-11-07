@@ -337,3 +337,83 @@ def handle_callback(db: Session, data: str, cq_id: str, frm: dict, chat_id, mess
                     buttons=[[{"text": f"🔗 Open {pl.pl_no}", "url": f"{BASE_URL}/listings"}]])
     else:
         tg_answer_callback(cq_id)
+
+
+# ───────────────────────── /bills: re-post what is still open ─────────────────────────
+NEW_KEYS = ("due_date", "jompay", "pay_to_account", "previous_balance", "amount_due")
+
+
+def _refresh_reading(db: Session, doc) -> None:
+    """Bills that arrived before this feature were read without the JomPAY /
+    due-date fields. Read the stored file again and add ONLY those fields —
+    supplier, amount etc. may already have been corrected by a person."""
+    import os
+    from . import claude_ai
+    from .telegram_bot import UPLOAD_DIR
+    pl = payload(doc)
+    if "jompay" in pl or not doc.file_path:
+        return
+    path = os.path.join(UPLOAD_DIR, doc.file_path)
+    if not os.path.exists(path):
+        return
+    with open(path, "rb") as f:
+        data = f.read()
+    names = [s.name for s in db.query(M.Supplier).filter(M.Supplier.active == True).all()]  # noqa: E712
+    cls = claude_ai.classify(data, doc.mime or "application/pdf", "", doc.file_path, supplier_names=names)
+    if not cls.get("ai"):
+        return
+    for k in NEW_KEYS:
+        pl[k] = cls.get(k)
+    if not doc.doc_date and cls.get("date"):
+        try:
+            doc.doc_date = datetime.strptime(cls["date"], "%Y-%m-%d").date()
+        except ValueError:
+            pass
+    doc.payload_json = json.dumps(pl)
+    db.commit()
+
+
+def open_bills(db: Session, days: int = 90) -> list:
+    """Bills not yet on a voucher: waiting for Verify, or verified (on the web)
+    but no PV raised yet."""
+    from datetime import timedelta
+    since = datetime.utcnow() - timedelta(days=days)
+    out = []
+    for doc in (db.query(M.Document)
+                .filter(M.Document.section.in_(("Purchase", "Expense")),
+                        M.Document.received_at >= since)
+                .order_by(M.Document.id).all()):
+        if doc.doc_type in M.PROVISIONAL_DOC_TYPES:
+            continue
+        if doc.status == "Pending" and (doc.amount or 0) > 0:
+            out.append(doc)
+        elif doc.status == "Verified" and doc.payment_id:
+            p = db.get(M.Payment, doc.payment_id)
+            if p and p.voucher_id is None and p.status in ("Unsorted", "Categorized"):
+                out.append(doc)
+    return out
+
+
+def repost_open_bills(db: Session, chat_id) -> None:
+    from .telegram_bot import tg_send
+    docs = open_bills(db)
+    if not docs:
+        tg_send(chat_id, "✅ No bills waiting — everything is on a voucher.\n没有待处理的账单。")
+        return
+    tg_send(chat_id, f"🧾 *{len(docs)} bill{'s' if len(docs) != 1 else ''} waiting* 待处理账单 — "
+                     "re-posted below with buttons.")
+    for doc in docs:
+        _refresh_reading(db, doc)
+        pl = payload(doc)
+        if doc.status == "Pending":
+            tg_send(chat_id, summary_text(doc, db), buttons=verify_buttons(doc))
+            continue
+        # Verified on the web before: give its payment the JomPAY ref + due date
+        for p in db.query(M.Payment).filter(M.Payment.id.in_(
+                pl.get("bill_payments") or [doc.payment_id])).all():
+            if not p.pay_ref:
+                apply_bill_fields(p, pl)
+        db.commit()
+        tg_send(chat_id, summary_text(doc).rsplit("\n\n", 1)[0]
+                + f"\n\n✅ Verified by {_md(doc.verified_by)} — tap to raise the PV.",
+                buttons=pv_buttons(doc))
