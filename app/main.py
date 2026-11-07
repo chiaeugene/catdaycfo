@@ -1794,6 +1794,32 @@ def listing_remove(lid: int, vid: int, request: Request, db: Session = Depends(g
     return RedirectResponse("/listings", status_code=303)
 
 
+@app.get("/listings/{lid}/pack")
+def listing_pack_pdf(lid: int, request: Request, db: Session = Depends(get_db)):
+    """One PDF: the listing page, then every payment voucher on it (PV order),
+    rebuilt fresh each time so it always matches the listing as it stands."""
+    if not current_user(request, db):
+        return RedirectResponse("/login", status_code=302)
+    pl = db.get(M.Listing, lid)
+    if not pl:
+        raise HTTPException(404)
+    from pypdf import PdfWriter
+    parts = [pl.pdf_path] + [v.pdf_path for v in sorted(pl.vouchers, key=lambda v: v.pv_no)]
+    parts = [os.path.join(UPLOAD_DIR, p) for p in parts if p]
+    parts = [p for p in parts if os.path.exists(p)]
+    if not parts:
+        raise HTTPException(404, "No PDFs on file for this listing")
+    w = PdfWriter()
+    for p in parts:
+        w.append(p)
+    rel = f"listings/{date.today():%Y-%m}/{pl.pl_no}_with_vouchers.pdf"
+    full = os.path.join(UPLOAD_DIR, rel)
+    os.makedirs(os.path.dirname(full), exist_ok=True)
+    with open(full, "wb") as f:
+        w.write(f)
+    return FileResponse(full, filename=f"{pl.pl_no} with vouchers.pdf", content_disposition_type="inline")
+
+
 @app.get("/listings/{lid}/bank-file")
 def listing_bank_file(lid: int, bank: str, request: Request, db: Session = Depends(get_db)):
     """Generate a bulk-transfer file for the chosen Malaysian bank from a listing.
