@@ -47,6 +47,13 @@ MIGRATIONS = [
     "ALTER TABLE payments ADD COLUMN pay_ref VARCHAR(200) DEFAULT ''",
     "ALTER TABLE payments ADD COLUMN due_date DATE",
     "ALTER TABLE vouchers ADD COLUMN pay_ref VARCHAR(200) DEFAULT ''",
+    "ALTER TABLE purchase_requests ADD COLUMN source_key VARCHAR(120) DEFAULT ''",
+    "ALTER TABLE purchase_requests ADD COLUMN form_ref VARCHAR(20) DEFAULT ''",
+    "ALTER TABLE purchase_requests ADD COLUMN quote_ref VARCHAR(200) DEFAULT ''",
+    "ALTER TABLE purchase_requests ADD COLUMN pay_method VARCHAR(40) DEFAULT ''",
+    "ALTER TABLE purchase_requests ADD COLUMN qty_text VARCHAR(150) DEFAULT ''",
+    "ALTER TABLE purchase_requests ADD COLUMN form_changed TEXT DEFAULT ''",
+    "ALTER TABLE purchase_requests ADD COLUMN rlist_id INTEGER",
 ]
 
 

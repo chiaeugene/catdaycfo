@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% set badge = {'Submitted':'pending','Approved':'approved','Rejected':'rejected','Cancelled':'void','Fulfilled':'paid','Returned':'pending','Draft':'draft'} %}
+{% block content %}
+<style>
+  .rl-copy { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 860px) { .rl-copy { grid-template-columns: 1fr; } }
+  .rl-msg { width: 100%; min-height: 190px; font-size: 12.5px; line-height: 1.55; resize: vertical; }
+  .rl-link { font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; font-size: 12px; word-break: break-all;
+             background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; }
+  .copied { font-size: 12px; font-weight: 700; color: var(--green); opacity: 0; transform: translateY(2px);
+            transition: opacity 300ms var(--ease-out), transform 300ms var(--ease-out); }
+  .copied.on { opacity: 1; transform: none; }
+  .rl-stats { display: flex; gap: 8px; flex-wrap: wrap; }
+  @media (prefers-reduced-motion: reduce) { .copied { transition: none; } }
+</style>
+{% if flash %}
+<div class="panel" style="background:var(--green-bg);border-color:rgba(29,127,63,.3)">
+  <div style="font-size:13px;color:var(--green);font-weight:700">✓ {{ flash }}</div></div>
+{% endif %}
+<div class="pagehead">
+  <h1>{{ rl.rl_no }} <span class="muted" style="font-weight:600;font-size:15px">· purchase requests for approval</span></h1>
+  <div class="actions">
+    <a class="btn secondary" href="/requests">{{ icon('list', 14) }} All requests</a>
+    <a class="btn secondary" href="/requests/lists/{{ rl.id }}/pdf" target="_blank">{{ icon('file', 14) }} PDF</a>
+  </div>
+</div>
+<div class="sub">Made by {{ rl.created_by }} · {{ rl.created_at|myt('%d/%m/%Y %H:%M') }} ·
+  link {% if rl.live %}valid until {{ rl.expires_at|myt('%d/%m/%Y') }}{% else %}<b style="color:var(--red)">no longer active</b>{% endif %}
+  · opened {{ rl.views or 0 }} time{{ 's' if (rl.views or 0) != 1 }}{% if rl.last_viewed_at %} (last {{ rl.last_viewed_at|myt('%d/%m %H:%M') }}){% endif %}</div>
+
+<div class="cards">
+  <div class="card"><div class="label">Total requested</div><div class="value">RM {{ rl.total|rm }}</div>
+    <div class="hint">{{ rl.requests|length }} request{{ 's' if rl.requests|length != 1 }}</div></div>
+  {% set ap = rl.requests|selectattr('status', 'equalto', 'Approved')|list %}
+  {% set rj = rl.requests|selectattr('status', 'equalto', 'Rejected')|list %}
+  <div class="card green"><div class="label">Approved</div><div class="value">{{ ap|length }}</div>
+    <div class="hint">RM {{ ap|sum(attribute='total')|rm }}</div></div>
+  <div class="card {{ 'amber' if rl.pending else '' }}"><div class="label">Waiting</div><div class="value">{{ rl.pending|length }}</div>
+    <div class="hint">RM {{ rl.pending|sum(attribute='total')|rm }}</div></div>
+  <div class="card {{ 'red' if rj else '' }}"><div class="label">Rejected</div><div class="value">{{ rj|length }}</div></div>
+</div>
+
+{% if rl.live %}
+<div class="rl-copy">
+  <div class="panel">
+    <h2 style="margin-top:0">Message to send 发送信息</h2>
+    <textarea class="rl-msg" id="rl-msg" readonly>{{ msg }}</textarea>
+    <div style="display:flex;gap:10px;align-items:center;margin-top:10px">
+      <button type="button" class="small" data-copy="rl-msg">{{ icon('send', 12) }} Copy message</button>
+      <a class="btn small secondary" target="_blank" rel="noopener" href="https://wa.me/?text={{ msg|urlencode }}">Open in WhatsApp</a>
+      <span class="copied" data-for="rl-msg">Copied ✓</span>
+    </div>
+  </div>
+  <div class="panel">
+    <h2 style="margin-top:0">Approval link 审批链接</h2>
+    <div class="rl-link" id="rl-url">{{ url }}</div>
+    <div style="display:flex;gap:10px;align-items:center;margin-top:10px;flex-wrap:wrap">
+      <button type="button" class="small secondary" data-copy="rl-url">Copy link</button>
+      <a class="btn small secondary" href="{{ url }}" target="_blank" rel="noopener">{{ icon('eye', 12) }} Preview</a>
+      <span class="copied" data-for="rl-url">Copied ✓</span>
+    </div>
+    <div class="muted" style="font-size:12px;margin-top:12px;line-height:1.6">Whoever opens this link can approve or reject each request — no login.
+      Decisions are recorded on each request with the time. Valid 14 days.</div>
+    {% if user.role in ('admin','manager') %}
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <form method="post" action="/requests/lists/{{ rl.id }}/link" onsubmit="return confirm('Make a new link? The current one stops working.')">
+        <input type="hidden" name="action" value="renew"><button class="small secondary">New link</button></form>
+      <form method="post" action="/requests/lists/{{ rl.id }}/link" onsubmit="return confirm('Withdraw this link? It stops opening.')">
+        <input type="hidden" name="action" value="revoke"><button class="small danger">Withdraw link</button></form>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% elif user.role in ('admin','manager') %}
+<div class="panel" style="background:var(--amber-bg);border-color:var(--amber)">
+  <b style="color:var(--amber)">The approval link is no longer active.</b>
+  <form method="post" action="/requests/lists/{{ rl.id }}/link" style="display:inline;margin-left:10px">
+    <input type="hidden" name="action" value="renew"><button class="small">Make a new link</button></form>
+</div>
+{% endif %}
+
+<div class="tablewrap">
+<table>
+  <tr><th>Request</th><th>Item</th><th>Supplier</th><th>Needed by</th><th class="num">Est. RM</th><th>Status</th><th>Decision</th></tr>
+  {% for r in rl.requests %}
+  <tr>
+    <td class="mono" style="white-space:nowrap"><a href="/requests/{{ r.id }}"><b>{{ r.form_ref or r.pr_no }}</b></a>
+      <div class="muted" style="font-size:11px">{{ r.pr_no }}</div></td>
+    <td style="max-width:300px">{{ r.lines[0].item if r.lines else '' }}
+      <div class="muted" style="font-size:11.5px">{{ r.qty_text }}{% if r.qty_text and r.reason %} · {% endif %}{{ r.reason }}</div>
+      {% if r.form_changed %}<div style="font-size:11.5px;color:var(--amber);font-weight:700">⚠ Changed on the form after the decision — not applied</div>{% endif %}</td>
+    <td>{{ r.supplier or '—' }}{% if r.quote_ref %}<div class="muted" style="font-size:11px">{{ r.quote_ref }}</div>{% endif %}</td>
+    <td style="white-space:nowrap">{{ r.needed_by.strftime('%d/%m/%y') if r.needed_by else '—' }}</td>
+    <td class="num"><b>{{ r.total|rm }}</b></td>
+    <td><span class="badge {{ badge.get(r.status,'draft') }}">{{ 'Waiting' if r.status == 'Submitted' else r.status }}</span></td>
+    <td style="font-size:12px">{% if r.decided_at %}{{ r.decided_by }} · {{ r.decided_at|myt('%d/%m %H:%M') }}{% if r.decision_note %}<div class="muted">“{{ r.decision_note }}”</div>{% endif %}{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table>
+</div>
+
+<script>
+document.querySelectorAll('[data-copy]').forEach(function (b) {
+  b.addEventListener('click', function () {
+    var el = document.getElementById(b.dataset.copy);
+    var text = el.value !== undefined ? el.value : el.textContent;
+    (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject()).catch(function () {
+      if (el.select) { el.select(); document.execCommand('copy'); }
+    }).finally(function () {
+      var c = document.querySelector('.copied[data-for="' + b.dataset.copy + '"]');
+      if (c) { c.classList.add('on'); setTimeout(function () { c.classList.remove('on'); }, 1800); }
+    });
+  });
+});
+</script>
+{% endblock %}

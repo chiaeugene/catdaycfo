@@ -314,6 +314,15 @@ class PurchaseRequest(Base):
     # What exactly was approved, frozen at the moment of approval. Any later edit
     # cancels the approval, so this and the live lines only differ in history.
     approved_json: Mapped[str] = mapped_column(Text, default="")
+    # Requests that arrive from Karen's Google form (Apps Script push). The key
+    # is "<spreadsheet id>:<block no>" so a re-send updates instead of duplicating.
+    source_key: Mapped[str] = mapped_column(String(120), default="", index=True)
+    form_ref: Mapped[str] = mapped_column(String(20), default="")     # her own number, e.g. KR-001
+    quote_ref: Mapped[str] = mapped_column(String(200), default="")
+    pay_method: Mapped[str] = mapped_column(String(40), default="")   # "Company direct", "Staff paid"...
+    qty_text: Mapped[str] = mapped_column(String(150), default="")
+    form_changed: Mapped[str] = mapped_column(Text, default="")       # edits on the form after a decision
+    rlist_id: Mapped[int | None] = mapped_column(ForeignKey("request_lists.id"), nullable=True)
     lines = relationship("PurchaseRequestLine", backref="request",
                          cascade="all, delete-orphan", order_by="PurchaseRequestLine.id")
     events = relationship("PurchaseRequestEvent", backref="request",
@@ -336,6 +345,37 @@ class PurchaseRequest(Base):
     @property
     def invoiced(self) -> float:
         return sum(p.amount for p in self.payments if p.status != "Void")
+
+
+class RequestList(Base):
+    """A batch of purchase requests sent for approval together — the request-side
+    twin of a payment listing. One PDF, one link; whoever opens the link decides
+    each request (no login), and every decision is logged on the request."""
+    __tablename__ = "request_lists"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    rl_no: Mapped[str] = mapped_column(String(20), unique=True)      # RL-2611-001
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_by: Mapped[str] = mapped_column(String(100), default="")
+    pdf_path: Mapped[str] = mapped_column(String(300), default="")
+    token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False)
+    views: Mapped[int] = mapped_column(Integer, default=0)
+    last_viewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    requests = relationship("PurchaseRequest", backref="rlist", foreign_keys="PurchaseRequest.rlist_id",
+                            order_by="PurchaseRequest.id")
+
+    @property
+    def live(self) -> bool:
+        return not self.revoked and (self.expires_at is None or self.expires_at > datetime.utcnow())
+
+    @property
+    def total(self) -> float:
+        return round(sum(r.total for r in self.requests), 2)
+
+    @property
+    def pending(self) -> list:
+        return [r for r in self.requests if r.status == "Submitted"]
 
 
 class PurchaseRequestLine(Base):

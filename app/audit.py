@@ -36,15 +36,15 @@ STOREKEEPER_PREFIXES = ("/receivables", "/requests", "/stock", "/attendance", "/
                         "/files/claims/", "/static", "/login", "/logout", "/health")
 # Staff clock in from their own phones with no login, so these must work for
 # anyone -- including someone who happens to be signed in as a confined role.
-PUBLIC_PREFIXES = ("/attendance/kiosk", "/attendance/scan", "/attendance/punch", "/approve/")
+PUBLIC_PREFIXES = ("/attendance/kiosk", "/attendance/scan", "/attendance/punch", "/approve/", "/ra/")
 STOREKEEPER_DENY = re.compile(r"^/receivables/(\d+/(receipt|void)|receipt/\d+/delete)$")
 # role -> (paths it may reach, where it lands when it strays)
 CONFINED_ROLES = {"requester": (REQUESTER_PREFIXES, "/requests"),
                   "storekeeper": (STOREKEEPER_PREFIXES, "/receivables")}
 # Never block or log these — the Telegram bot has no user session, and
 # blocking /login itself would make it impossible to sign in.
-BLOCK_EXEMPT_PREFIXES = ("/telegram/webhook", "/login", "/logout")
-NEVER_LOG_PREFIXES = ("/telegram/webhook",)
+BLOCK_EXEMPT_PREFIXES = ("/telegram/webhook", "/login", "/logout", "/api/requests/intake", "/ra/")
+NEVER_LOG_PREFIXES = ("/telegram/webhook", "/api/requests/intake")
 
 # Best-effort human labels for the audit log. Falls back to "METHOD /path"
 # for anything not listed here — every action still gets logged either way.

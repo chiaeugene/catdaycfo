@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from fastapi import FastAPI, Request, Depends, Form, UploadFile, File, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, PlainTextResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
@@ -2179,6 +2179,157 @@ async def _save_photo(pr, form):
     pr.photo_path = rel
 
 
+# ─────────────────── REQUEST INTAKE (Karen's Google form) + REQUEST LISTINGS ───────────────────
+from . import request_intake as RI
+
+
+@app.post("/api/requests/intake")
+async def requests_intake(request: Request, db: Session = Depends(get_db)):
+    """Called by the Apps Script in Karen's form spreadsheet. Authenticated by
+    the shared key in the X-Intake-Key header (Settings: REQUEST_INTAKE_KEY)."""
+    key = request.headers.get("x-intake-key", "")
+    if not key or not secrets.compare_digest(key, RI.intake_key(db)):
+        return JSONResponse({"ok": False, "error": "bad key"}, status_code=403)
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "not JSON"}, status_code=400)
+    return JSONResponse(RI.apply(db, payload))
+
+
+@app.get("/requests/intake-setup", response_class=HTMLResponse)
+def requests_intake_setup(request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user or user.role != "admin":
+        return RedirectResponse("/requests", status_code=302)
+    key = RI.intake_key(db)
+    url = f"{BASE_URL}/api/requests/intake"
+    script = open(os.path.join(os.path.dirname(__file__), "request_form_script.gs"),
+                  encoding="utf-8").read().replace("__URL__", url).replace("__KEY__", key)
+    recent = (db.query(M.PurchaseRequest).filter(M.PurchaseRequest.source_key != "")
+              .order_by(M.PurchaseRequest.id.desc()).limit(10).all())
+    return render(request, db, "request_intake.html", "requests", script=script, recent=recent)
+
+
+@app.post("/requests/lists/create")
+async def request_list_create(request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user or user.role not in ("admin", "manager"):
+        return RedirectResponse("/requests", status_code=302)
+    form = await request.form()
+    ids = [int(x) for x in form.getlist("ids") if str(x).isdigit()]
+    rl, msg = RI.create_list(db, ids, user.display_name)
+    if not rl:
+        request.session["flash_pr_err"] = msg
+        return RedirectResponse("/requests", status_code=303)
+    request.session["flash_rl"] = msg
+    return RedirectResponse(f"/requests/lists/{rl.id}", status_code=303)
+
+
+@app.get("/requests/lists/{lid}", response_class=HTMLResponse)
+def request_list_detail(lid: int, request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    rl = db.get(M.RequestList, lid)
+    if not rl:
+        return RedirectResponse("/requests", status_code=302)
+    url = f"{BASE_URL}/ra/{rl.token}"
+    return render(request, db, "request_list.html", "requests", rl=rl, url=url,
+                  msg=RI.message(rl, url), flash=request.session.pop("flash_rl", None))
+
+
+@app.get("/requests/lists/{lid}/pdf")
+def request_list_pdf_route(lid: int, request: Request, db: Session = Depends(get_db)):
+    if not current_user(request, db):
+        return RedirectResponse("/login", status_code=302)
+    rl = db.get(M.RequestList, lid)
+    if not rl:
+        raise HTTPException(404)
+    RI.build_list_pdf(db, rl)
+    db.commit()
+    return FileResponse(os.path.join(UPLOAD_DIR, rl.pdf_path), filename=f"{rl.rl_no}.pdf",
+                        content_disposition_type="inline")
+
+
+@app.post("/requests/lists/{lid}/link")
+def request_list_link(lid: int, request: Request, action: str = Form("renew"),
+                      db: Session = Depends(get_db)):
+    """Renew = new link (old one stops working), 14 days. Revoke = stop the link."""
+    user = current_user(request, db)
+    if not user or user.role not in ("admin", "manager"):
+        return RedirectResponse("/requests", status_code=302)
+    rl = db.get(M.RequestList, lid)
+    if rl:
+        if action == "revoke":
+            rl.revoked = True
+            request.session["flash_rl"] = "Approval link withdrawn — it no longer opens."
+        else:
+            rl.token, rl.revoked = secrets.token_urlsafe(24), False
+            rl.expires_at = datetime.utcnow() + timedelta(days=RI.LINK_DAYS)
+            request.session["flash_rl"] = "New approval link made — the old one no longer opens."
+        db.commit()
+    return RedirectResponse(f"/requests/lists/{lid}", status_code=303)
+
+
+def _rl_by_token(db: Session, token: str):
+    return db.query(M.RequestList).filter(M.RequestList.token == token).first()
+
+
+@app.get("/ra/{token}", response_class=HTMLResponse)
+def request_approval_page(token: str, request: Request, done: str = "", err: str = "",
+                          db: Session = Depends(get_db)):
+    """Public approval page — whoever holds the link decides. No login."""
+    rl = _rl_by_token(db, token)
+    if not rl or not rl.live:
+        return templates.TemplateResponse(request, "approve_gone.html",
+                                          {"state": "expired or withdrawn"}, status_code=404)
+    rl.views = (rl.views or 0) + 1
+    rl.last_viewed_at = datetime.utcnow()
+    db.commit()
+    settings = {s.key: s.value for s in db.query(M.Setting).all()}
+    return templates.TemplateResponse(request, "request_approve.html", {
+        "rl": rl, "token": token, "done": done, "err": err,
+        "company": settings.get("COMPANY_NAME", "CATDAY"),
+        "reqs": sorted(rl.requests, key=lambda r: (r.status != "Submitted", r.needed_by or date.max, r.pr_no))})
+
+
+@app.post("/ra/{token}/decide")
+def request_approval_decide(token: str, request: Request, pr_id: int = Form(...),
+                            action: str = Form(...), note: str = Form(""),
+                            db: Session = Depends(get_db)):
+    rl = _rl_by_token(db, token)
+    if not rl:
+        return RedirectResponse(f"/ra/{token}", status_code=303)
+    ok, msg = RI.decide_by_link(db, rl, pr_id, action, note)
+    from urllib.parse import quote
+    return RedirectResponse(f"/ra/{token}?{'done' if ok else 'err'}={quote(msg)}", status_code=303)
+
+
+@app.post("/ra/{token}/approve-all")
+def request_approval_all(token: str, request: Request, db: Session = Depends(get_db)):
+    rl = _rl_by_token(db, token)
+    if not rl:
+        return RedirectResponse(f"/ra/{token}", status_code=303)
+    n = 0
+    for r in list(rl.pending):
+        ok, _ = RI.decide_by_link(db, rl, r.id, "approve")
+        n += ok
+    from urllib.parse import quote
+    return RedirectResponse(f"/ra/{token}?done={quote(f'{n} request(s) approved.')}", status_code=303)
+
+
+@app.get("/ra/{token}/pdf")
+def request_approval_pdf(token: str, request: Request, db: Session = Depends(get_db)):
+    rl = _rl_by_token(db, token)
+    if not rl or not rl.live:
+        raise HTTPException(404)
+    RI.build_list_pdf(db, rl)
+    db.commit()
+    return FileResponse(os.path.join(UPLOAD_DIR, rl.pdf_path), filename=f"{rl.rl_no}.pdf",
+                        content_disposition_type="inline")
+
+
 @app.get("/requests", response_class=HTMLResponse)
 def requests_list(request: Request, status: str = "", mine: str = "",
                   db: Session = Depends(get_db)):
@@ -2193,8 +2344,11 @@ def requests_list(request: Request, status: str = "", mine: str = "",
     prs = q.limit(300).all()
     waiting = [p for p in prs if p.status == "Submitted" and p.requester_id != user.id] \
         if user.can_approve else []
+    rlists = db.query(M.RequestList).order_by(M.RequestList.id.desc()).limit(8).all() \
+        if user.role != "requester" else []
     return render(request, db, "requests.html", "requests",
                   requests=prs, flt=status, mine=bool(mine), waiting=waiting,
+                  rlists=rlists, can_list=user.role in ("admin", "manager"),
                   flash=request.session.pop("flash_pr", None),
                   flash_err=request.session.pop("flash_pr_err", None))
 

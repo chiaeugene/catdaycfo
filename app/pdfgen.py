@@ -498,6 +498,12 @@ def request_pdf(pr_no: str, req: dict, lines: list[dict], total: float,
 
     Before approval the sheet is stamped NOT APPROVED across the middle so a
     printout can never be waved at a supplier as a go-ahead."""
+    # Free text (now also typed into a Google form) goes into Paragraph markup:
+    # escape it, or an item like "Hair & Skin" breaks the PDF.
+    from xml.sax.saxutils import escape as _esc
+    req = {k: (_esc(v) if isinstance(v, str) else v) for k, v in req.items()}
+    lines = [{k: (_esc(v or "") if k in ("item", "category", "uom") else v) for k, v in ln.items()}
+             for ln in lines]
     subdir = f"requests/{date.today():%Y-%m}"
     os.makedirs(os.path.join(UPLOAD_DIR, subdir), exist_ok=True)
     rel = f"{subdir}/{pr_no}_{safe_name(req.get('supplier') or 'request')}.pdf"
@@ -620,6 +626,58 @@ def listing_pdf(pl_no: str, vouchers: list[dict], total: float,
 
     el.append(_sig_block(["Prepared By", "Approved By"]))
     _footer(el, company, reg_no, pl_no)
+    doc.build(el)
+    return rel
+
+
+# ════════════════════════════ PURCHASE REQUEST LISTING ════════════════════════════
+def request_list_pdf(rl_no: str, rows: list[dict], total: float,
+                     company="CATDAY SDN BHD", address="Uptown PJ", reg_no="") -> str:
+    """A batch of purchase requests for approval, in the payment-listing style.
+    rows: [{no, form_ref, date, item, qty, why, supplier, quote, needed, total,
+    status, decided, note}]. Re-issued after every decision, so the status
+    column is always current."""
+    from xml.sax.saxutils import escape as esc
+    subdir = f"request_lists/{date.today():%Y-%m}"
+    os.makedirs(os.path.join(UPLOAD_DIR, subdir), exist_ok=True)
+    rel = f"{subdir}/{rl_no}.pdf"
+    doc = _doc(rel)
+    el = [_brand_band(company, address, reg_no), Spacer(1, 9 * mm),
+          _title("PURCHASE REQUEST LISTING"), Spacer(1, 5 * mm)]
+    decided = sum(1 for r in rows if r["status"] in ("Approved", "Rejected"))
+    el.append(_meta_block([
+        ("PREPARED FOR", "Approval"),
+        ("LISTING NO.", rl_no),
+        ("DATE", f"{date.today():%d/%m/%Y}"),
+        ("REQUESTS", f"{len(rows)}" + (f" · {decided} decided" if decided else "")),
+    ]))
+    el.append(Spacer(1, 7 * mm))
+    muted = '<font size="7" color="#7A6A58">'
+    data = [[Paragraph("#", TH), Paragraph("REQUEST", TH), Paragraph("DATE", TH),
+             Paragraph("ITEM / PURPOSE", TH), Paragraph("SUPPLIER / QUOTE", TH),
+             Paragraph("NEEDED", TH), Paragraph("EST. (RM)", TH_R)]]
+    status_col = {"Approved": "#2E7D4F", "Rejected": "#B14919", "Submitted": "#729094"}
+    for i, r in enumerate(rows, 1):
+        item = esc(r["item"] or "")
+        sub = " · ".join(esc(x) for x in (r.get("qty"), r.get("why")) if x)
+        sup = esc(r["supplier"] or "-") + (f"<br/>{muted}{esc(r['quote'])}</font>" if r.get("quote") else "")
+        label = {"Submitted": "PENDING"}.get(r["status"], r["status"].upper())
+        amt = (f"{r['total']:,.2f}<br/><font size=\"6.5\" color=\"{status_col.get(r['status'], '#729094')}\">"
+               f"<b>{label}</b></font>")
+        if r["status"] == "Rejected" and r.get("note"):
+            sub = (sub + "<br/>" if sub else "") + f'<font color="#B14919">Rejected: {esc(r["note"])}</font>'
+        data.append([Paragraph(str(i), BODY),
+                     Paragraph(esc(r.get("form_ref") or r["no"]) + f"<br/>{muted}{esc(r['no'])}</font>", SMALL),
+                     Paragraph(r["date"], SMALL),
+                     Paragraph(item + (f"<br/>{muted}{sub}</font>" if sub else ""), SMALL),
+                     Paragraph(sup, SMALL),
+                     Paragraph(r["needed"] or "-", SMALL),
+                     Paragraph(amt, BODY_R)])
+    n = len(rows)
+    data.append(["", "", "", "", "", Paragraph("TOTAL", TOT), Paragraph(f"{total:,.2f}", TOT_R)])
+    el.append(_brand_table(data, [9 * mm, 22 * mm, 18 * mm, 50 * mm, 34 * mm, 19 * mm, 24 * mm], n, [n + 1]))
+    el.append(_sig_block(["Requested By", "Approved By"]))
+    _footer(el, company, reg_no, rl_no)
     doc.build(el)
     return rel
 

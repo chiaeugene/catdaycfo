@@ -14,7 +14,9 @@
 
 <div class="pagehead">
   <h1>Purchase Requests 采购申请</h1>
-  <div class="actions"><a class="btn" href="/requests/new">{{ icon('plus', 14) }} New request 新申请</a></div>
+  <div class="actions">
+    {% if user.role == 'admin' %}<a class="btn secondary" href="/requests/intake-setup">{{ icon('upload', 14) }} Karen's form</a>{% endif %}
+    <a class="btn" href="/requests/new">{{ icon('plus', 14) }} New request 新申请</a></div>
 </div>
 <div class="sub">Ask before buying. Fill in what, why and how much; an approver says yes on the web or in Telegram. Nothing here touches the books — once approved, the purchase is free to go and the invoice comes through the usual way.</div>
 
@@ -26,6 +28,18 @@
     {% for p in waiting %}
     <a class="docchip" href="/requests/{{ p.id }}">
       {% if p.urgency == 'Urgent' %}🔴 {% endif %}<b>{{ p.pr_no }}</b> · {{ p.requester }} · {{ p.supplier or '—' }} · RM {{ p.total|rm }}</a>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{% if rlists %}
+<div class="panel" style="padding:14px 18px">
+  <div style="font-size:12px;font-weight:800;margin-bottom:8px">Approval lists 审批清单</div>
+  <div class="docchips">
+    {% for rl in rlists %}
+    <a class="docchip" href="/requests/lists/{{ rl.id }}"><b>{{ rl.rl_no }}</b> · {{ rl.requests|length }} req · RM {{ rl.total|rm }}
+      · {% if rl.pending %}{{ rl.pending|length }} waiting{% else %}all decided{% endif %}</a>
     {% endfor %}
   </div>
 </div>
@@ -43,17 +57,24 @@
 
 <div class="tablewrap">
 <table>
-  <tr><th>PR #</th><th>Date</th><th>By</th><th>Supplier</th><th>For</th><th>Items</th>
+  <tr><th style="width:30px"></th><th>PR #</th><th>Date</th><th>By</th><th>Supplier</th><th>For</th><th>Items</th>
       <th class="num">Total</th><th>Status</th><th>Decision</th></tr>
   {% for p in requests %}
   <tr>
-    <td class="mono"><a href="/requests/{{ p.id }}"><b>{{ p.pr_no or '(draft)' }}</b></a></td>
+    <td>{% if can_list and p.status == 'Submitted' and not (p.rlist and p.rlist.live) %}
+      <input type="checkbox" class="rq-pick" name="ids" value="{{ p.id }}" form="rl-form"
+             data-total="{{ '%.2f'|format(p.total) }}" aria-label="Put {{ p.pr_no }} on an approval list"
+             style="width:17px;height:17px;accent-color:var(--brand)">
+      {% elif p.rlist %}<a href="/requests/lists/{{ p.rlist.id }}" title="On {{ p.rlist.rl_no }}" class="muted" style="font-size:11px">listed</a>{% endif %}</td>
+    <td class="mono" style="white-space:nowrap"><a href="/requests/{{ p.id }}"><b>{{ p.pr_no or '(draft)' }}</b></a>
+      {% if p.form_ref %}<div class="muted" style="font-size:11px">{{ p.form_ref }} · form</div>{% endif %}</td>
     <td>{{ (p.submitted_at or p.created_at)|myt('%d/%m/%y') }}</td>
     <td>{{ p.requester }}</td>
     <td>{{ p.supplier or '—' }}{% if p.supplier_new %} <span class="badge pending" title="Not in Suppliers yet">new</span>{% endif %}</td>
     <td>{{ p.purpose }}{% if p.urgency == 'Urgent' %} <span class="badge rejected">urgent</span>{% endif %}</td>
     <td style="max-width:260px;font-size:12px">
-      {% for l in p.lines[:3] %}{{ l.qty|int if l.qty == l.qty|int else l.qty }} {{ l.uom }} {{ l.item }}{% if not loop.last %}, {% endif %}{% endfor %}
+      {% if p.form_ref %}{{ p.lines[0].item if p.lines else '' }}{% if p.qty_text %} <span class="muted">({{ p.qty_text }})</span>{% endif %}
+      {% else %}{% for l in p.lines[:3] %}{{ l.qty|int if l.qty == l.qty|int else l.qty }} {{ l.uom }} {{ l.item }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}
       {% if p.lines|length > 3 %} +{{ p.lines|length - 3 }}{% endif %}
     </td>
     <td class="num" style="font-weight:700">{{ p.total|rm }}</td>
@@ -62,8 +83,45 @@
     <td style="font-size:12px">{% if p.decided_by %}{{ p.decided_by }} · {{ p.decided_at|myt('%d/%m') }}{% endif %}</td>
   </tr>
   {% else %}
-  <tr><td colspan="9" class="empty">No requests yet — <a href="/requests/new">start one</a>. 还没有申请。</td></tr>
+  <tr><td colspan="10" class="empty">No requests yet — <a href="/requests/new">start one</a>. 还没有申请。</td></tr>
   {% endfor %}
 </table>
 </div>
+
+{% if can_list %}
+<form id="rl-form" method="post" action="/requests/lists/create" class="rl-bar" aria-hidden="true">
+  <span style="font-size:13px">Send <b class="rl-n">0</b> request<span class="rl-s">s</span> for approval</span>
+  <b class="rl-t" style="font-size:16px;font-variant-numeric:tabular-nums">RM 0.00</b>
+  <button type="button" class="small secondary rl-clear">Clear</button>
+  <button type="submit" class="small">{{ icon('send', 12) }} Create approval list</button>
+</form>
+<style>
+  .rl-bar { position: fixed; left: 0; right: 0; margin: 0 auto; width: max-content; max-width: calc(100vw - 32px); bottom: 18px; z-index: 50;
+            display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 16px; border-radius: 16px;
+            background: var(--card); border: 1px solid var(--line); box-shadow: var(--shadow-lg);
+            transform: translateY(140%); opacity: 0; pointer-events: none;
+            transition: transform 200ms var(--ease-in), opacity 200ms var(--ease-in); }
+  .rl-bar.on { transform: none; opacity: 1; pointer-events: auto; transition: transform 350ms var(--ease-out), opacity 350ms var(--ease-out); }
+  @media (prefers-reduced-motion: reduce) { .rl-bar, .rl-bar.on { transition: opacity 150ms linear; } }
+  @media (max-width: 640px) { .rl-bar { left: 16px; right: 16px; width: auto; } }
+</style>
+<script>
+(function () {
+  var bar = document.getElementById('rl-form'); if (!bar) return;
+  var picks = [].slice.call(document.querySelectorAll('.rq-pick'));
+  function fmt(n) { return Number(n).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  function upd() {
+    var on = picks.filter(function (p) { return p.checked; });
+    var t = on.reduce(function (s, p) { return s + Number(p.dataset.total); }, 0);
+    bar.querySelector('.rl-n').textContent = on.length;
+    bar.querySelector('.rl-s').textContent = on.length === 1 ? '' : 's';
+    bar.querySelector('.rl-t').textContent = 'RM ' + fmt(t);
+    bar.classList.toggle('on', on.length > 0);
+    bar.setAttribute('aria-hidden', on.length ? 'false' : 'true');
+  }
+  picks.forEach(function (p) { p.addEventListener('change', upd); });
+  bar.querySelector('.rl-clear').addEventListener('click', function () { picks.forEach(function (p) { p.checked = false; }); upd(); });
+})();
+</script>
+{% endif %}
 {% endblock %}
